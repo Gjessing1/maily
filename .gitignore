@@ -1,0 +1,31 @@
+# --- Personal planning docs (kept local, not committed) ---
+CLAUDE.md
+docs/
+
+# --- Dependencies ---
+node_modules/
+.npm/
+
+# --- Build output ---
+dist/
+build/
+*.tsbuildinfo
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Persistent data (host: /mnt/data/maily) ---
+data/
+attachments/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# --- Logs / misc ---
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+.vite/

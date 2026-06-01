@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+data
+attachments
+drizzle
+*.sqlite
+CLAUDE.md
+docs

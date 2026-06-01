@@ -1,0 +1,35 @@
+{
+  "name": "maily",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-user, mobile-first mail client built as an enrichment pipeline.",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev:backend": "npm run dev -w @maily/backend",
+    "dev:frontend": "npm run dev -w @maily/frontend",
+    "db:generate": "npm run db:generate -w @maily/backend",
+    "db:migrate": "npm run db:migrate -w @maily/backend"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

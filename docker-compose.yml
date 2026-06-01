@@ -1,0 +1,18 @@
+# Deploy from /home/gjessing/docker/maily (compose + .env live there).
+# Persistent data is bind-mounted from the host at /mnt/data/maily so it survives redeploys.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: maily-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      MAILY_DATA_DIR: /data
+    ports:
+      - '3000:3000'
+    volumes:
+      - /mnt/data/maily:/data

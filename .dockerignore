@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/build
+data
+attachments
+.git
+.env
+.env.*
+!.env.example
+CLAUDE.md
+docs
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -1,0 +1,13 @@
+{
+  "name": "@maily/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -e \"console.log('frontend PWA is scaffolded in Phase 3 — see docs/ROADMAP.md')\"",
+    "build": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "@maily/shared": "*"
+  }
+}
