@@ -46,3 +46,25 @@ export function createClient(config: AccountConfig): ImapFlow {
   };
   return new ImapFlow(options);
 }
+
+/**
+ * Run a one-shot operation over a transient connection (connect → fn → logout).
+ * Used for on-demand work — attachment byte fetch, APPEND-to-Sent — so the
+ * persistent INBOX IDLE connection is never interrupted (ARCHITECTURE §2/§9).
+ */
+export async function withTransientConnection<T>(
+  config: AccountConfig,
+  fn: (client: ImapFlow) => Promise<T>,
+): Promise<T> {
+  const client = createClient(config);
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    try {
+      await client.logout();
+    } catch {
+      client.close();
+    }
+  }
+}

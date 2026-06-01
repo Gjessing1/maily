@@ -115,13 +115,19 @@ async function toParsedMessage(
   };
 }
 
-/** Fetch a set of UIDs and persist them into the folder. Returns counts. */
+export interface StoreCounts {
+  /** Internal ids of newly inserted messages (for live new-mail signals). */
+  insertedIds: string[];
+  updated: number;
+}
+
+/** Fetch a set of UIDs and persist them into the folder. */
 export async function fetchAndStore(
   ctx: SyncContext,
   folder: FolderRow,
   uids: number[],
-): Promise<{ inserted: number; updated: number }> {
-  let inserted = 0;
+): Promise<StoreCounts> {
+  const insertedIds: string[] = [];
   let updated = 0;
 
   for (let i = 0; i < uids.length; i += FETCH_BATCH) {
@@ -129,22 +135,19 @@ export async function fetchAndStore(
     for await (const msg of ctx.client.fetch(batch, FETCH_QUERY, { uid: true })) {
       const parsed = await toParsedMessage(ctx, msg as Exclude<FetchMessage, false>);
       const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed);
-      if (result.inserted) inserted += 1;
+      if (result.inserted) insertedIds.push(result.id);
       else updated += 1;
     }
   }
 
-  return { inserted, updated };
+  return { insertedIds, updated };
 }
 
 /**
  * Full sync of a folder's cache window. Used on first sight of a folder and when
  * UIDVALIDITY changes (cached UIDs become meaningless and must be rebuilt).
  */
-export async function fullSyncFolder(
-  ctx: SyncContext,
-  folder: FolderRow,
-): Promise<{ inserted: number; updated: number }> {
+export async function fullSyncFolder(ctx: SyncContext, folder: FolderRow): Promise<StoreCounts> {
   const since = new Date(Date.now() - CACHE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const uids = (await ctx.client.search({ since }, { uid: true })) || [];
   ctx.log.info(`full sync ${folder.path}: ${uids.length} message(s) in window`);

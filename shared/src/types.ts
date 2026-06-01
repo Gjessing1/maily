@@ -53,6 +53,33 @@ export interface MessageDto {
   attachments: AttachmentDto[];
 }
 
+/** Full message including body — returned by the read-one endpoint (not list views). */
+export interface MessageDetailDto extends MessageDto {
+  bodyText: string | null;
+  bodyHtml: string | null;
+  inReplyTo: string | null;
+  references: string | null;
+}
+
+/** Outgoing message composed by the client and sent via the backend (SMTP). */
+export interface SendMessageRequest {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  text?: string;
+  html?: string;
+  /** Message-ID being replied to (sets In-Reply-To/References for threading). */
+  inReplyTo?: string | null;
+  references?: string | null;
+}
+
+/** A browser Web Push subscription, registered by the PWA for background notifications. */
+export interface PushSubscriptionDto {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
 /** Lightweight signals pushed over Socket.io (never heavy payloads — see ARCHITECTURE §3). */
 export type SocketSignal =
   | { type: 'mail:new'; accountId: string; messageId: string }

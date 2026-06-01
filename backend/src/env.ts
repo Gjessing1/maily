@@ -27,6 +27,18 @@ const attachmentsDir = resolve(dataDir, 'attachments');
 mkdirSync(dirname(dbPath), { recursive: true });
 mkdirSync(attachmentsDir, { recursive: true });
 
+/** VAPID config for Web Push, or null when not configured (push disabled). */
+function vapidConfig(): { publicKey: string; privateKey: string; subject: string } | null {
+  const publicKey = process.env.VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY;
+  if (!publicKey || !privateKey) return null;
+  return {
+    publicKey,
+    privateKey,
+    subject: optional('VAPID_SUBJECT', 'mailto:admin@localhost'),
+  };
+}
+
 export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   port: Number(optional('PORT', '3000')),
@@ -35,4 +47,6 @@ export const env = {
   attachmentsDir,
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
+  masterPassword: () => required('MASTER_PASSWORD'),
+  vapid: vapidConfig,
 } as const;

@@ -24,7 +24,8 @@ import {
 import { fetchAndStore, fullSyncFolder, type SyncContext } from './sync.js';
 
 export interface ResyncResult {
-  inserted: number;
+  /** Internal ids of newly inserted messages (for live new-mail signals). */
+  insertedIds: string[];
   updated: number;
   expunged: number;
   mode: 'full' | 'incremental';
@@ -90,7 +91,7 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
     }
 
     const fromUid = folder.lastUid ?? 1;
-    let counts = { inserted: 0, updated: 0 };
+    let counts: { insertedIds: string[]; updated: number } = { insertedIds: [], updated: 0 };
     if (mb.uidNext > fromUid) {
       // Pull UIDs at/after the last seen boundary; dedup makes any overlap harmless.
       const newUids: number[] = [];

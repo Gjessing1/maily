@@ -1,16 +1,20 @@
 /**
  * Backend entry point.
  *
- * Phase 0 booted the data plane. Phase 1 adds the IMAP sync engine: for each
- * configured account we run one persistent INBOX IDLE connection plus a
- * non-INBOX reconcile cron (see docs/ROADMAP.md, src/imap/). The Fastify HTTP
- * server, Socket.io and Web Push arrive in later phases.
+ * Boot order: migrate → start the HTTP API + Socket.io + Web Push → start the
+ * per-account IMAP sync engines (one persistent INBOX IDLE connection each, plus
+ * a non-INBOX reconcile cron). See docs/ROADMAP.md and src/imap/.
  */
+import type { Server as IoServer } from 'socket.io';
 import { env } from './env.js';
 import { sqlite } from './db/client.js';
+import { runMigrations } from './db/migrate.js';
 import { createLogger } from './logger.js';
 import { loadAccountConfigs } from './config/accounts.js';
 import { startSyncEngines, type AccountEngine } from './imap/engine.js';
+import { buildServer } from './http/server.js';
+import { attachSockets } from './sockets/index.js';
+import { initWebPush, wirePushNotifications } from './push/webpush.js';
 
 const log = createLogger('maily');
 
@@ -24,15 +28,16 @@ function reportBoot(): void {
   log.info(`  db:          ${env.dbPath}`);
   log.info(`  attachments: ${env.attachmentsDir}`);
   log.info(`  journal:     ${sqlite.pragma('journal_mode', { simple: true })}`);
-  log.info(`  tables:      ${tables.length ? tables.join(', ') : '(none — run db:migrate)'}`);
+  log.info(`  tables:      ${tables.length}`);
 }
 
-function installShutdown(engines: AccountEngine[]): void {
+function installShutdown(engines: AccountEngine[], io: IoServer): void {
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info(`received ${signal}, shutting down…`);
+    io.close();
     await Promise.allSettled(engines.map((e) => e.stop()));
     sqlite.close();
     process.exit(0);
@@ -41,18 +46,28 @@ function installShutdown(engines: AccountEngine[]): void {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-function main(): void {
+async function main(): Promise<void> {
+  runMigrations();
   reportBoot();
+
+  // Transport layer first so the PWA can authenticate even before mail syncs.
+  const app = await buildServer();
+  const io = attachSockets(app);
+  initWebPush();
+  wirePushNotifications();
+  await app.listen({ host: '0.0.0.0', port: env.port });
+  log.info(`HTTP + Socket.io listening on :${env.port}`);
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {
     log.warn('no accounts configured (ACCOUNT_<n>_* env vars) — sync engine idle');
+    installShutdown([], io);
     return;
   }
 
   log.info(`starting sync engines for ${accounts.length} account(s)`);
   const engines = startSyncEngines(accounts);
-  installShutdown(engines);
+  installShutdown(engines, io);
 }
 
-main();
+void main();

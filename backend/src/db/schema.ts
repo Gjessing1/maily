@@ -121,6 +121,15 @@ export const messageFolders = sqliteTable(
   ],
 );
 
+/** Browser Web Push subscriptions (VAPID) for background notifications (ARCHITECTURE §3). */
+export const pushSubscriptions = sqliteTable('push_subscriptions', {
+  id: uuid(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: now(),
+});
+
 /** Attachment metadata. storagePath is null until the bytes are lazily fetched (ARCHITECTURE §4). */
 export const attachments = sqliteTable(
   'attachments',

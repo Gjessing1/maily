@@ -11,9 +11,11 @@
 import type { ImapFlow } from 'imapflow';
 import type { AccountConfig } from '../config/accounts.js';
 import { createLogger, type Logger } from '../logger.js';
+import { emitSignal } from '../events.js';
 import { ensureAccount, type AccountRow } from '../db/accounts.js';
 import { createClient, detectCapabilities, type Capabilities } from './connection.js';
 import { getFolderById, syncFolders } from './folders.js';
+import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
 import type { SyncContext } from './sync.js';
 
@@ -37,9 +39,21 @@ export class AccountEngine {
     this.log = createLogger(`imap:${config.email}`);
   }
 
+  /** DB account id (assigned after `start()`). */
+  get id(): string {
+    if (!this.account) throw new Error('engine not started');
+    return this.account.id;
+  }
+
+  /** The account's connection config (credentials + provider). Backend-only. */
+  get accountConfig(): AccountConfig {
+    return this.config;
+  }
+
   /** Register the account and bring up the connection (retrying in the background). */
   start(): void {
     this.account = ensureAccount(this.config);
+    registerEngine(this);
     void this.connect();
     this.cronTimer = setInterval(() => void this.runFolderCron(), CRON_INTERVAL_MS);
     if (typeof this.cronTimer.unref === 'function') this.cronTimer.unref();
@@ -100,10 +114,12 @@ export class AccountEngine {
     }
     this.inboxId = inbox.id;
 
-    // Resync INBOX before going live so missed events are reconciled.
+    // Resync INBOX before going live so missed events are reconciled. We do NOT
+    // emit per-message signals for this catch-up pass — it can be thousands on a
+    // first sync; the client loads the inbox via HTTP instead.
     const result = await resyncFolder(ctx, inbox);
     this.log.info(
-      `INBOX resync (${result.mode}): +${result.inserted} ~${result.updated} -${result.expunged}`,
+      `INBOX resync (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
     );
 
     // Live INBOX updates: imapflow auto-IDLEs on the open mailbox; we react to events.
@@ -123,9 +139,19 @@ export class AccountEngine {
       const inbox = getFolderById(this.inboxId);
       if (!inbox) return;
       const result = await resyncFolder(this.ctx(this.client), inbox);
-      if (result.inserted || result.updated || result.expunged) {
+
+      // Live new mail → precise per-message signal (drives Socket.io + Web Push).
+      for (const messageId of result.insertedIds) {
+        emitSignal({ type: 'mail:new', accountId: this.id, messageId });
+      }
+      // Flag/expunge changes have no per-message id here; nudge clients to refresh.
+      if (result.updated || result.expunged) {
+        const changed = result.updated + result.expunged;
+        emitSignal({ type: 'sync:progress', accountId: this.id, done: changed, total: changed });
+      }
+      if (result.insertedIds.length || result.updated || result.expunged) {
         this.log.info(
-          `INBOX live: +${result.inserted} ~${result.updated} -${result.expunged}`,
+          `INBOX live: +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
         );
       }
     } catch (err) {
@@ -149,9 +175,9 @@ export class AccountEngine {
         const fresh = getFolderById(folder.id);
         if (!fresh) continue;
         const result = await resyncFolder(ctx, fresh);
-        if (result.inserted || result.updated || result.expunged) {
+        if (result.insertedIds.length || result.updated || result.expunged) {
           this.log.info(
-            `${folder.path} cron (${result.mode}): +${result.inserted} ~${result.updated} -${result.expunged}`,
+            `${folder.path} cron (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
           );
         }
       }

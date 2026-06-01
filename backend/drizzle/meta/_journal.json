@@ -15,6 +15,20 @@
       "when": 1780341582966,
       "tag": "0001_cheerful_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1780343723881,
+      "tag": "0002_big_slapstick",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1780343723882,
+      "tag": "0003_messages_fts",
+      "breakpoints": true
     }
   ]
 }
