@@ -1,0 +1,188 @@
+/**
+ * Per-account sync engine: one persistent IMAP IDLE connection on INBOX with
+ * robust auto-reconnect (ARCHITECTURE §2), plus a periodic cron that reconciles
+ * the non-INBOX folders over a transient connection so INBOX IDLE is never
+ * interrupted (ARCHITECTURE §9 — "IDLE is INBOX-only").
+ *
+ * On every (re)connect we resync rather than trust the cache: a server restart or
+ * dropped connection can hide events, so we reconcile UIDs/flags/expunges first
+ * and only then resume live IDLE (KEY GOTCHA: never trust live IDLE alone).
+ */
+import type { ImapFlow } from 'imapflow';
+import type { AccountConfig } from '../config/accounts.js';
+import { createLogger, type Logger } from '../logger.js';
+import { ensureAccount, type AccountRow } from '../db/accounts.js';
+import { createClient, detectCapabilities, type Capabilities } from './connection.js';
+import { getFolderById, syncFolders } from './folders.js';
+import { resyncFolder } from './resync.js';
+import type { SyncContext } from './sync.js';
+
+const INITIAL_BACKOFF_MS = 2_000;
+const MAX_BACKOFF_MS = 5 * 60_000;
+const CRON_INTERVAL_MS = Number(process.env.MAILY_FOLDER_CRON_MS ?? String(15 * 60_000));
+
+export class AccountEngine {
+  private readonly log: Logger;
+  private account: AccountRow | null = null;
+  private client: ImapFlow | null = null;
+  private inboxId: string | null = null;
+  private caps: Capabilities = { qresync: false, condstore: false, gmail: false };
+  private backoff = INITIAL_BACKOFF_MS;
+  private stopped = false;
+  private reconnecting = false;
+  private idleBusy = false;
+  private cronTimer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly config: AccountConfig) {
+    this.log = createLogger(`imap:${config.email}`);
+  }
+
+  /** Register the account and bring up the connection (retrying in the background). */
+  start(): void {
+    this.account = ensureAccount(this.config);
+    void this.connect();
+    this.cronTimer = setInterval(() => void this.runFolderCron(), CRON_INTERVAL_MS);
+    if (typeof this.cronTimer.unref === 'function') this.cronTimer.unref();
+  }
+
+  /** Tear the engine down cleanly. */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.cronTimer) clearInterval(this.cronTimer);
+    const client = this.client;
+    this.client = null;
+    if (client) {
+      try {
+        await client.logout();
+      } catch {
+        client.close();
+      }
+    }
+  }
+
+  private ctx(client: ImapFlow): SyncContext {
+    return { client, accountId: this.account!.id, caps: this.caps, log: this.log };
+  }
+
+  private async connect(): Promise<void> {
+    if (this.stopped) return;
+    const client = createClient(this.config);
+    this.client = client;
+
+    client.on('error', (err) => {
+      this.log.warn('connection error:', err.message);
+    });
+    client.on('close', () => {
+      if (!this.stopped) this.scheduleReconnect();
+    });
+
+    try {
+      await client.connect();
+      this.caps = detectCapabilities(client);
+      this.log.info(
+        `connected — caps: qresync=${this.caps.qresync} condstore=${this.caps.condstore} gmail=${this.caps.gmail}`,
+      );
+      this.backoff = INITIAL_BACKOFF_MS;
+      await this.onConnected(client);
+    } catch (err) {
+      this.log.warn('connect failed:', (err as Error).message);
+      this.scheduleReconnect();
+    }
+  }
+
+  private async onConnected(client: ImapFlow): Promise<void> {
+    const ctx = this.ctx(client);
+    const folders = await syncFolders(client, this.account!.id);
+    const inbox = folders.find((f) => f.role === 'inbox') ?? folders.find((f) => f.path === 'INBOX');
+    if (!inbox) {
+      this.log.error('no INBOX folder found; aborting connection');
+      return;
+    }
+    this.inboxId = inbox.id;
+
+    // Resync INBOX before going live so missed events are reconciled.
+    const result = await resyncFolder(ctx, inbox);
+    this.log.info(
+      `INBOX resync (${result.mode}): +${result.inserted} ~${result.updated} -${result.expunged}`,
+    );
+
+    // Live INBOX updates: imapflow auto-IDLEs on the open mailbox; we react to events.
+    client.on('exists', () => void this.onInboxEvent());
+    client.on('flags', () => void this.onInboxEvent());
+    client.on('expunge', () => void this.onInboxEvent());
+
+    // Kick the non-INBOX folders once on connect rather than waiting a full cron cycle.
+    void this.runFolderCron();
+  }
+
+  /** Coalesced INBOX reconcile triggered by live IDLE events. */
+  private async onInboxEvent(): Promise<void> {
+    if (this.idleBusy || this.stopped || !this.client || !this.inboxId) return;
+    this.idleBusy = true;
+    try {
+      const inbox = getFolderById(this.inboxId);
+      if (!inbox) return;
+      const result = await resyncFolder(this.ctx(this.client), inbox);
+      if (result.inserted || result.updated || result.expunged) {
+        this.log.info(
+          `INBOX live: +${result.inserted} ~${result.updated} -${result.expunged}`,
+        );
+      }
+    } catch (err) {
+      this.log.warn('INBOX live reconcile failed:', (err as Error).message);
+    } finally {
+      this.idleBusy = false;
+    }
+  }
+
+  /** Reconcile non-INBOX folders over a transient connection (keeps INBOX IDLE alive). */
+  private async runFolderCron(): Promise<void> {
+    if (this.stopped || !this.account) return;
+    const client = createClient(this.config);
+    try {
+      await client.connect();
+      const caps = detectCapabilities(client);
+      const ctx: SyncContext = { client, accountId: this.account.id, caps, log: this.log };
+      const folders = await syncFolders(client, this.account.id);
+      for (const folder of folders) {
+        if (folder.role === 'inbox') continue;
+        const fresh = getFolderById(folder.id);
+        if (!fresh) continue;
+        const result = await resyncFolder(ctx, fresh);
+        if (result.inserted || result.updated || result.expunged) {
+          this.log.info(
+            `${folder.path} cron (${result.mode}): +${result.inserted} ~${result.updated} -${result.expunged}`,
+          );
+        }
+      }
+    } catch (err) {
+      this.log.warn('folder cron failed:', (err as Error).message);
+    } finally {
+      try {
+        await client.logout();
+      } catch {
+        client.close();
+      }
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped || this.reconnecting) return;
+    this.reconnecting = true;
+    const delay = this.backoff;
+    this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
+    this.log.info(`reconnecting in ${Math.round(delay / 1000)}s`);
+    const timer = setTimeout(() => {
+      this.reconnecting = false;
+      void this.connect();
+    }, delay);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
+}
+
+/** Build engines for all configured accounts and start them. */
+export function startSyncEngines(configs: AccountConfig[]): AccountEngine[] {
+  const engines = configs.map((config) => new AccountEngine(config));
+  for (const engine of engines) engine.start();
+  return engines;
+}

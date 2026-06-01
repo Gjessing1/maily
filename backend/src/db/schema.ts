@@ -53,6 +53,10 @@ export const folders = sqliteTable(
       .default('custom'),
     /** IMAP UIDVALIDITY — if the server changes this, cached UIDs for the folder are invalid. */
     uidValidity: integer('uid_validity'),
+    /** Highest MODSEQ seen (CONDSTORE/QRESYNC) — resync flags via `changedSince`. Null if unsupported. */
+    highestModseq: integer('highest_modseq'),
+    /** UIDNEXT at last sync — new messages are fetched from `lastUid:*` on resync. */
+    lastUid: integer('last_uid'),
     createdAt: now(),
   },
   (t) => [uniqueIndex('folders_account_path_uq').on(t.accountId, t.path)],
