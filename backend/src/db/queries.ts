@@ -111,6 +111,26 @@ export function uidLocationForMessage(
   return row && row.uid !== null ? { ...row, uid: row.uid } : undefined;
 }
 
+/** A message's (path + UID) within ONE specific folder, if mapped there (for moves). */
+export function uidLocationInFolder(
+  messageId: string,
+  folderId: string,
+): { folderPath: string; uid: number } | undefined {
+  const row = db
+    .select({ folderPath: folders.path, uid: messageFolders.uid })
+    .from(messageFolders)
+    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
+    .where(
+      and(
+        eq(messageFolders.messageId, messageId),
+        eq(messageFolders.folderId, folderId),
+        isNotNull(messageFolders.uid),
+      ),
+    )
+    .get();
+  return row && row.uid !== null ? { folderPath: row.folderPath, uid: row.uid } : undefined;
+}
+
 /** Turn a user query into an FTS5 MATCH expression: prefix-match every term, AND-joined. */
 function toFtsMatch(query: string): string {
   const terms = query.match(/[\p{L}\p{N}]+/gu) ?? [];

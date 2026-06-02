@@ -28,6 +28,7 @@ import {
   listMessages,
   savePushSubscription,
   uidLocationForMessage,
+  uidLocationInFolder,
 } from '../db/queries.js';
 import { embedInlineImages, ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../imap/store.js';
@@ -192,6 +193,44 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
         relinkMessageToFolder(m.id, trash.id, newUid);
       } catch (err) {
         app.log.warn(`trash move failed for ${m.id}: ${(err as Error).message}`);
+      }
+    }
+
+    return { ok: true };
+  });
+
+  // Archive → move the inbox copy to the role='archive' folder (Gmail "All Mail"
+  // strips the INBOX label; generic IMAP moves to Archive). Unlike delete this does
+  // NOT tombstone: the message stays live and listable, just out of the inbox. Same
+  // out-of-band MOVE over a transient connection so INBOX IDLE is undisturbed.
+  app.post<{ Params: { id: string } }>('/api/messages/:id/archive', async (req, reply) => {
+    const m = getMessage(req.params.id);
+    if (!m) return reply.code(404).send({ error: 'not found' });
+
+    const archive = folderByRole(m.accountId, 'archive');
+    if (!archive) return reply.code(409).send({ error: 'no archive folder' });
+    const inbox = folderByRole(m.accountId, 'inbox');
+    const loc = inbox ? uidLocationInFolder(m.id, inbox.id) : undefined;
+    // Not in the inbox (already archived / elsewhere) → nothing to do.
+    if (!loc || loc.folderPath === archive.path) return { ok: true };
+
+    emitSignal({ type: 'mail:archived', accountId: m.accountId, messageId: m.id });
+
+    const engine = getEngine(m.accountId);
+    if (engine) {
+      try {
+        const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
+          const lock = await client.getMailboxLock(loc.folderPath);
+          try {
+            const res = await client.messageMove(String(loc.uid), archive.path, { uid: true });
+            return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
+          } finally {
+            lock.release();
+          }
+        });
+        relinkMessageToFolder(m.id, archive.id, newUid);
+      } catch (err) {
+        app.log.warn(`archive move failed for ${m.id}: ${(err as Error).message}`);
       }
     }
 

@@ -39,6 +39,11 @@ export function useSignals(): { progress: SyncProgress | null } {
           // so the list/reader stop showing it (it's filtered server-side too).
           void removeCachedMessage(signal.messageId);
           break;
+        case 'mail:archived':
+          // Moved out of the inbox to Archive. Drop the local copy; it re-syncs into
+          // the Archive folder when that folder is next viewed.
+          void removeCachedMessage(signal.messageId);
+          break;
         case 'sync:progress':
           setProgress({
             accountId: signal.accountId,

@@ -110,6 +110,10 @@ export const api = {
   deleteMessage: (id: string) =>
     request<{ ok: boolean }>(`/api/messages/${id}`, { method: 'DELETE' }),
 
+  /** Archive → move the inbox copy to the Archive folder (no tombstone). */
+  archiveMessage: (id: string) =>
+    request<{ ok: boolean }>(`/api/messages/${id}/archive`, { method: 'POST' }),
+
   send: (accountId: string, msg: SendMessageRequest) =>
     request<{ messageId?: string; appended?: boolean }>(`/api/accounts/${accountId}/send`, {
       method: 'POST',

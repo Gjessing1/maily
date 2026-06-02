@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { patchCachedFlags } from '../db/cache';
+import { patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { requestDelete } from '../state/undo';
 import { useAccounts, useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
@@ -10,6 +10,7 @@ import { AttachmentChip } from '../components/AttachmentChip';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import {
+  ArchiveIcon,
   BackIcon,
   ChevronDownIcon,
   ForwardIcon,
@@ -199,6 +200,15 @@ export function ReaderView({
     onClose();
   }
 
+  function archive() {
+    if (!detail) return;
+    // Optimistic: drop locally + leave; the server moves the inbox copy to Archive
+    // out-of-band (non-destructive, no confirm). Re-syncs into Archive when viewed.
+    void removeCachedMessage(detail.id);
+    onClose();
+    api.archiveMessage(detail.id).catch(() => undefined);
+  }
+
   function forward() {
     if (!detail) return;
     const subject = detail.subject ?? '';
@@ -273,6 +283,13 @@ export function ReaderView({
           aria-label="Flag"
         >
           <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
+        </button>
+        <button
+          onClick={archive}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label="Archive"
+        >
+          <ArchiveIcon className="text-fg" />
         </button>
         <button
           onClick={() => setConfirmDelete(true)}
