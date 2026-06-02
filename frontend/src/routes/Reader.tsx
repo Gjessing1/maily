@@ -29,7 +29,7 @@ export function Reader() {
   const [flagged, setFlagged] = useState(false);
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
-  const markedSeen = useRef(false);
+  const autoMarkedId = useRef<string | null>(null);
 
   // Reflect server flag state once the detail loads; reset the per-message image
   // override so a newly opened message starts blocked again (when blocking is on).
@@ -41,11 +41,16 @@ export function Reader() {
     setShowImages(false);
   }, [detail]);
 
-  // Mark as read on first open (optimistic; server is authoritative). The guard
-  // fires once per mount, so a later manual "mark unread" is not re-marked read.
+  // Mark as read on first open (optimistic; server is authoritative). Evaluated
+  // exactly once per opened message — keyed on the message id, NOT on the seen
+  // flag. `detail` is re-emitted by Dexie on every cache write, so a manual
+  // "mark unread" flips detail.seen back to false; gating on the id (instead of
+  // re-checking detail.seen) stops that re-emit from re-marking the message read
+  // and undoing the user's click.
   useEffect(() => {
-    if (!detail || detail.seen || markedSeen.current) return;
-    markedSeen.current = true;
+    if (!detail || autoMarkedId.current === detail.id) return;
+    autoMarkedId.current = detail.id;
+    if (detail.seen) return; // already read on open — nothing to auto-mark
     setSeen(true);
     void patchCachedFlags(detail.id, { seen: true });
     api.setFlags(detail.id, { seen: true }).catch(() => undefined);
