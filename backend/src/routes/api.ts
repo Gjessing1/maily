@@ -137,10 +137,7 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
 
       reply.header('Content-Type', att.mimeType ?? 'application/octet-stream');
       if (att.filename) {
-        reply.header(
-          'Content-Disposition',
-          `inline; filename="${att.filename.replace(/"/g, '')}"`,
-        );
+        reply.header('Content-Disposition', `inline; filename="${att.filename.replace(/"/g, '')}"`);
       }
       return reply.send(createReadStream(path));
     },

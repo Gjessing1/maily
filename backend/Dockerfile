@@ -12,6 +12,10 @@ COPY . .
 RUN npm run build -w @maily/backend
 # Build the PWA too; its dist/ is served by the backend in production (no proxy).
 RUN npm run build -w @maily/frontend
+# Drop dev dependencies (vite, typescript, eslint, drizzle-kit, @types, …) so the
+# runtime image ships only production deps. better-sqlite3 was already compiled
+# above, so prune just removes packages — no native rebuild needed.
+RUN npm prune --omit=dev --workspaces --include-workspace-root
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
