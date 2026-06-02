@@ -2,18 +2,21 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { avatarHue, initials, senderName, shortDate } from '../ui/format';
-import { PaperclipIcon, StarIcon, TrashIcon } from '../ui/icons';
+import { MailIcon, MailOpenIcon, PaperclipIcon, StarIcon, TrashIcon } from '../ui/icons';
 
-/** Left-swipe past this many px (on release) commits the delete. */
+/** Swipe past this many px (on release) commits the action; travel is clamped. */
 const SWIPE_COMMIT = 96;
 const SWIPE_MAX = 120;
 
 export function MessageRow({
   message,
   onDelete,
+  onToggleRead,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
+  /** Toggle read/unread from the list (right-swipe). Receives the desired `seen`. */
+  onToggleRead?: (id: string, seen: boolean) => void;
 }) {
   const name = senderName(message.fromName, message.fromAddress);
   const hue = avatarHue(message.fromAddress ?? name);
@@ -24,21 +27,25 @@ export function MessageRow({
   const swiping = useRef(false);
 
   function onTouchStart(e: React.TouchEvent) {
-    if (!onDelete) return;
+    if (!onDelete && !onToggleRead) return;
     startX.current = e.touches[0]!.clientX;
     swiping.current = false;
   }
 
   function onTouchMove(e: React.TouchEvent) {
     if (startX.current === null) return;
-    const delta = e.touches[0]!.clientX - startX.current;
-    // Only reveal on a left swipe; clamp the travel.
-    if (delta < -6) swiping.current = true;
-    setDx(delta < 0 ? Math.max(delta, -SWIPE_MAX) : 0);
+    let delta = e.touches[0]!.clientX - startX.current;
+    // Left swipe reveals delete; right swipe reveals read-toggle. Suppress a
+    // direction when its handler isn't wired so the row doesn't slide into a no-op.
+    if (delta < 0 && !onDelete) delta = 0;
+    if (delta > 0 && !onToggleRead) delta = 0;
+    if (Math.abs(delta) > 6) swiping.current = true;
+    setDx(Math.max(Math.min(delta, SWIPE_MAX), -SWIPE_MAX));
   }
 
   function onTouchEnd() {
     if (dx <= -SWIPE_COMMIT && onDelete) onDelete(message.id);
+    else if (dx >= SWIPE_COMMIT && onToggleRead) onToggleRead(message.id, !message.seen);
     setDx(0);
     startX.current = null;
   }
@@ -53,6 +60,11 @@ export function MessageRow({
 
   return (
     <div className="relative overflow-hidden">
+      {onToggleRead && (
+        <div className="absolute inset-y-0 left-0 flex items-center gap-1.5 bg-accent px-5 text-white">
+          {message.seen ? <MailIcon className="size-5" /> : <MailOpenIcon className="size-5" />}
+        </div>
+      )}
       {onDelete && (
         <div className="absolute inset-y-0 right-0 flex items-center gap-1.5 bg-danger px-5 text-white">
           <TrashIcon className="size-5" />

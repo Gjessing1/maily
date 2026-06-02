@@ -25,7 +25,7 @@ export function Reader() {
   const navigate = useNavigate();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
-  const { blockRemoteImages } = usePrefs();
+  const { blockRemoteImages, markReadSeconds } = usePrefs();
   const [flagged, setFlagged] = useState(false);
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
@@ -41,20 +41,39 @@ export function Reader() {
     setShowImages(false);
   }, [detail]);
 
-  // Mark as read on first open (optimistic; server is authoritative). Evaluated
-  // exactly once per opened message — keyed on the message id, NOT on the seen
-  // flag. `detail` is re-emitted by Dexie on every cache write, so a manual
+  // Auto-mark as read on open (optimistic; server is authoritative), honouring the
+  // `markReadSeconds` pref: `-1` never, `0` immediately, `>0` after a dwell timer.
+  // Evaluated exactly once per opened message — keyed on the message id, NOT on the
+  // seen flag. `detail` is re-emitted by Dexie on every cache write, so a manual
   // "mark unread" flips detail.seen back to false; gating on the id (instead of
-  // re-checking detail.seen) stops that re-emit from re-marking the message read
-  // and undoing the user's click.
+  // re-checking detail.seen) stops that re-emit from re-marking the message read and
+  // undoing the user's click. The dwell timer is cleared on unmount/navigation (and
+  // by a manual toggle, which writes flags → re-emit → effect cleanup), so leaving
+  // the message before the delay elapses leaves it unread.
+  // Keyed on primitives (id + seen), NOT the `detail` object: the body refetch on
+  // open re-caches the row and emits a fresh `detail` reference, and gating the
+  // dwell timer on that would clear it before it fires. id/seen only change on a
+  // real flag write, so the timer survives the background refetch.
+  const detailId = detail?.id;
+  const detailSeen = detail?.seen;
   useEffect(() => {
-    if (!detail || autoMarkedId.current === detail.id) return;
-    autoMarkedId.current = detail.id;
-    if (detail.seen) return; // already read on open — nothing to auto-mark
-    setSeen(true);
-    void patchCachedFlags(detail.id, { seen: true });
-    api.setFlags(detail.id, { seen: true }).catch(() => undefined);
-  }, [detail]);
+    if (!detailId || autoMarkedId.current === detailId) return;
+    autoMarkedId.current = detailId;
+    if (detailSeen) return; // already read on open — nothing to auto-mark
+    if (markReadSeconds < 0) return; // "never"
+
+    const mark = () => {
+      setSeen(true);
+      void patchCachedFlags(detailId, { seen: true });
+      api.setFlags(detailId, { seen: true }).catch(() => undefined);
+    };
+    if (markReadSeconds === 0) {
+      mark();
+      return;
+    }
+    const timer = setTimeout(mark, markReadSeconds * 1000);
+    return () => clearTimeout(timer);
+  }, [detailId, detailSeen, markReadSeconds]);
 
   async function toggleSeen() {
     if (!detail) return;

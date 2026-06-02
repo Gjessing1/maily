@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache, removeCachedMessage } from '../db/cache';
+import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { Spinner } from '../ui/Spinner';
@@ -35,6 +35,12 @@ export function Home() {
   const handleDelete = useCallback((id: string) => {
     void removeCachedMessage(id);
     api.deleteMessage(id).catch(() => undefined);
+  }, []);
+
+  // Optimistic swipe-to-toggle-read: flip the flag locally, reconcile on the server.
+  const handleToggleRead = useCallback((id: string, seen: boolean) => {
+    void patchCachedFlags(id, { seen });
+    api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
   }, []);
 
   // Infinite scroll sentinel.
@@ -83,7 +89,12 @@ export function Home() {
         ) : messages && messages.length > 0 ? (
           <>
             {messages.map((m) => (
-              <MessageRow key={m.id} message={m} onDelete={handleDelete} />
+              <MessageRow
+                key={m.id}
+                message={m}
+                onDelete={handleDelete}
+                onToggleRead={handleToggleRead}
+              />
             ))}
             <div ref={sentinel} className="flex justify-center py-6">
               {refreshing && hasMore && <Spinner />}

@@ -17,6 +17,11 @@ export interface Prefs {
   dateFormat: DateFormat;
   /** Messages fetched per page before pagination kicks in. */
   pageSize: number;
+  /**
+   * When to auto-mark a message read on open: `-1` never, `0` immediately,
+   * `>0` after that many seconds of viewing.
+   */
+  markReadSeconds: number;
 }
 
 const DEFAULTS: Prefs = {
@@ -24,6 +29,7 @@ const DEFAULTS: Prefs = {
   unreadAtTop: false,
   dateFormat: 'system',
   pageSize: 100,
+  markReadSeconds: 0,
 };
 
 const KEY = 'maily.prefs';

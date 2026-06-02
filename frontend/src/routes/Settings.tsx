@@ -160,6 +160,18 @@ export function Settings() {
               hint="Float unread messages above read ones in lists."
               prefKey="unreadAtTop"
             />
+            <SelectRow
+              label="Mark as read on open"
+              hint="When opening a message should it count as read."
+              prefKey="markReadSeconds"
+              options={[
+                { value: -1, label: 'Never' },
+                { value: 0, label: 'Immediately' },
+                { value: 2, label: 'After 2s' },
+                { value: 5, label: 'After 5s' },
+                { value: 10, label: 'After 10s' },
+              ]}
+            />
           </div>
         </section>
 
