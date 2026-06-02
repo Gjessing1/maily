@@ -70,9 +70,7 @@ export function MessageRow({
           <TrashIcon className="size-5" />
         </div>
       )}
-      <Link
-        to={`/m/${message.id}`}
-        onClick={onClick}
+      <div
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -80,43 +78,64 @@ export function MessageRow({
           transform: `translateX(${dx}px)`,
           transition: dx === 0 ? 'transform 0.2s' : 'none',
         }}
-        className="flex items-start gap-3 border-b border-border/60 bg-bg px-4 py-3 transition-colors active:bg-surface-2"
+        className="flex items-stretch bg-bg"
       >
-        <div
-          className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
-          style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
+        <Link
+          to={`/m/${message.id}`}
+          onClick={onClick}
+          className="flex min-w-0 flex-1 items-start gap-3 border-b border-border/60 px-4 py-3 transition-colors active:bg-surface-2"
         >
-          {initials(message.fromName, message.fromAddress)}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            {!message.seen && <span className="size-2 shrink-0 rounded-full bg-unread" />}
-            <span
-              className={`truncate text-[15px] ${message.seen ? 'text-fg' : 'font-semibold text-fg'}`}
-            >
-              {name}
-            </span>
-            <span className="ml-auto shrink-0 text-xs text-faint">
-              {shortDate(message.receivedAt ?? message.sentAt)}
-            </span>
+          <div
+            className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+            style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
+          >
+            {initials(message.fromName, message.fromAddress)}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`truncate text-sm ${message.seen ? 'text-muted' : 'font-medium text-fg'}`}
-            >
-              {message.subject || '(no subject)'}
-            </span>
-            {message.flagged && <StarIcon className="size-3.5 shrink-0 text-accent" />}
-            {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}
-          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              {!message.seen && <span className="size-2 shrink-0 rounded-full bg-unread" />}
+              <span
+                className={`truncate text-[15px] ${message.seen ? 'text-fg' : 'font-semibold text-fg'}`}
+              >
+                {name}
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-faint">
+                {shortDate(message.receivedAt ?? message.sentAt)}
+              </span>
+            </div>
 
-          {message.snippet && (
-            <p className="mt-0.5 line-clamp-1 text-sm text-faint">{message.snippet}</p>
-          )}
-        </div>
-      </Link>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`truncate text-sm ${message.seen ? 'text-muted' : 'font-medium text-fg'}`}
+              >
+                {message.subject || '(no subject)'}
+              </span>
+              {message.flagged && <StarIcon className="size-3.5 shrink-0 text-accent" />}
+              {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}
+            </div>
+
+            {message.snippet && (
+              <p className="mt-0.5 line-clamp-1 text-sm text-faint">{message.snippet}</p>
+            )}
+          </div>
+        </Link>
+
+        {onToggleRead && (
+          <button
+            type="button"
+            onClick={() => onToggleRead(message.id, !message.seen)}
+            className="flex shrink-0 items-center border-b border-border/60 px-4 text-faint transition-colors active:bg-surface-2"
+            aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
+          >
+            {message.seen ? (
+              <MailIcon className="size-5" />
+            ) : (
+              <MailOpenIcon className="size-5 text-accent" />
+            )}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
