@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
@@ -12,6 +12,19 @@ import { usePrefs } from '../state/prefs';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
 import { MenuIcon, PencilIcon, SearchIcon } from '../ui/icons';
+
+/** Subtle section header dividing the unread/read groups (Gmail-desktop style). */
+function SectionLabel({ children, divider }: { children: string; divider?: boolean }) {
+  return (
+    <div
+      className={`px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-faint ${
+        divider ? 'mt-1 border-t border-border' : ''
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function Home() {
   const [params, setParams] = useSearchParams();
@@ -55,6 +68,13 @@ export function Home() {
   );
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
+
+  // Gmail-style unread/read section break: only when "unread at top" is on and the
+  // list actually straddles both groups. `unreadCount` is also the index of the
+  // first read row, since useMessages sorts all unread ahead of read.
+  const unreadCount = prefs.unreadAtTop ? (messages?.filter((m) => !m.seen).length ?? 0) : 0;
+  const showSections =
+    prefs.unreadAtTop && !!messages && unreadCount > 0 && unreadCount < messages.length;
 
   // Swipe-to-delete: stage the delete with an undo window (drops the row locally
   // now, commits the Trash move server-side after the snackbar elapses).
@@ -113,17 +133,22 @@ export function Home() {
           </div>
         ) : messages && messages.length > 0 ? (
           <>
-            {messages.map((m) => (
-              <MessageRow
-                key={m.id}
-                message={m}
-                onDelete={handleDelete}
-                onToggleRead={handleToggleRead}
-                swipeRight={prefs.swipeRight}
-                swipeLeft={prefs.swipeLeft}
-                to={splitMode ? selectTo(m.id) : undefined}
-                selected={splitMode && m.id === selectedId}
-              />
+            {messages.map((m, i) => (
+              <Fragment key={m.id}>
+                {showSections && i === 0 && <SectionLabel>Unread</SectionLabel>}
+                {showSections && i === unreadCount && (
+                  <SectionLabel divider>Everything else</SectionLabel>
+                )}
+                <MessageRow
+                  message={m}
+                  onDelete={handleDelete}
+                  onToggleRead={handleToggleRead}
+                  swipeRight={prefs.swipeRight}
+                  swipeLeft={prefs.swipeLeft}
+                  to={splitMode ? selectTo(m.id) : undefined}
+                  selected={splitMode && m.id === selectedId}
+                />
+              </Fragment>
             ))}
             <div ref={sentinel} className="flex justify-center py-6">
               {refreshing && hasMore && <Spinner />}
