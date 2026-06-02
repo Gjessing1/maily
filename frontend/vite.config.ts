@@ -19,6 +19,12 @@ export default defineConfig({
       filename: 'sw.ts',
       injectRegister: 'auto',
       registerType: 'autoUpdate',
+      // mail.gjessing.io sits behind a cookie-based SSO (tinyauth via Caddy).
+      // The browser fetches the manifest as an anonymous request, so without
+      // this it gets a 401 from the auth gateway. `useCredentials` adds
+      // crossorigin="use-credentials" to the injected manifest <link>, so the
+      // browser sends the SSO cookie when fetching the manifest.
+      useCredentials: true,
       manifest: {
         name: 'maily',
         short_name: 'maily',
