@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
+import type { SwipeAction } from '../state/prefs';
 import { avatarHue, initials, senderName, shortDate } from '../ui/format';
 import { MailIcon, MailOpenIcon, PaperclipIcon, StarIcon, TrashIcon } from '../ui/icons';
 
@@ -8,26 +9,55 @@ import { MailIcon, MailOpenIcon, PaperclipIcon, StarIcon, TrashIcon } from '../u
 const SWIPE_COMMIT = 96;
 const SWIPE_MAX = 120;
 
+/** Background colour + icon shown behind the row while swiping in a given direction. */
+function swipeReveal(action: SwipeAction, seen: boolean) {
+  if (action === 'delete') return { bg: 'bg-danger', icon: <TrashIcon className="size-5" /> };
+  if (action === 'read')
+    return {
+      bg: 'bg-accent',
+      icon: seen ? <MailIcon className="size-5" /> : <MailOpenIcon className="size-5" />,
+    };
+  return null;
+}
+
 export function MessageRow({
   message,
   onDelete,
   onToggleRead,
+  swipeRight = 'read',
+  swipeLeft = 'delete',
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
-  /** Toggle read/unread from the list (right-swipe). Receives the desired `seen`. */
+  /** Toggle read/unread from the list. Receives the desired `seen`. */
   onToggleRead?: (id: string, seen: boolean) => void;
+  /** Action committed on a right (left→right) swipe. */
+  swipeRight?: SwipeAction;
+  /** Action committed on a left (right→left) swipe. */
+  swipeLeft?: SwipeAction;
 }) {
   const name = senderName(message.fromName, message.fromAddress);
   const hue = avatarHue(message.fromAddress ?? name);
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
+  // Resolve each configured direction down to "is it actually firable here".
+  // A 'read'/'delete' action only counts when its handler is wired.
+  const canFire = (action: SwipeAction) =>
+    (action === 'read' && !!onToggleRead) || (action === 'delete' && !!onDelete);
+  const rightLive = canFire(swipeRight);
+  const leftLive = canFire(swipeLeft);
+
   const [dx, setDx] = useState(0);
   const startX = useRef<number | null>(null);
   const swiping = useRef(false);
 
+  function fire(action: SwipeAction) {
+    if (action === 'read') onToggleRead?.(message.id, !message.seen);
+    else if (action === 'delete') onDelete?.(message.id);
+  }
+
   function onTouchStart(e: React.TouchEvent) {
-    if (!onDelete && !onToggleRead) return;
+    if (!rightLive && !leftLive) return;
     startX.current = e.touches[0]!.clientX;
     swiping.current = false;
   }
@@ -35,17 +65,17 @@ export function MessageRow({
   function onTouchMove(e: React.TouchEvent) {
     if (startX.current === null) return;
     let delta = e.touches[0]!.clientX - startX.current;
-    // Left swipe reveals delete; right swipe reveals read-toggle. Suppress a
-    // direction when its handler isn't wired so the row doesn't slide into a no-op.
-    if (delta < 0 && !onDelete) delta = 0;
-    if (delta > 0 && !onToggleRead) delta = 0;
+    // Suppress a direction whose action is disabled/unwired so the row doesn't
+    // slide into a no-op. Right swipe → swipeRight; left swipe → swipeLeft.
+    if (delta > 0 && !rightLive) delta = 0;
+    if (delta < 0 && !leftLive) delta = 0;
     if (Math.abs(delta) > 6) swiping.current = true;
     setDx(Math.max(Math.min(delta, SWIPE_MAX), -SWIPE_MAX));
   }
 
   function onTouchEnd() {
-    if (dx <= -SWIPE_COMMIT && onDelete) onDelete(message.id);
-    else if (dx >= SWIPE_COMMIT && onToggleRead) onToggleRead(message.id, !message.seen);
+    if (dx >= SWIPE_COMMIT && rightLive) fire(swipeRight);
+    else if (dx <= -SWIPE_COMMIT && leftLive) fire(swipeLeft);
     setDx(0);
     startX.current = null;
   }
@@ -58,16 +88,24 @@ export function MessageRow({
     }
   }
 
+  // Right swipe reveals from the left edge; left swipe reveals from the right edge.
+  const rightReveal = rightLive ? swipeReveal(swipeRight, message.seen) : null;
+  const leftReveal = leftLive ? swipeReveal(swipeLeft, message.seen) : null;
+
   return (
     <div className="relative overflow-hidden">
-      {onToggleRead && (
-        <div className="absolute inset-y-0 left-0 flex items-center gap-1.5 bg-accent px-5 text-white">
-          {message.seen ? <MailIcon className="size-5" /> : <MailOpenIcon className="size-5" />}
+      {rightReveal && (
+        <div
+          className={`absolute inset-y-0 left-0 flex items-center gap-1.5 px-5 text-white ${rightReveal.bg}`}
+        >
+          {rightReveal.icon}
         </div>
       )}
-      {onDelete && (
-        <div className="absolute inset-y-0 right-0 flex items-center gap-1.5 bg-danger px-5 text-white">
-          <TrashIcon className="size-5" />
+      {leftReveal && (
+        <div
+          className={`absolute inset-y-0 right-0 flex items-center gap-1.5 px-5 text-white ${leftReveal.bg}`}
+        >
+          {leftReveal.icon}
         </div>
       )}
       <div

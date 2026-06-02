@@ -6,6 +6,7 @@ import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
+import { usePrefs } from '../state/prefs';
 import { Spinner } from '../ui/Spinner';
 import { MenuIcon, PencilIcon, SearchIcon } from '../ui/icons';
 
@@ -14,6 +15,7 @@ export function Home() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const accounts = useAccounts();
+  const prefs = usePrefs();
   const folderId = params.get('folder') ?? undefined;
   const firstFolders = useFolders(accounts?.[0]?.id);
 
@@ -94,6 +96,8 @@ export function Home() {
                 message={m}
                 onDelete={handleDelete}
                 onToggleRead={handleToggleRead}
+                swipeRight={prefs.swipeRight}
+                swipeLeft={prefs.swipeLeft}
               />
             ))}
             <div ref={sentinel} className="flex justify-center py-6">

@@ -224,6 +224,34 @@ export function Settings() {
 
         <section className="mt-6">
           <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Gestures
+          </p>
+          <div className="border-y border-border">
+            <SelectRow
+              label="Swipe right"
+              hint="Action when you swipe a message row left → right."
+              prefKey="swipeRight"
+              options={[
+                { value: 'read', label: 'Toggle read' },
+                { value: 'delete', label: 'Delete' },
+                { value: 'none', label: 'Off' },
+              ]}
+            />
+            <SelectRow
+              label="Swipe left"
+              hint="Action when you swipe a message row right → left."
+              prefKey="swipeLeft"
+              options={[
+                { value: 'read', label: 'Toggle read' },
+                { value: 'delete', label: 'Delete' },
+                { value: 'none', label: 'Off' },
+              ]}
+            />
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
             Display
           </p>
           <div className="border-y border-border">

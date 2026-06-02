@@ -11,6 +11,9 @@ export type DateFormat = 'system' | 'dmy' | 'mdy' | 'ymd';
 /** Colour theme. 'system' follows the OS `prefers-color-scheme`. */
 export type Theme = 'system' | 'light' | 'dark';
 
+/** Action bound to a list-row swipe. 'read' toggles seen/unseen; 'none' disables the swipe. */
+export type SwipeAction = 'none' | 'read' | 'delete';
+
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
   blockRemoteImages: boolean;
@@ -27,6 +30,10 @@ export interface Prefs {
    * `>0` after that many seconds of viewing.
    */
   markReadSeconds: number;
+  /** Action committed by swiping a list row right (left→right). */
+  swipeRight: SwipeAction;
+  /** Action committed by swiping a list row left (right→left). */
+  swipeLeft: SwipeAction;
 }
 
 const DEFAULTS: Prefs = {
@@ -36,6 +43,8 @@ const DEFAULTS: Prefs = {
   theme: 'system',
   pageSize: 100,
   markReadSeconds: 0,
+  swipeRight: 'read',
+  swipeLeft: 'delete',
 };
 
 const KEY = 'maily.prefs';
