@@ -69,11 +69,40 @@ async function downloadTextPart(
 
 type FetchMessage = Awaited<ReturnType<ImapFlow['fetchOne']>>;
 
-/** Assemble a ParsedMessage from a fetched message + its downloaded body parts. */
-async function toParsedMessage(
-  ctx: SyncContext,
-  msg: Exclude<FetchMessage, false>,
-): Promise<ParsedMessage> {
+/**
+ * The subset of a fetched message we keep in memory. We MUST fully drain the
+ * `fetch()` iterator before issuing any `download()` calls: imapflow runs IMAP
+ * commands serially, so a `download()` invoked while a `fetch()` response is
+ * still streaming deadlocks (the download queues behind the fetch, the fetch
+ * can't finish because we're awaiting the download) until the socket times out.
+ * So we snapshot the plain fields here, let the iterator complete, then download.
+ */
+interface CapturedMessage {
+  uid: number;
+  envelope: Exclude<FetchMessage, false>['envelope'];
+  bodyStructure: Exclude<FetchMessage, false>['bodyStructure'];
+  internalDate: Exclude<FetchMessage, false>['internalDate'];
+  flags: Set<string> | undefined;
+  headers: Buffer | undefined;
+  emailId: string | undefined;
+  threadId: string | undefined;
+}
+
+function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
+  return {
+    uid: msg.uid,
+    envelope: msg.envelope,
+    bodyStructure: msg.bodyStructure,
+    internalDate: msg.internalDate,
+    flags: msg.flags,
+    headers: msg.headers,
+    emailId: msg.emailId,
+    threadId: msg.threadId,
+  };
+}
+
+/** Assemble a ParsedMessage from a captured message + its downloaded body parts. */
+async function toParsedMessage(ctx: SyncContext, msg: CapturedMessage): Promise<ParsedMessage> {
   const structure = extractStructure(msg.bodyStructure);
   const bodyText = structure.textPartId
     ? await downloadTextPart(ctx, msg.uid, structure.textPartId)
@@ -127,8 +156,16 @@ export async function fetchAndStore(
 
   for (let i = 0; i < uids.length; i += FETCH_BATCH) {
     const batch = uids.slice(i, i + FETCH_BATCH);
+
+    // Phase 1: drain the fetch fully (no other IMAP command may run mid-stream).
+    const captured: CapturedMessage[] = [];
     for await (const msg of ctx.client.fetch(batch, FETCH_QUERY, { uid: true })) {
-      const parsed = await toParsedMessage(ctx, msg as Exclude<FetchMessage, false>);
+      captured.push(capture(msg as Exclude<FetchMessage, false>));
+    }
+
+    // Phase 2: connection is free now — download body parts and persist.
+    for (const msg of captured) {
+      const parsed = await toParsedMessage(ctx, msg);
       const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed);
       if (result.inserted) insertedIds.push(result.id);
       else updated += 1;
