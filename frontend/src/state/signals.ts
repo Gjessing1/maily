@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { onSignal } from '../api/socket';
-import { cacheBody, patchCachedFlags } from '../db/cache';
+import { cacheBody, patchCachedFlags, removeCachedMessage } from '../db/cache';
 
 export interface SyncProgress {
   accountId: string;
@@ -33,6 +33,11 @@ export function useSignals(): { progress: SyncProgress | null } {
             seen: signal.seen,
             flagged: signal.flagged,
           });
+          break;
+        case 'mail:deleted':
+          // Tombstoned on the backend (moved to Trash) — drop it from the local cache
+          // so the list/reader stop showing it (it's filtered server-side too).
+          void removeCachedMessage(signal.messageId);
           break;
         case 'sync:progress':
           setProgress({

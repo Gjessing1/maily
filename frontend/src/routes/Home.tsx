@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache } from '../db/cache';
+import { cache, removeCachedMessage } from '../db/cache';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { Spinner } from '../ui/Spinner';
@@ -29,6 +30,12 @@ export function Home() {
   );
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
+
+  // Optimistic swipe-to-delete: drop the row locally, move to Trash on the server.
+  const handleDelete = useCallback((id: string) => {
+    void removeCachedMessage(id);
+    api.deleteMessage(id).catch(() => undefined);
+  }, []);
 
   // Infinite scroll sentinel.
   const sentinel = useRef<HTMLDivElement>(null);
@@ -76,7 +83,7 @@ export function Home() {
         ) : messages && messages.length > 0 ? (
           <>
             {messages.map((m) => (
-              <MessageRow key={m.id} message={m} />
+              <MessageRow key={m.id} message={m} onDelete={handleDelete} />
             ))}
             <div ref={sentinel} className="flex justify-center py-6">
               {refreshing && hasMore && <Spinner />}

@@ -13,6 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, ne } from 'drizzle-orm';
+import type { FolderRole } from '@maily/shared';
 import { db } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
 import type { ParsedMessage } from './types.js';
@@ -122,19 +123,23 @@ export function upsertMessage(
   folderId: string,
   uid: number | null,
   parsed: ParsedMessage,
+  folderRole: FolderRole,
 ): UpsertResult {
   return db.transaction((): UpsertResult => {
     const existing = findExisting(accountId, parsed);
     if (existing) {
-      db.update(messages)
-        .set({
-          seen: parsed.flags.seen,
-          flagged: parsed.flags.flagged,
-          answered: parsed.flags.answered,
-          draft: parsed.flags.draft,
-        })
-        .where(eq(messages.id, existing.id))
-        .run();
+      const set: Partial<typeof messages.$inferInsert> = {
+        seen: parsed.flags.seen,
+        flagged: parsed.flags.flagged,
+        answered: parsed.flags.answered,
+        draft: parsed.flags.draft,
+      };
+      // Re-sighting a message in a non-trash folder un-tombstones it: it clearly
+      // still exists on the server (undelete, or a move-race that briefly orphaned
+      // it). A re-sight in Trash must NOT clear the tombstone — trashed mail stays
+      // hidden from every list/search view (ARCHITECTURE §13).
+      if (folderRole !== 'trash') set.deletedAt = null;
+      db.update(messages).set(set).where(eq(messages.id, existing.id)).run();
       linkFolder(existing.id, folderId, uid);
       return { id: existing.id, inserted: false };
     }
@@ -188,6 +193,29 @@ export function upsertMessage(
   });
 }
 
+/** Soft-delete: set the tombstone timestamp. Row + metadata survive (ARCHITECTURE §13). */
+export function markMessageDeleted(messageId: string): void {
+  db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, messageId)).run();
+}
+
+/**
+ * Replace ALL of a message's folder mappings with a single mapping into `folderId`.
+ * Used after an interactive MOVE-to-Trash: on Gmail the server strips every other
+ * label, on generic IMAP the one source folder is vacated — either way the local
+ * mapping converges to just the destination. Keeping one `(folder, uid)` mapping
+ * leaves the message's attachments fetchable via `uidLocationForMessage`.
+ */
+export function relinkMessageToFolder(
+  messageId: string,
+  folderId: string,
+  uid: number | null,
+): void {
+  db.transaction(() => {
+    db.delete(messageFolders).where(eq(messageFolders.messageId, messageId)).run();
+    db.insert(messageFolders).values({ messageId, folderId, uid }).run();
+  });
+}
+
 /** Update just the IMAP flags for a message (resync / IDLE flag events). */
 export function updateMessageFlags(
   messageId: string,
@@ -217,15 +245,38 @@ export function knownUids(folderId: string): number[] {
 }
 
 /**
- * Drop folder mappings for the given UIDs (messages expunged from that folder).
- * The message row itself is left intact — it may still live in other folders;
- * a generic cleanup of fully-orphaned messages can come later.
+ * Drop folder mappings for the given UIDs (messages expunged from that folder) and
+ * converge any now fully-orphaned message onto the tombstone model (ARCHITECTURE
+ * §13): a message that no longer lives in ANY folder was permanently removed
+ * server-side, so we mark `deleted_at` rather than leaving a dangling row. The row
+ * itself is always kept so `/m/:internalUUID` deep links never 404. A later
+ * re-sight in a non-trash folder (`upsertMessage`) clears the tombstone, so a
+ * cross-folder move that momentarily orphans a message self-heals.
  */
 export function unlinkUids(folderId: string, uids: number[]): void {
   if (uids.length === 0) return;
-  db.delete(messageFolders)
-    .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
-    .run();
+  db.transaction(() => {
+    const affected = db
+      .select({ id: messageFolders.messageId })
+      .from(messageFolders)
+      .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
+      .all()
+      .map((r) => r.id);
+
+    db.delete(messageFolders)
+      .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
+      .run();
+
+    for (const id of affected) {
+      const stillMapped = db
+        .select({ folderId: messageFolders.folderId })
+        .from(messageFolders)
+        .where(eq(messageFolders.messageId, id))
+        .limit(1)
+        .get();
+      if (!stillMapped) markMessageDeleted(id);
+    }
+  });
 }
 
 /** Drop ALL UID mappings for a folder — used when UIDVALIDITY changes (UIDs invalidated). */

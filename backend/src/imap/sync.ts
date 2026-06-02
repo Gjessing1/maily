@@ -174,7 +174,7 @@ export async function fetchAndStore(
     // Phase 2: connection is free now — download body parts and persist.
     for (const msg of captured) {
       const parsed = await toParsedMessage(ctx, msg);
-      const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed);
+      const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed, folder.role);
       if (result.inserted) insertedIds.push(result.id);
       else updated += 1;
     }

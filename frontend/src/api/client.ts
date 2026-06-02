@@ -100,6 +100,10 @@ export const api = {
       body: JSON.stringify(flags),
     }),
 
+  /** Soft-delete → move to Trash (server tombstones + moves on IMAP out-of-band). */
+  deleteMessage: (id: string) =>
+    request<{ ok: boolean }>(`/api/messages/${id}`, { method: 'DELETE' }),
+
   send: (accountId: string, msg: SendMessageRequest) =>
     request<{ messageId?: string; appended?: boolean }>(`/api/accounts/${accountId}/send`, {
       method: 'POST',

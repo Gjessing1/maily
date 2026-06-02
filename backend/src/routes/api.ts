@@ -12,6 +12,7 @@ import { emitSignal } from '../events.js';
 import {
   attachmentsForMessage,
   deletePushSubscription,
+  folderByRole,
   folderIdsForMessage,
   getAttachment,
   getMessage,
@@ -22,7 +23,7 @@ import {
   uidLocationForMessage,
 } from '../db/queries.js';
 import { ensureAttachmentOnDisk } from '../storage/attachments.js';
-import { updateMessageFlags } from '../imap/store.js';
+import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
 import { toAccountDto, toFolderDto, toMessageDetailDto, toMessageDto } from '../http/dto.js';
@@ -100,6 +101,48 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true, seen, flagged };
     },
   );
+
+  // Soft-delete → move to Trash. Tombstone locally first (instant, optimistic),
+  // then MOVE on IMAP out-of-band over a transient connection so INBOX IDLE is
+  // never disturbed (ARCHITECTURE §2/§13). The provider-agnostic primitive is a
+  // UID MOVE to the role='trash' folder — a real trash on Gmail, a plain move on
+  // Dovecot; imapflow falls back to COPY+\Deleted+EXPUNGE where MOVE is unadvertised.
+  app.delete<{ Params: { id: string } }>('/api/messages/:id', async (req, reply) => {
+    const m = getMessage(req.params.id);
+    if (!m) return reply.code(404).send({ error: 'not found' });
+
+    markMessageDeleted(m.id);
+    emitSignal({ type: 'mail:deleted', accountId: m.accountId, messageId: m.id });
+
+    const trash = folderByRole(m.accountId, 'trash');
+    const loc = uidLocationForMessage(m.id);
+    const engine = getEngine(m.accountId);
+    if (!trash) {
+      app.log.warn(
+        `no trash folder for account ${m.accountId}; message ${m.id} tombstoned locally`,
+      );
+    } else if (loc && engine && loc.folderPath !== trash.path) {
+      try {
+        const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
+          const lock = await client.getMailboxLock(loc.folderPath);
+          try {
+            const res = await client.messageMove(String(loc.uid), trash.path, { uid: true });
+            // uidMap (source→dest UID) is present when the server supports MOVE/COPYUID.
+            return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
+          } finally {
+            lock.release();
+          }
+        });
+        // Converge the local mapping onto Trash so the message stays fetchable; the
+        // tombstone is preserved (Trash re-sights never clear it — see store.ts).
+        relinkMessageToFolder(m.id, trash.id, newUid);
+      } catch (err) {
+        app.log.warn(`trash move failed for ${m.id}: ${(err as Error).message}`);
+      }
+    }
+
+    return { ok: true };
+  });
 
   app.get<{ Params: { id: string; attId: string } }>(
     '/api/messages/:id/attachments/:attId',

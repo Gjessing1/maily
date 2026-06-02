@@ -3,7 +3,7 @@
  * keeps all SQL in one place. Local full-text search goes through the FTS5 index
  * (ARCHITECTURE §12 — never LIKE-scan).
  */
-import { and, desc, eq, getTableColumns, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { db } from './client.js';
 import {
   accounts,
@@ -25,15 +25,29 @@ export function listFolders(accountId: string): (typeof folders.$inferSelect)[] 
   return db.select().from(folders).where(eq(folders.accountId, accountId)).all();
 }
 
+/** The account's folder for a given well-known role (e.g. 'trash'), if it exists. */
+export function folderByRole(
+  accountId: string,
+  role: (typeof folders.$inferSelect)['role'],
+): typeof folders.$inferSelect | undefined {
+  return db
+    .select()
+    .from(folders)
+    .where(and(eq(folders.accountId, accountId), eq(folders.role, role)))
+    .get();
+}
+
 export function getMessage(id: string): MessageRow | undefined {
   return db.select().from(messages).where(eq(messages.id, id)).get();
 }
 
-/** Messages in a folder, newest first, keyset-paginated by receivedAt. */
+/** Messages in a folder, newest first, keyset-paginated by receivedAt. Tombstones hidden (§13). */
 export function listMessages(folderId: string, limit: number, beforeMs?: number): MessageRow[] {
-  const where = beforeMs
-    ? and(eq(messageFolders.folderId, folderId), lt(messages.receivedAt, new Date(beforeMs)))
-    : eq(messageFolders.folderId, folderId);
+  const where = and(
+    eq(messageFolders.folderId, folderId),
+    isNull(messages.deletedAt),
+    beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+  );
   return db
     .select(getTableColumns(messages))
     .from(messages)
@@ -105,7 +119,7 @@ export function searchLocal(query: string, limit: number): MessageRow[] {
     db
       .select()
       .from(messages)
-      .where(inArray(messages.id, ids))
+      .where(and(inArray(messages.id, ids), isNull(messages.deletedAt)))
       .all()
       .map((m) => [m.id, m]),
   );

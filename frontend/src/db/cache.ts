@@ -89,6 +89,12 @@ export async function patchCachedFlags(
   await cache.bodies.where('id').equals(id).modify(flags);
 }
 
+/** Remove a message from the cache entirely (optimistic delete / tombstone signal). */
+export async function removeCachedMessage(id: string): Promise<void> {
+  await cache.messages.delete(id);
+  await cache.bodies.delete(id);
+}
+
 /** Drop cache entries older than the TTL. Call opportunistically on boot. */
 export async function evictStale(): Promise<void> {
   const cutoff = Date.now() - CACHE_TTL_MS;

@@ -103,5 +103,6 @@ export interface PushSubscriptionDto {
 export type SocketSignal =
   | { type: 'mail:new'; accountId: string; messageId: string }
   | { type: 'mail:flags'; accountId: string; messageId: string; seen: boolean; flagged: boolean }
+  | { type: 'mail:deleted'; accountId: string; messageId: string }
   | { type: 'sync:progress'; accountId: string; done: number; total: number }
   | { type: 'action:ready'; messageId: string; label: string };

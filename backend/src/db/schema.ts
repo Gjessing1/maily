@@ -94,6 +94,13 @@ export const messages = sqliteTable(
     flagged: integer('flagged', { mode: 'boolean' }).notNull().default(false),
     answered: integer('answered', { mode: 'boolean' }).notNull().default(false),
     draft: integer('draft', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * Soft-delete / tombstone timestamp (ARCHITECTURE §13). Non-null ⇒ trashed:
+     * filtered out of every list/search view, but the row survives so
+     * `/m/:internalUUID` deep links never 404. Cleared when the message is re-sighted
+     * in a NON-trash folder on resync (undelete / move-race convergence — see store.ts).
+     */
+    deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
     createdAt: now(),
   },
   (t) => [

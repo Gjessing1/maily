@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { patchCachedFlags } from '../db/cache';
+import { patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { useAccounts, useMessageDetail } from '../state/data';
 import { MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ForwardIcon, ReplyAllIcon, ReplyIcon, StarIcon } from '../ui/icons';
+import { BackIcon, ForwardIcon, ReplyAllIcon, ReplyIcon, StarIcon, TrashIcon } from '../ui/icons';
 import { avatarHue, fullDate, initials, senderName } from '../ui/format';
 import type { ComposeAttachment, ComposePrefill } from './Compose';
 
@@ -105,6 +105,16 @@ export function Reader() {
     navigate('/compose', { state: { ...replyCommon(), to, cc } });
   }
 
+  async function remove() {
+    if (!detail) return;
+    // Optimistic: drop from cache + leave the reader immediately; the server moves
+    // the message to Trash out-of-band. We don't revert on failure — the next folder
+    // resync is authoritative either way.
+    void removeCachedMessage(detail.id);
+    navigate(-1);
+    api.deleteMessage(detail.id).catch(() => undefined);
+  }
+
   function forward() {
     if (!detail) return;
     const subject = detail.subject ?? '';
@@ -152,6 +162,13 @@ export function Reader() {
           aria-label="Flag"
         >
           <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
+        </button>
+        <button
+          onClick={remove}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label="Delete"
+        >
+          <TrashIcon className="text-fg" />
         </button>
         <button onClick={reply} className="rounded-full p-2 active:bg-surface-2" aria-label="Reply">
           <ReplyIcon className="text-fg" />
