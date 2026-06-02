@@ -5,9 +5,12 @@
  */
 import type { ImapFlow } from 'imapflow';
 import type { FolderRole } from '@maily/shared';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, notInArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { folders } from '../db/schema.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('folders');
 
 export type FolderRow = typeof folders.$inferSelect;
 
@@ -86,11 +89,21 @@ export function ensureFolder(
   return db.insert(folders).values({ accountId, path, name, role }).returning().get();
 }
 
-/** List the account's mailboxes from the server and reconcile them into `folders`. */
+/**
+ * List the account's mailboxes from the server and reconcile them into `folders`.
+ * Prunes rows for paths the server no longer advertises: when a Gmail account
+ * switches UI language the special-folder IMAP paths are renamed
+ * (`[Gmail]/Sendt e-post` → `[Gmail]/Sent Mail`), and without pruning the old
+ * rows linger forever, showing duplicate folders in two languages. Deleting a
+ * folder cascades its `message_folders` mappings; the messages themselves
+ * survive and are re-mapped to the renamed folder on its next (full) resync.
+ */
 export async function syncFolders(client: ImapFlow, accountId: string): Promise<FolderRow[]> {
   const list = await client.list();
   const rows: FolderRow[] = [];
+  const seenPaths: string[] = [];
   for (const box of list) {
+    seenPaths.push(box.path);
     // Skip \Noselect containers (pure hierarchy nodes hold no messages).
     if (box.flags.has('\\Noselect')) continue;
     // SPECIAL-USE is authoritative; fall back to name matching only when absent.
@@ -98,6 +111,21 @@ export async function syncFolders(client: ImapFlow, accountId: string): Promise<
     if (role === 'custom') role = roleFromName(box.name, box.path);
     rows.push(ensureFolder(accountId, box.path, box.name, role));
   }
+
+  // Prune folders the server no longer lists. Guarded by a non-empty enumeration
+  // (every account exposes at least INBOX) so a transient empty LIST can't wipe
+  // the table; an erroneous prune would only force a re-create + full resync.
+  if (seenPaths.length > 0) {
+    const removed = db
+      .delete(folders)
+      .where(and(eq(folders.accountId, accountId), notInArray(folders.path, seenPaths)))
+      .returning()
+      .all();
+    for (const f of removed) {
+      log.info(`pruned stale folder "${f.path}" (account ${accountId})`);
+    }
+  }
+
   return rows;
 }
 
