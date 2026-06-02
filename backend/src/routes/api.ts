@@ -106,6 +106,11 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
         } catch (err) {
           app.log.warn(`flag propagation failed: ${(err as Error).message}`);
         }
+
+        // A star/unstar changes membership of a flag-derived folder (Gmail's
+        // [Gmail]/Starred). Kick an immediate non-INBOX reconcile so it shows in
+        // that folder right away instead of after the next cron pass.
+        if (req.body.flagged !== undefined) engine.reconcileFoldersNow();
       }
 
       emitSignal({ type: 'mail:flags', accountId: m.accountId, messageId: m.id, seen, flagged });

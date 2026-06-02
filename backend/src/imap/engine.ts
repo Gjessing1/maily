@@ -33,6 +33,7 @@ export class AccountEngine {
   private stopped = false;
   private reconnecting = false;
   private idleBusy = false;
+  private cronBusy = false;
   private cronTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly config: AccountConfig) {
@@ -162,9 +163,20 @@ export class AccountEngine {
     }
   }
 
+  /**
+   * Reconcile non-INBOX folders now, off the IDLE connection. Used after an
+   * interactive flag change (e.g. starring) so flag-derived folders like Gmail's
+   * `[Gmail]/Starred` pick up the new membership immediately instead of waiting up
+   * to a full cron interval. Fire-and-forget; coalesced with the periodic cron.
+   */
+  reconcileFoldersNow(): void {
+    void this.runFolderCron();
+  }
+
   /** Reconcile non-INBOX folders over a transient connection (keeps INBOX IDLE alive). */
   private async runFolderCron(): Promise<void> {
-    if (this.stopped || !this.account) return;
+    if (this.stopped || !this.account || this.cronBusy) return;
+    this.cronBusy = true;
     const client = createClient(this.config);
     try {
       await client.connect();
@@ -190,6 +202,7 @@ export class AccountEngine {
       } catch {
         client.close();
       }
+      this.cronBusy = false;
     }
   }
 
