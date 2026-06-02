@@ -55,13 +55,21 @@ export function roleFromName(name: string, path: string): FolderRole {
   return 'custom';
 }
 
-/** Insert-or-update a folder row; refreshes name/role and the UIDVALIDITY guard. */
+/**
+ * Insert-or-update a folder row from a LIST enumeration. Refreshes only the
+ * display-facing fields (name/role); it MUST NOT touch the resync bookkeeping
+ * (`uid_validity`, `last_uid`, `highest_modseq`), which is owned solely by
+ * `updateFolderSyncState` after an actual sync pass. Clobbering `uid_validity`
+ * here would make every reconnect/cron look like a UIDVALIDITY change and force
+ * `resyncFolder` to wipe + rebuild every folder's mappings (stranding any message
+ * outside the cache window as a live-but-unmapped orphan). The real UIDVALIDITY
+ * is read fresh from the opened mailbox inside `resyncFolder`.
+ */
 export function ensureFolder(
   accountId: string,
   path: string,
   name: string,
   role: FolderRole,
-  uidValidity: number | null,
 ): FolderRow {
   const existing = db
     .select()
@@ -70,11 +78,12 @@ export function ensureFolder(
     .get();
 
   if (existing) {
-    db.update(folders).set({ name, role, uidValidity }).where(eq(folders.id, existing.id)).run();
-    return { ...existing, name, role, uidValidity };
+    db.update(folders).set({ name, role }).where(eq(folders.id, existing.id)).run();
+    return { ...existing, name, role };
   }
 
-  return db.insert(folders).values({ accountId, path, name, role, uidValidity }).returning().get();
+  // New folder: uid_validity stays null so the first resync does a full sync.
+  return db.insert(folders).values({ accountId, path, name, role }).returning().get();
 }
 
 /** List the account's mailboxes from the server and reconcile them into `folders`. */
@@ -87,7 +96,7 @@ export async function syncFolders(client: ImapFlow, accountId: string): Promise<
     // SPECIAL-USE is authoritative; fall back to name matching only when absent.
     let role = roleFromSpecialUse(box.specialUse, box.path);
     if (role === 'custom') role = roleFromName(box.name, box.path);
-    rows.push(ensureFolder(accountId, box.path, box.name, role, null));
+    rows.push(ensureFolder(accountId, box.path, box.name, role));
   }
   return rows;
 }
