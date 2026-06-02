@@ -33,6 +33,28 @@ export function roleFromSpecialUse(specialUse: string | undefined, path: string)
   }
 }
 
+/**
+ * Heuristic role from a folder's name, used only when the server omits SPECIAL-USE
+ * (Gmail + mailbox.org both advertise it, so this is a safety net for generic IMAP).
+ * Without it a missing `\Trash` flag would leave us with no trash folder and a
+ * "delete" that tombstones locally but never moves the message server-side. Matches
+ * are anchored to the full folder/basename so custom folders like "Trash 2019" are
+ * not misclassified; covers the common English + German (mailbox.org) defaults.
+ */
+export function roleFromName(name: string, path: string): FolderRole {
+  const basename = path.split(/[/.\\]/).pop() ?? '';
+  const candidates = [name, basename].map((s) => s.trim().toLowerCase());
+  const is = (re: RegExp): boolean => candidates.some((c) => re.test(c));
+  if (is(/^(trash|bin|deleted( items| messages)?|papierkorb|gel[öo]schte( objekte| elemente)?)$/)) {
+    return 'trash';
+  }
+  if (is(/^(sent( mail| items| messages)?|gesendet(e objekte)?)$/)) return 'sent';
+  if (is(/^(drafts?|entw[üu]rfe)$/)) return 'drafts';
+  if (is(/^(junk( e-?mail)?|spam|bulk mail)$/)) return 'junk';
+  if (is(/^(archive|all mail|archiv)$/)) return 'archive';
+  return 'custom';
+}
+
 /** Insert-or-update a folder row; refreshes name/role and the UIDVALIDITY guard. */
 export function ensureFolder(
   accountId: string,
@@ -62,7 +84,9 @@ export async function syncFolders(client: ImapFlow, accountId: string): Promise<
   for (const box of list) {
     // Skip \Noselect containers (pure hierarchy nodes hold no messages).
     if (box.flags.has('\\Noselect')) continue;
-    const role = roleFromSpecialUse(box.specialUse, box.path);
+    // SPECIAL-USE is authoritative; fall back to name matching only when absent.
+    let role = roleFromSpecialUse(box.specialUse, box.path);
+    if (role === 'custom') role = roleFromName(box.name, box.path);
     rows.push(ensureFolder(accountId, box.path, box.name, role, null));
   }
   return rows;

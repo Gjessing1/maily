@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { useAccounts, useMessageDetail } from '../state/data';
-import { MailHtml, MailText } from '../components/MailBody';
+import { usePrefs } from '../state/prefs';
+import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, ForwardIcon, ReplyAllIcon, ReplyIcon, StarIcon, TrashIcon } from '../ui/icons';
@@ -15,12 +16,16 @@ export function Reader() {
   const navigate = useNavigate();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
+  const { blockRemoteImages } = usePrefs();
   const [flagged, setFlagged] = useState(false);
+  const [showImages, setShowImages] = useState(false);
   const markedSeen = useRef(false);
 
-  // Reflect server flag state once the detail loads.
+  // Reflect server flag state once the detail loads; reset the per-message image
+  // override so a newly opened message starts blocked again (when blocking is on).
   useEffect(() => {
     if (detail) setFlagged(detail.flagged);
+    setShowImages(false);
   }, [detail]);
 
   // Mark as read on first open (optimistic; server is authoritative).
@@ -144,6 +149,11 @@ export function Reader() {
 
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
+  const allowImages = !blockRemoteImages || showImages;
+  const imagesBlocked =
+    blockRemoteImages &&
+    !showImages &&
+    Boolean(detail?.bodyHtml && hasRemoteImages(detail.bodyHtml));
 
   return (
     <div className="flex h-full flex-col">
@@ -221,8 +231,19 @@ export function Reader() {
             </div>
 
             <div className="border-t border-border">
+              {imagesBlocked && (
+                <div className="flex items-center justify-between gap-3 bg-surface px-4 py-2 text-sm">
+                  <span className="text-muted">Remote images blocked for privacy.</span>
+                  <button
+                    onClick={() => setShowImages(true)}
+                    className="shrink-0 font-medium text-accent active:opacity-70"
+                  >
+                    Show images
+                  </button>
+                </div>
+              )}
               {detail.bodyHtml ? (
-                <MailHtml html={detail.bodyHtml} />
+                <MailHtml html={detail.bodyHtml} allowImages={allowImages} />
               ) : (
                 <div className="px-4 py-3">
                   <MailText text={detail.bodyText ?? '(no content)'} />

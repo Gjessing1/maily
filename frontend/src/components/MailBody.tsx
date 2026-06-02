@@ -1,16 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 
+/** True if the HTML references a remote (http/https) image or CSS background url(). */
+export function hasRemoteImages(html: string): boolean {
+  return (
+    /<img\b[^>]*\bsrc\s*=\s*["']?\s*https?:/i.test(html) || /\burl\(\s*["']?\s*https?:/i.test(html)
+  );
+}
+
 /**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
- * email's CSS can't leak into the app. Height is measured from the same-origin
- * srcdoc document and the iframe grows to fit (no inner scrollbars).
+ * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
+ * `allowImages` is false, blocks remote image/media loads (tracking pixels) while
+ * still permitting inline `data:` images (e.g. embedded CID art). Height is measured
+ * from the same-origin srcdoc document and the iframe grows to fit (no inner scrollbars).
  */
-export function MailHtml({ html }: { html: string }) {
+export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
 
+  // default-src 'none' blocks scripts/fetch/frames outright (defence in depth on top
+  // of the sandbox); inline styles are allowed so sender CSS still renders. Remote
+  // images are gated by allowImages — data: is always permitted for inline art.
+  const imgSrc = allowImages ? 'data: https: http:' : 'data:';
+  const mediaSrc = allowImages ? 'data: https: http:' : 'data:';
+  const csp = `default-src 'none'; img-src ${imgSrc}; media-src ${mediaSrc}; style-src 'unsafe-inline'; font-src data: https: http:;`;
+
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>

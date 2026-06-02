@@ -4,7 +4,41 @@ import { useAccounts } from '../state/data';
 import { useAuth } from '../state/auth';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
+import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { BackIcon } from '../ui/icons';
+
+/** A labelled on/off switch backed by a boolean preference. */
+function ToggleRow({
+  label,
+  hint,
+  prefKey,
+}: {
+  label: string;
+  hint?: string;
+  prefKey: keyof Prefs;
+}) {
+  const value = usePrefs()[prefKey];
+  return (
+    <button
+      onClick={() => setPref(prefKey, !value)}
+      role="switch"
+      aria-checked={value}
+      className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left active:bg-surface-2"
+    >
+      <span className="min-w-0">
+        <span className="block text-[15px]">{label}</span>
+        {hint && <span className="mt-0.5 block text-xs text-faint">{hint}</span>}
+      </span>
+      <span
+        className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${value ? 'bg-accent' : 'bg-surface-2'}`}
+      >
+        <span
+          className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${value ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </span>
+    </button>
+  );
+}
 
 export function Settings() {
   const navigate = useNavigate();
@@ -65,6 +99,24 @@ export function Settings() {
               <li className="px-4 py-3 text-sm text-faint">No accounts configured.</li>
             )}
           </ul>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Reading
+          </p>
+          <div className="border-y border-border">
+            <ToggleRow
+              label="Block remote images"
+              hint="Hide tracking pixels until you tap “Show images” on a message."
+              prefKey="blockRemoteImages"
+            />
+            <ToggleRow
+              label="Unread at top"
+              hint="Float unread messages above read ones in lists."
+              prefKey="unreadAtTop"
+            />
+          </div>
         </section>
 
         <section className="mt-6">

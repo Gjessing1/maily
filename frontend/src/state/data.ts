@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { AccountDto, FolderDto, MessageDetailDto } from '@maily/shared';
 import { api } from '../api/client';
+import { usePrefs } from './prefs';
 import {
   cache,
   cacheAccounts,
@@ -63,12 +64,17 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { unreadAtTop } = usePrefs();
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
     const rows = await cache.messages.where('folderIds').equals(folderId).toArray();
-    return rows.sort((a, b) => receivedMs(b) - receivedMs(a));
-  }, [folderId]);
+    // Newest-first always; optionally float unread above read as the primary key.
+    return rows.sort((a, b) => {
+      if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
+      return receivedMs(b) - receivedMs(a);
+    });
+  }, [folderId, unreadAtTop]);
 
   const refresh = useCallback(() => {
     if (!folderId) return;
