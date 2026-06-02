@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
+import { useTheme } from './state/theme';
 import { SyncBar } from './components/SyncBar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
@@ -15,6 +17,17 @@ export function App() {
   // Signal handling must live above the routes so flag/new-mail updates land in
   // the cache regardless of which screen is mounted.
   const { progress } = useSignals();
+
+  // Reflect the resolved theme onto <html> (drives the CSS token overrides) and
+  // the PWA status-bar colour. The pre-paint script in index.html sets the initial
+  // attribute; this keeps it in sync when the pref or OS preference changes.
+  const theme = useTheme();
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'light' ? '#ffffff' : '#0b0b0f');
+  }, [theme]);
 
   if (!authed) return <Login />;
 

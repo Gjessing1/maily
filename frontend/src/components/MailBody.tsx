@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTheme } from '../state/theme';
 
 /** True if the HTML references a remote (http/https) image or CSS background url(). */
 export function hasRemoteImages(html: string): boolean {
@@ -18,6 +19,14 @@ export function hasRemoteImages(html: string): boolean {
 export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
+  const theme = useTheme();
+
+  // The iframe is sandboxed (no app CSS leaks in), so its base colours are inlined
+  // here per theme rather than via tokens. Emails carrying their own palette still
+  // win; this only styles the surrounding page + unstyled/plaintext-ish bodies.
+  const pageBg = theme === 'light' ? '#ffffff' : '#15151c';
+  const pageFg = theme === 'light' ? '#18181f' : '#f4f4f6';
+  const linkFg = theme === 'light' ? '#4a48d0' : '#8b8aff';
 
   // default-src 'none' blocks scripts/fetch/frames outright (defence in depth on top
   // of the sandbox); inline styles are allowed so sender CSS still renders. Remote
@@ -31,12 +40,12 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>
-  :root { color-scheme: dark; }
-  html,body { margin:0; padding:12px; background:#15151c; color:#f4f4f6;
+  :root { color-scheme: ${theme}; }
+  html,body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     overflow-wrap:anywhere; word-break:break-word; }
   img { max-width:100%; height:auto; }
-  a { color:#8b8aff; }
+  a { color:${linkFg}; }
   table { max-width:100% !important; }
 </style></head><body>${html}</body></html>`;
 

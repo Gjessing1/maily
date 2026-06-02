@@ -176,6 +176,24 @@ export function Settings() {
 
         <section className="mt-6">
           <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Appearance
+          </p>
+          <div className="border-y border-border">
+            <SelectRow
+              label="Theme"
+              hint="System follows your device’s light/dark setting."
+              prefKey="theme"
+              options={[
+                { value: 'system', label: 'System' },
+                { value: 'light', label: 'Light' },
+                { value: 'dark', label: 'Dark' },
+              ]}
+            />
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
             Reading
           </p>
           <div className="border-y border-border">

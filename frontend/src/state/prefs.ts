@@ -8,6 +8,9 @@ import { useSyncExternalStore } from 'react';
 /** How absolute dates are rendered. 'system' follows the browser locale. */
 export type DateFormat = 'system' | 'dmy' | 'mdy' | 'ymd';
 
+/** Colour theme. 'system' follows the OS `prefers-color-scheme`. */
+export type Theme = 'system' | 'light' | 'dark';
+
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
   blockRemoteImages: boolean;
@@ -15,6 +18,8 @@ export interface Prefs {
   unreadAtTop: boolean;
   /** Date display format for list/reader timestamps. */
   dateFormat: DateFormat;
+  /** Colour theme; 'system' tracks the OS preference live. */
+  theme: Theme;
   /** Messages fetched per page before pagination kicks in. */
   pageSize: number;
   /**
@@ -28,6 +33,7 @@ const DEFAULTS: Prefs = {
   blockRemoteImages: false,
   unreadAtTop: false,
   dateFormat: 'system',
+  theme: 'system',
   pageSize: 100,
   markReadSeconds: 0,
 };

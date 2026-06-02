@@ -13,6 +13,21 @@
     <meta name="apple-mobile-web-app-title" content="maily" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <title>maily</title>
+    <script>
+      // Set the theme before first paint so light-mode users don't flash dark.
+      // Mirrors src/state/theme.ts; React keeps it in sync after mount.
+      (function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('maily.prefs') || '{}');
+          var t = p.theme || 'system';
+          if (t === 'system')
+            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {
+          /* default (dark) styling applies */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
