@@ -30,6 +30,11 @@ function parseAddrs(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Pragmatic address shape check — catches typos, not a full RFC 5322 validation. */
+function isValidEmail(addr: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr);
+}
+
 export function Compose() {
   const navigate = useNavigate();
   const prefill = (useLocation().state as ComposePrefill | null) ?? {};
@@ -59,11 +64,21 @@ export function Compose() {
       setError('Add at least one recipient.');
       return;
     }
+    const ccList = showCc ? parseAddrs(cc) : [];
+    const bad = [...recipients, ...ccList].filter((a) => !isValidEmail(a));
+    if (bad.length) {
+      setError(`Check these addresses: ${bad.join(', ')}`);
+      return;
+    }
+    // Empty subject is allowed, but confirm — it's almost always an oversight.
+    if (!subject.trim() && !window.confirm('Send this message without a subject?')) {
+      return;
+    }
     setSending(true);
     setError(null);
     const msg: SendMessageRequest = {
       to: recipients,
-      cc: showCc ? parseAddrs(cc) : undefined,
+      cc: ccList.length ? ccList : undefined,
       subject,
       text: body,
       inReplyTo: prefill.inReplyTo ?? null,
