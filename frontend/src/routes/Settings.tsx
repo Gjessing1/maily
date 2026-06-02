@@ -358,36 +358,49 @@ export function Settings() {
             ) : sync.length === 0 ? (
               <p className="px-4 py-3 text-sm text-faint">No active sync engines.</p>
             ) : (
-              sync.map((acc) => (
-                <div key={acc.accountId} className="px-4 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate text-[15px]">{acc.email}</span>
-                    <span className="flex shrink-0 items-center gap-1.5 text-xs">
-                      <span
-                        className={`size-2 rounded-full ${acc.connected ? 'bg-green-500' : 'bg-faint'}`}
-                      />
-                      {acc.connected ? 'Connected' : 'Offline'}
-                    </span>
+              sync.map((acc) => {
+                // "Syncing" until every folder has completed its first pass; once all
+                // are synced and the IDLE link is up, the account is unambiguously
+                // caught up. Offline trumps both.
+                const syncing = acc.folders.some((f) => !f.synced);
+                const status = !acc.connected
+                  ? { dot: 'bg-faint', label: 'Offline' }
+                  : syncing
+                    ? { dot: 'bg-amber-500 animate-pulse', label: 'Syncing…' }
+                    : { dot: 'bg-green-500', label: 'Up to date' };
+                return (
+                  <div key={acc.accountId} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-[15px]">{acc.email}</span>
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs">
+                        <span className={`size-2 rounded-full ${status.dot}`} />
+                        {status.label}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-faint">
+                      {acc.connected && !syncing
+                        ? `Synced ${timeAgo(acc.lastSyncAt)}`
+                        : `Last sync ${timeAgo(acc.lastSyncAt)}`}
+                    </p>
+                    <ul className="mt-2 space-y-0.5">
+                      {acc.folders
+                        .filter((f) => f.cached > 0 || f.synced)
+                        .map((f) => (
+                          <li
+                            key={f.id}
+                            className="flex items-center justify-between gap-2 text-xs text-muted"
+                          >
+                            <span className="min-w-0 truncate capitalize">{f.name}</span>
+                            <span className="shrink-0 tabular-nums text-faint">
+                              {f.cached.toLocaleString()}
+                              {!f.synced && ' · syncing…'}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
                   </div>
-                  <p className="mt-0.5 text-xs text-faint">Last sync {timeAgo(acc.lastSyncAt)}</p>
-                  <ul className="mt-2 space-y-0.5">
-                    {acc.folders
-                      .filter((f) => f.cached > 0 || f.synced)
-                      .map((f) => (
-                        <li
-                          key={f.id}
-                          className="flex items-center justify-between gap-2 text-xs text-muted"
-                        >
-                          <span className="min-w-0 truncate capitalize">{f.name}</span>
-                          <span className="shrink-0 tabular-nums text-faint">
-                            {f.cached.toLocaleString()}
-                            {!f.synced && ' · syncing…'}
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
           <p className="px-4 pt-2 text-xs text-faint">
