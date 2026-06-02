@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache, patchCachedFlags } from '../db/cache';
+import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { requestDelete } from '../state/undo';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
@@ -11,7 +11,16 @@ import { ReaderView } from './Reader';
 import { usePrefs } from '../state/prefs';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
-import { MenuIcon, PencilIcon, SearchIcon } from '../ui/icons';
+import {
+  ArchiveIcon,
+  CloseIcon,
+  MailIcon,
+  MailOpenIcon,
+  MenuIcon,
+  PencilIcon,
+  SearchIcon,
+  TrashIcon,
+} from '../ui/icons';
 
 /** Subtle section header dividing the unread/read groups (Gmail-desktop style). */
 function SectionLabel({ children, divider }: { children: string; divider?: boolean }) {
@@ -88,6 +97,53 @@ export function Home() {
     api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
   }, []);
 
+  // ── Multi-select (long-press / right-click a row to enter) ──────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectionMode = selectedIds.size > 0;
+
+  // Leaving the folder abandons any selection.
+  useEffect(() => setSelectedIds(new Set()), [folderId]);
+
+  const enterSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelect = useCallback(() => setSelectedIds(new Set()), []);
+
+  const bulkMarkRead = useCallback(
+    (seen: boolean) => {
+      for (const id of selectedIds) {
+        void patchCachedFlags(id, { seen });
+        api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
+      }
+      clearSelect();
+    },
+    [selectedIds, clearSelect],
+  );
+  const bulkArchive = useCallback(() => {
+    for (const id of selectedIds) {
+      void removeCachedMessage(id);
+      api.archiveMessage(id).catch(() => undefined);
+    }
+    clearSelect();
+  }, [selectedIds, clearSelect]);
+  const bulkDelete = useCallback(() => {
+    // Bulk delete commits immediately (recoverable from Trash); the single-undo
+    // snackbar only models one pending delete, so it's bypassed here.
+    for (const id of selectedIds) {
+      void removeCachedMessage(id);
+      api.deleteMessage(id).catch(() => undefined);
+    }
+    clearSelect();
+  }, [selectedIds, clearSelect]);
+
   // Infinite scroll sentinel.
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -103,25 +159,68 @@ export function Home() {
   const listPane = (
     <div className="flex h-full min-h-0 flex-col">
       <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className="flex items-center gap-1 px-2 py-2">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="rounded-full p-2 text-fg active:bg-surface-2"
-            aria-label="Folders"
-          >
-            <MenuIcon />
-          </button>
-          <h1 className="flex-1 truncate text-lg font-semibold capitalize">
-            {folder?.name ?? 'Inbox'}
-          </h1>
-          <Link
-            to="/search"
-            className="rounded-full p-2 text-fg active:bg-surface-2"
-            aria-label="Search"
-          >
-            <SearchIcon />
-          </Link>
-        </div>
+        {selectionMode ? (
+          <div className="flex items-center gap-1 px-2 py-2">
+            <button
+              onClick={clearSelect}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Cancel selection"
+            >
+              <CloseIcon />
+            </button>
+            <h1 className="flex-1 truncate text-lg font-semibold tabular-nums">
+              {selectedIds.size}
+            </h1>
+            <button
+              onClick={() => bulkMarkRead(true)}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Mark as read"
+            >
+              <MailIcon />
+            </button>
+            <button
+              onClick={() => bulkMarkRead(false)}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Mark as unread"
+            >
+              <MailOpenIcon />
+            </button>
+            <button
+              onClick={bulkArchive}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Archive"
+            >
+              <ArchiveIcon />
+            </button>
+            <button
+              onClick={bulkDelete}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Delete"
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 px-2 py-2">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Folders"
+            >
+              <MenuIcon />
+            </button>
+            <h1 className="flex-1 truncate text-lg font-semibold capitalize">
+              {folder?.name ?? 'Inbox'}
+            </h1>
+            <Link
+              to="/search"
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Search"
+            >
+              <SearchIcon />
+            </Link>
+          </div>
+        )}
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
@@ -147,6 +246,10 @@ export function Home() {
                   swipeLeft={prefs.swipeLeft}
                   to={splitMode ? selectTo(m.id) : undefined}
                   selected={splitMode && m.id === selectedId}
+                  selectionMode={selectionMode}
+                  checked={selectedIds.has(m.id)}
+                  onEnterSelect={enterSelect}
+                  onToggleSelect={toggleSelect}
                 />
               </Fragment>
             ))}
@@ -185,13 +288,15 @@ export function Home() {
         listPane
       )}
 
-      <Link
-        to="/compose"
-        className="safe-bottom fixed bottom-5 right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
-        aria-label="Compose"
-      >
-        <PencilIcon />
-      </Link>
+      {!selectionMode && (
+        <Link
+          to="/compose"
+          className="safe-bottom fixed bottom-5 right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
+          aria-label="Compose"
+        >
+          <PencilIcon />
+        </Link>
+      )}
 
       <FolderDrawer
         open={drawerOpen}

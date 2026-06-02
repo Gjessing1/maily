@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import type { SwipeAction } from '../state/prefs';
 import { avatarHue, initials, senderName, shortDate } from '../ui/format';
-import { MailIcon, MailOpenIcon, PaperclipIcon, StarIcon, TrashIcon } from '../ui/icons';
+import { CheckIcon, MailIcon, MailOpenIcon, PaperclipIcon, StarIcon, TrashIcon } from '../ui/icons';
 
 /** Swipe past this many px (on release) commits the action; travel is clamped. */
 const SWIPE_COMMIT = 96;
 const SWIPE_MAX = 120;
+/** Press-and-hold this long (without moving) enters multi-select mode. */
+const LONG_PRESS_MS = 450;
 
 /** Background colour + icon shown behind the row while swiping in a given direction. */
 function swipeReveal(action: SwipeAction, seen: boolean) {
@@ -28,6 +30,10 @@ export function MessageRow({
   swipeLeft = 'delete',
   to,
   selected = false,
+  selectionMode = false,
+  checked = false,
+  onEnterSelect,
+  onToggleSelect,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -41,31 +47,56 @@ export function MessageRow({
   to?: string;
   /** Highlight as the currently open message (split reading pane). */
   selected?: boolean;
+  /** Whether the list is in multi-select mode (tap toggles instead of opening). */
+  selectionMode?: boolean;
+  /** Whether this row is currently selected (multi-select). */
+  checked?: boolean;
+  /** Long-press / right-click handler to enter multi-select mode. */
+  onEnterSelect?: (id: string) => void;
+  /** Toggle this row's selection (multi-select mode). */
+  onToggleSelect?: (id: string) => void;
 }) {
   const name = senderName(message.fromName, message.fromAddress);
   const hue = avatarHue(message.fromAddress ?? name);
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
   // Resolve each configured direction down to "is it actually firable here".
-  // A 'read'/'delete' action only counts when its handler is wired.
+  // A 'read'/'delete' action only counts when its handler is wired. Swipe is
+  // suppressed entirely in selection mode (taps toggle selection instead).
   const canFire = (action: SwipeAction) =>
     (action === 'read' && !!onToggleRead) || (action === 'delete' && !!onDelete);
-  const rightLive = canFire(swipeRight);
-  const leftLive = canFire(swipeLeft);
+  const rightLive = !selectionMode && canFire(swipeRight);
+  const leftLive = !selectionMode && canFire(swipeLeft);
 
   const [dx, setDx] = useState(0);
   const startX = useRef<number | null>(null);
   const swiping = useRef(false);
+  const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function fire(action: SwipeAction) {
     if (action === 'read') onToggleRead?.(message.id, !message.seen);
     else if (action === 'delete') onDelete?.(message.id);
   }
 
+  function cancelLongPress() {
+    if (longPress.current) {
+      clearTimeout(longPress.current);
+      longPress.current = null;
+    }
+  }
+
   function onTouchStart(e: React.TouchEvent) {
-    if (!rightLive && !leftLive) return;
     startX.current = e.touches[0]!.clientX;
     swiping.current = false;
+    // Arm long-press only outside selection mode; movement/lift cancels it.
+    if (onEnterSelect && !selectionMode) {
+      cancelLongPress();
+      longPress.current = setTimeout(() => {
+        longPress.current = null;
+        swiping.current = true; // suppress the trailing click/navigation
+        onEnterSelect(message.id);
+      }, LONG_PRESS_MS);
+    }
   }
 
   function onTouchMove(e: React.TouchEvent) {
@@ -75,22 +106,41 @@ export function MessageRow({
     // slide into a no-op. Right swipe → swipeRight; left swipe → swipeLeft.
     if (delta > 0 && !rightLive) delta = 0;
     if (delta < 0 && !leftLive) delta = 0;
-    if (Math.abs(delta) > 6) swiping.current = true;
+    if (Math.abs(delta) > 6) {
+      swiping.current = true;
+      cancelLongPress(); // a drag is a swipe, not a hold
+    }
     setDx(Math.max(Math.min(delta, SWIPE_MAX), -SWIPE_MAX));
   }
 
   function onTouchEnd() {
+    cancelLongPress();
     if (dx >= SWIPE_COMMIT && rightLive) fire(swipeRight);
     else if (dx <= -SWIPE_COMMIT && leftLive) fire(swipeLeft);
     setDx(0);
     startX.current = null;
   }
 
-  // Swallow the click that follows a swipe so we don't navigate into the message.
+  // Tap behaviour: swallow the click that trails a swipe or the long-press that
+  // just entered selection mode (else it would immediately toggle the row back
+  // off); otherwise, in selection mode a tap toggles this row (no navigation).
   function onClick(e: React.MouseEvent) {
     if (swiping.current) {
       e.preventDefault();
       swiping.current = false;
+      return;
+    }
+    if (selectionMode) {
+      e.preventDefault();
+      onToggleSelect?.(message.id);
+    }
+  }
+
+  // Desktop: right-click enters selection mode.
+  function onContextMenu(e: React.MouseEvent) {
+    if (onEnterSelect && !selectionMode) {
+      e.preventDefault();
+      onEnterSelect(message.id);
     }
   }
 
@@ -127,16 +177,27 @@ export function MessageRow({
         <Link
           to={to ?? `/m/${message.id}`}
           onClick={onClick}
+          onContextMenu={onContextMenu}
           className={`flex min-w-0 flex-1 items-start gap-3 border-b border-border/60 px-4 py-3 transition-colors active:bg-surface-2 ${
-            selected ? 'bg-surface-2' : ''
+            checked ? 'bg-accent-soft' : selected ? 'bg-surface-2' : ''
           }`}
         >
-          <div
-            className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
-            style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
-          >
-            {initials(message.fromName, message.fromAddress)}
-          </div>
+          {selectionMode ? (
+            <div
+              className={`mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                checked ? 'border-accent bg-accent text-white' : 'border-border text-transparent'
+              }`}
+            >
+              <CheckIcon className="size-5" />
+            </div>
+          ) : (
+            <div
+              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+              style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
+            >
+              {initials(message.fromName, message.fromAddress)}
+            </div>
+          )}
 
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
@@ -167,7 +228,7 @@ export function MessageRow({
           </div>
         </Link>
 
-        {onToggleRead && (
+        {onToggleRead && !selectionMode && (
           <button
             type="button"
             onClick={() => onToggleRead(message.id, !message.seen)}
