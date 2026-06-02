@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import type { AttachmentRef, SendMessageRequest } from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts } from '../state/data';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, PaperclipIcon, SendIcon } from '../ui/icons';
 
@@ -49,6 +50,21 @@ export function Compose() {
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  // "Dirty" = the user changed something relative to the prefill (reply/forward
+  // quotes don't count as user input, so an untouched draft discards silently).
+  const isDirty =
+    to !== (prefill.to ?? []).join(', ') ||
+    (showCc && cc !== (prefill.cc ?? []).join(', ')) ||
+    subject !== (prefill.subject ?? '') ||
+    body !== (prefill.body ?? '') ||
+    attachments.length !== (prefill.attachments?.length ?? 0);
+
+  function cancel() {
+    if (isDirty) setConfirmDiscard(true);
+    else navigate(-1);
+  }
 
   const fromAccount = useMemo(
     () => accounts?.find((a) => a.id === accountId) ?? accounts?.[0],
@@ -100,7 +116,7 @@ export function Compose() {
     <div className="flex h-full flex-col">
       <header className="safe-top sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
         <button
-          onClick={() => navigate(-1)}
+          onClick={cancel}
           className="rounded-full p-2 active:bg-surface-2"
           aria-label="Cancel"
         >
@@ -211,6 +227,20 @@ export function Compose() {
           className="min-h-[40vh] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed outline-none placeholder:text-faint"
         />
       </main>
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard draft?"
+        message="You’ve started a message. Discarding loses what you’ve written."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        danger
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          navigate(-1);
+        }}
+        onCancel={() => setConfirmDiscard(false)}
+      />
     </div>
   );
 }
