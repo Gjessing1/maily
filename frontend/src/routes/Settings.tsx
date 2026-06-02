@@ -1,11 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { AccountSyncStatusDto } from '@maily/shared';
+import { api } from '../api/client';
 import { useAccounts } from '../state/data';
 import { useAuth } from '../state/auth';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { BackIcon } from '../ui/icons';
+
+/** Compact "x min ago" for the last-sync line. */
+function timeAgo(ms: number | null): string {
+  if (!ms) return 'never';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
 
 /** Keys of Prefs whose value is a boolean — the only ones ToggleRow can drive. */
 type BooleanPrefKey = {
@@ -90,6 +102,23 @@ export function Settings() {
   const { logout } = useAuth();
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
+  const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
+
+  // Poll sync status while Settings is open (cheap; counts drift during a sync pass).
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .syncStatus()
+        .then((s) => alive && setSync(s))
+        .catch(() => undefined);
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   async function toggleNotifications() {
     setBusy(true);
@@ -232,6 +261,52 @@ export function Settings() {
               Notifications are blocked in your browser settings.
             </p>
           )}
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Sync</p>
+          <div className="border-y border-border">
+            {sync === null ? (
+              <p className="px-4 py-3 text-sm text-faint">Loading…</p>
+            ) : sync.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-faint">No active sync engines.</p>
+            ) : (
+              sync.map((acc) => (
+                <div key={acc.accountId} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-[15px]">{acc.email}</span>
+                    <span className="flex shrink-0 items-center gap-1.5 text-xs">
+                      <span
+                        className={`size-2 rounded-full ${acc.connected ? 'bg-green-500' : 'bg-faint'}`}
+                      />
+                      {acc.connected ? 'Connected' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-faint">Last sync {timeAgo(acc.lastSyncAt)}</p>
+                  <ul className="mt-2 space-y-0.5">
+                    {acc.folders
+                      .filter((f) => f.cached > 0 || f.synced)
+                      .map((f) => (
+                        <li
+                          key={f.id}
+                          className="flex items-center justify-between gap-2 text-xs text-muted"
+                        >
+                          <span className="min-w-0 truncate capitalize">{f.name}</span>
+                          <span className="shrink-0 tabular-nums text-faint">
+                            {f.cached.toLocaleString()}
+                            {!f.synced && ' · syncing…'}
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ))
+            )}
+          </div>
+          <p className="px-4 pt-2 text-xs text-faint">
+            Counts are messages cached locally per folder. Mail outside the cache window stays on
+            the server and is fetched on demand.
+          </p>
         </section>
 
         <section className="mt-6">

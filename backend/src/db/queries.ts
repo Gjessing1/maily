@@ -25,6 +25,17 @@ export function listFolders(accountId: string): (typeof folders.$inferSelect)[] 
   return db.select().from(folders).where(eq(folders.accountId, accountId)).all();
 }
 
+/** Count of non-tombstoned messages currently mapped into a folder (cached count). */
+export function folderMessageCount(folderId: string): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(messageFolders)
+    .innerJoin(messages, eq(messageFolders.messageId, messages.id))
+    .where(and(eq(messageFolders.folderId, folderId), isNull(messages.deletedAt)))
+    .get();
+  return row?.n ?? 0;
+}
+
 /** The account's folder for a given well-known role (e.g. 'trash'), if it exists. */
 export function folderByRole(
   accountId: string,

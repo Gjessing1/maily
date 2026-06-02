@@ -93,6 +93,29 @@ export interface SendMessageRequest {
   attachments?: AttachmentRef[];
 }
 
+/** Per-folder cached sync state for the Settings → Sync view. */
+export interface FolderSyncStatusDto {
+  id: string;
+  name: string;
+  role: string;
+  /** Non-tombstoned messages cached locally for this folder. */
+  cached: number;
+  /** Whether the folder has completed at least one sync pass (uid_validity set). */
+  synced: boolean;
+}
+
+/** Per-account sync status (connection + last activity + folder counts). */
+export interface AccountSyncStatusDto {
+  accountId: string;
+  email: string;
+  provider: string;
+  /** Live IMAP IDLE connection currently up. */
+  connected: boolean;
+  /** Epoch ms of the last completed resync pass, or null if none yet this run. */
+  lastSyncAt: number | null;
+  folders: FolderSyncStatusDto[];
+}
+
 /** A browser Web Push subscription, registered by the PWA for background notifications. */
 export interface PushSubscriptionDto {
   endpoint: string;

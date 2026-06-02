@@ -5,6 +5,7 @@
  */
 import type {
   AccountDto,
+  AccountSyncStatusDto,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -83,6 +84,8 @@ export const api = {
   accounts: () => request<AccountDto[]>('/api/accounts'),
 
   folders: (accountId: string) => request<FolderDto[]>(`/api/accounts/${accountId}/folders`),
+
+  syncStatus: () => request<AccountSyncStatusDto[]>('/api/sync/status'),
 
   messages: (folderId: string, opts: { limit?: number; before?: number } = {}) => {
     const qs = new URLSearchParams();

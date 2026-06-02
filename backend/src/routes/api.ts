@@ -6,7 +6,11 @@
  */
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import type { PushSubscriptionDto, SendMessageRequest } from '@maily/shared';
+import type {
+  AccountSyncStatusDto,
+  PushSubscriptionDto,
+  SendMessageRequest,
+} from '@maily/shared';
 import { authenticate } from '../http/auth.js';
 import { emitSignal } from '../events.js';
 import {
@@ -14,6 +18,7 @@ import {
   deletePushSubscription,
   folderByRole,
   folderIdsForMessage,
+  folderMessageCount,
   getAttachment,
   getMessage,
   listAccounts,
@@ -25,7 +30,7 @@ import {
 import { embedInlineImages, ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
-import { getEngine } from '../imap/registry.js';
+import { allEngines, getEngine } from '../imap/registry.js';
 import { toAccountDto, toFolderDto, toMessageDetailDto, toMessageDto } from '../http/dto.js';
 import { sendMessage } from '../mail/send.js';
 import { searchMessages } from '../search/search.js';
@@ -42,6 +47,29 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/api/accounts/:id/folders', async (req) =>
     listFolders(req.params.id).map(toFolderDto),
   );
+
+  // Sync status: live connection + last-sync + per-folder cached counts (Settings → Sync).
+  app.get('/api/sync/status', async (): Promise<AccountSyncStatusDto[]> => {
+    const byId = new Map(listAccounts().map((a) => [a.id, a]));
+    return allEngines().map((engine) => {
+      const acc = byId.get(engine.id);
+      const { connected, lastSyncAt } = engine.status;
+      return {
+        accountId: engine.id,
+        email: acc?.email ?? '',
+        provider: acc?.provider ?? '',
+        connected,
+        lastSyncAt,
+        folders: listFolders(engine.id).map((f) => ({
+          id: f.id,
+          name: f.name,
+          role: f.role,
+          cached: folderMessageCount(f.id),
+          synced: f.uidValidity !== null,
+        })),
+      };
+    });
+  });
 
   app.get<{ Params: { folderId: string }; Querystring: { limit?: string; before?: string } }>(
     '/api/folders/:folderId/messages',

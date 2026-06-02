@@ -34,6 +34,8 @@ export class AccountEngine {
   private reconnecting = false;
   private idleBusy = false;
   private cronBusy = false;
+  private connected = false;
+  private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly config: AccountConfig) {
@@ -49,6 +51,11 @@ export class AccountEngine {
   /** The account's connection config (credentials + provider). Backend-only. */
   get accountConfig(): AccountConfig {
     return this.config;
+  }
+
+  /** Live status for the Settings → Sync view. */
+  get status(): { connected: boolean; lastSyncAt: number | null } {
+    return { connected: this.connected, lastSyncAt: this.lastSyncAt };
   }
 
   /** Register the account and bring up the connection (retrying in the background). */
@@ -88,6 +95,7 @@ export class AccountEngine {
       this.log.warn('connection error:', err.message);
     });
     client.on('close', () => {
+      this.connected = false;
       if (!this.stopped) this.scheduleReconnect();
     });
 
@@ -120,6 +128,8 @@ export class AccountEngine {
     // emit per-message signals for this catch-up pass — it can be thousands on a
     // first sync; the client loads the inbox via HTTP instead.
     const result = await resyncFolder(ctx, inbox);
+    this.connected = true;
+    this.lastSyncAt = Date.now();
     this.log.info(
       `INBOX resync (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
     );
@@ -141,6 +151,7 @@ export class AccountEngine {
       const inbox = getFolderById(this.inboxId);
       if (!inbox) return;
       const result = await resyncFolder(this.ctx(this.client), inbox);
+      this.lastSyncAt = Date.now();
 
       // Live new mail → precise per-message signal (drives Socket.io + Web Push).
       for (const messageId of result.insertedIds) {
@@ -194,6 +205,7 @@ export class AccountEngine {
           );
         }
       }
+      this.lastSyncAt = Date.now();
     } catch (err) {
       this.log.warn('folder cron failed:', (err as Error).message);
     } finally {
