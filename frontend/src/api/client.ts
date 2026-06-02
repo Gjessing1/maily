@@ -11,6 +11,7 @@ import type {
   MessageDto,
   PushSubscriptionDto,
   SendMessageRequest,
+  ServerConfigDto,
 } from '@maily/shared';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -86,6 +87,8 @@ export const api = {
   folders: (accountId: string) => request<FolderDto[]>(`/api/accounts/${accountId}/folders`),
 
   syncStatus: () => request<AccountSyncStatusDto[]>('/api/sync/status'),
+
+  config: () => request<ServerConfigDto>('/api/config'),
 
   messages: (folderId: string, opts: { limit?: number; before?: number } = {}) => {
     const qs = new URLSearchParams();

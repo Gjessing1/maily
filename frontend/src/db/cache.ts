@@ -6,6 +6,7 @@
  */
 import Dexie, { type EntityTable } from 'dexie';
 import type { AccountDto, FolderDto, MessageDetailDto, MessageDto } from '@maily/shared';
+import { getPrefs } from '../state/prefs';
 
 /** Cached list-view message: the DTO plus bookkeeping for eviction. */
 export interface CachedMessage extends MessageDto {
@@ -22,7 +23,7 @@ interface MetaRow {
   value: unknown;
 }
 
-const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // ~30 days (§6).
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 class MailyCache extends Dexie {
   accounts!: EntityTable<AccountDto, 'id'>;
@@ -95,9 +96,9 @@ export async function removeCachedMessage(id: string): Promise<void> {
   await cache.bodies.delete(id);
 }
 
-/** Drop cache entries older than the TTL. Call opportunistically on boot. */
+/** Drop cache entries older than the configured client window. Call opportunistically on boot. */
 export async function evictStale(): Promise<void> {
-  const cutoff = Date.now() - CACHE_TTL_MS;
+  const cutoff = Date.now() - getPrefs().clientCacheDays * DAY_MS;
   await cache.messages.where('cachedAt').below(cutoff).delete();
   await cache.bodies.where('cachedAt').below(cutoff).delete();
 }

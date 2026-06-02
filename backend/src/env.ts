@@ -45,6 +45,8 @@ export const env = {
   dataDir,
   dbPath,
   attachmentsDir,
+  /** Local SQLite cache window: how many days back the sync `since` filter reaches. */
+  cacheWindowDays: Number(optional('MAILY_CACHE_WINDOW_DAYS', '365')),
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),

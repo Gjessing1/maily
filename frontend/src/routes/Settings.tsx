@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AccountSyncStatusDto } from '@maily/shared';
+import type { AccountSyncStatusDto, ServerConfigDto } from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts } from '../state/data';
 import { useAuth } from '../state/auth';
@@ -8,6 +8,16 @@ import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { BackIcon } from '../ui/icons';
+
+/** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
+function windowLabel(days: number): string {
+  if (days <= 0) return 'all mail';
+  if (days % 365 === 0) {
+    const y = days / 365;
+    return `${y} year${y > 1 ? 's' : ''}`;
+  }
+  return `${days} day${days > 1 ? 's' : ''}`;
+}
 
 /** Compact "x min ago" for the last-sync line. */
 function timeAgo(ms: number | null): string {
@@ -103,6 +113,19 @@ export function Settings() {
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
+  const [config, setConfig] = useState<ServerConfigDto | null>(null);
+
+  // Server config is static for the session — fetch once.
+  useEffect(() => {
+    let alive = true;
+    api
+      .config()
+      .then((c) => alive && setConfig(c))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Poll sync status while Settings is open (cheap; counts drift during a sync pass).
   useEffect(() => {
@@ -360,6 +383,28 @@ export function Settings() {
             Storage
           </p>
           <div className="border-y border-border">
+            <SelectRow
+              label="Keep on this device"
+              hint="How long mail stays in this browser’s offline cache before it’s evicted."
+              prefKey="clientCacheDays"
+              options={[
+                { value: 7, label: '7 days' },
+                { value: 30, label: '30 days' },
+                { value: 90, label: '90 days' },
+                { value: 365, label: '1 year' },
+              ]}
+            />
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <span className="min-w-0">
+                <span className="block text-[15px]">Server cache window</span>
+                <span className="mt-0.5 block text-xs text-faint">
+                  How far back the server syncs into its local archive (set on the server).
+                </span>
+              </span>
+              <span className="shrink-0 text-sm text-faint">
+                {config ? windowLabel(config.cacheWindowDays) : '…'}
+              </span>
+            </div>
             <button
               onClick={clearCache}
               className="w-full px-4 py-3 text-left text-[15px] active:bg-surface-2"

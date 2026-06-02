@@ -116,6 +116,12 @@ export interface AccountSyncStatusDto {
   folders: FolderSyncStatusDto[];
 }
 
+/** Non-secret server configuration surfaced to the client (Settings). */
+export interface ServerConfigDto {
+  /** Backend `MAILY_CACHE_WINDOW_DAYS`: days of mail synced into the local SQLite cache. */
+  cacheWindowDays: number;
+}
+
 /** A browser Web Push subscription, registered by the PWA for background notifications. */
 export interface PushSubscriptionDto {
   endpoint: string;

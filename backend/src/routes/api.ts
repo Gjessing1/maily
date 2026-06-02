@@ -6,7 +6,13 @@
  */
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import type { AccountSyncStatusDto, PushSubscriptionDto, SendMessageRequest } from '@maily/shared';
+import type {
+  AccountSyncStatusDto,
+  PushSubscriptionDto,
+  SendMessageRequest,
+  ServerConfigDto,
+} from '@maily/shared';
+import { env } from '../env.js';
 import { authenticate } from '../http/auth.js';
 import { emitSignal } from '../events.js';
 import {
@@ -37,6 +43,14 @@ const MAX_PAGE = 200;
 export async function apiRoutes(app: FastifyInstance): Promise<void> {
   // Gate the whole encapsulated plugin behind JWT auth.
   app.addHook('onRequest', authenticate);
+
+  // Non-secret server config (Settings → Storage shows the server cache window).
+  app.get(
+    '/api/config',
+    async (): Promise<ServerConfigDto> => ({
+      cacheWindowDays: env.cacheWindowDays,
+    }),
+  );
 
   app.get('/api/accounts', async () => listAccounts().map(toAccountDto));
 

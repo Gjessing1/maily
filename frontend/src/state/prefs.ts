@@ -34,6 +34,8 @@ export interface Prefs {
   swipeRight: SwipeAction;
   /** Action committed by swiping a list row left (right→left). */
   swipeLeft: SwipeAction;
+  /** Days of mail to retain in the volatile IndexedDB cache before eviction (§6). */
+  clientCacheDays: number;
 }
 
 const DEFAULTS: Prefs = {
@@ -45,6 +47,7 @@ const DEFAULTS: Prefs = {
   markReadSeconds: 0,
   swipeRight: 'read',
   swipeLeft: 'delete',
+  clientCacheDays: 30,
 };
 
 const KEY = 'maily.prefs';

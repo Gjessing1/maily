@@ -12,12 +12,13 @@ import type { Logger } from '../logger.js';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type { ParsedMessage } from './types.js';
+import { env } from '../env.js';
 import { updateFolderSyncState } from './folders.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
 import { findExistingId, touchKnownMessage, upsertMessage } from './store.js';
 
-/** Default local cache window — roughly one year (ARCHITECTURE §1). */
-const CACHE_WINDOW_DAYS = Number(process.env.MAILY_CACHE_WINDOW_DAYS ?? '365');
+/** Local cache window — roughly one year by default (ARCHITECTURE §1). */
+const CACHE_WINDOW_DAYS = env.cacheWindowDays;
 const FETCH_BATCH = 100;
 
 export interface SyncContext {
