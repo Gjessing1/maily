@@ -199,11 +199,7 @@ export function Reader() {
           className="rounded-full p-2 active:bg-surface-2"
           aria-label={seen ? 'Mark as unread' : 'Mark as read'}
         >
-          {seen ? (
-            <MailIcon className="text-fg" />
-          ) : (
-            <MailOpenIcon className="text-accent" />
-          )}
+          {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
         </button>
         <button
           onClick={toggleStar}
