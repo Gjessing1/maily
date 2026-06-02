@@ -246,6 +246,22 @@ export function Settings() {
         </section>
 
         <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Layout</p>
+          <div className="border-y border-border">
+            <SelectRow
+              label="Reading pane"
+              hint="Where a message opens on larger screens. On phones it always opens full-screen."
+              prefKey="readingPane"
+              options={[
+                { value: 'none', label: 'No split' },
+                { value: 'right', label: 'Right of list' },
+                { value: 'below', label: 'Below list' },
+              ]}
+            />
+          </div>
+        </section>
+
+        <section className="mt-6">
           <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
             Gestures
           </p>

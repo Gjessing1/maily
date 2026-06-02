@@ -14,6 +14,13 @@ export type Theme = 'system' | 'light' | 'dark';
 /** Action bound to a list-row swipe. 'read' toggles seen/unseen; 'none' disables the swipe. */
 export type SwipeAction = 'none' | 'read' | 'delete';
 
+/**
+ * Reading-pane placement (Gmail-style). 'none' opens messages full-screen;
+ * 'right'/'below' show a master-detail split. The split only engages on wide
+ * screens — narrow/mobile always falls back to full-screen open.
+ */
+export type ReadingPane = 'none' | 'right' | 'below';
+
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
   blockRemoteImages: boolean;
@@ -36,6 +43,8 @@ export interface Prefs {
   swipeLeft: SwipeAction;
   /** Days of mail to retain in the volatile IndexedDB cache before eviction (§6). */
   clientCacheDays: number;
+  /** Reading-pane placement on wide screens (Gmail-style split). */
+  readingPane: ReadingPane;
 }
 
 const DEFAULTS: Prefs = {
@@ -48,6 +57,7 @@ const DEFAULTS: Prefs = {
   swipeRight: 'read',
   swipeLeft: 'delete',
   clientCacheDays: 30,
+  readingPane: 'none',
 };
 
 const KEY = 'maily.prefs';

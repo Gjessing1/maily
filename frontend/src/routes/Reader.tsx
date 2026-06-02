@@ -32,8 +32,20 @@ function HeaderField({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function Reader() {
-  const { id } = useParams<{ id: string }>();
+/**
+ * Message reader body. Driven by an explicit `id` + `onClose` so it works both as
+ * the full-screen `/m/:id` route (below) and embedded in Home's split reading pane.
+ * `embedded` hides the redundant back button when shown beside the list.
+ */
+export function ReaderView({
+  id,
+  onClose,
+  embedded = false,
+}: {
+  id: string | undefined;
+  onClose: () => void;
+  embedded?: boolean;
+}) {
   const navigate = useNavigate();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
@@ -182,7 +194,7 @@ export function Reader() {
     // the message to Trash out-of-band. We don't revert on failure — the next folder
     // resync is authoritative either way.
     void removeCachedMessage(detail.id);
-    navigate(-1);
+    onClose();
     api.deleteMessage(detail.id).catch(() => undefined);
   }
 
@@ -225,16 +237,27 @@ export function Reader() {
     !showImages &&
     Boolean(detail?.bodyHtml && hasRemoteImages(detail.bodyHtml));
 
+  // Embedded split pane with nothing selected yet → invitation placeholder.
+  if (embedded && !id) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-faint">
+        Select a message to read it here.
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
+        {!embedded && (
+          <button
+            onClick={onClose}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Back"
+          >
+            <BackIcon />
+          </button>
+        )}
         <div className="flex-1" />
         <button
           onClick={toggleSeen}
@@ -363,4 +386,11 @@ export function Reader() {
       </main>
     </div>
   );
+}
+
+/** Full-screen `/m/:id` route: reads the id from the URL; back returns to the list. */
+export function Reader() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  return <ReaderView id={id} onClose={() => navigate(-1)} />;
 }

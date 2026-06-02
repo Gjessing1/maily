@@ -6,7 +6,9 @@ import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
+import { ReaderView } from './Reader';
 import { usePrefs } from '../state/prefs';
+import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
 import { MenuIcon, PencilIcon, SearchIcon } from '../ui/icons';
 
@@ -16,7 +18,27 @@ export function Home() {
 
   const accounts = useAccounts();
   const prefs = usePrefs();
+  // Split reading pane only engages on wide screens; mobile always opens full-screen.
+  const isWide = useMediaQuery('(min-width: 768px)');
+  const splitMode = prefs.readingPane !== 'none' && isWide;
   const folderId = params.get('folder') ?? undefined;
+  const selectedId = params.get('msg') ?? undefined;
+
+  // In split mode a row click sets the `msg` query param (stays on Home, no remount)
+  // instead of navigating to the full-screen reader.
+  const selectTo = useCallback(
+    (id: string) => {
+      const next = new URLSearchParams(params);
+      next.set('msg', id);
+      return `?${next.toString()}`;
+    },
+    [params],
+  );
+  const closeReader = useCallback(() => {
+    const next = new URLSearchParams(params);
+    next.delete('msg');
+    setParams(next, { replace: true });
+  }, [params, setParams]);
   const firstFolders = useFolders(accounts?.[0]?.id);
 
   // Resolve a default folder (first account's inbox) once folders arrive.
@@ -57,8 +79,8 @@ export function Home() {
     return () => obs.disconnect();
   }, [hasMore, loadMore, messages]);
 
-  return (
-    <div className="flex h-full flex-col">
+  const listPane = (
+    <div className="flex h-full min-h-0 flex-col">
       <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
         <div className="flex items-center gap-1 px-2 py-2">
           <button
@@ -98,6 +120,8 @@ export function Home() {
                 onToggleRead={handleToggleRead}
                 swipeRight={prefs.swipeRight}
                 swipeLeft={prefs.swipeLeft}
+                to={splitMode ? selectTo(m.id) : undefined}
+                selected={splitMode && m.id === selectedId}
               />
             ))}
             <div ref={sentinel} className="flex justify-center py-6">
@@ -111,6 +135,29 @@ export function Home() {
           </div>
         )}
       </main>
+    </div>
+  );
+
+  return (
+    <div className="h-full">
+      {splitMode ? (
+        <div className={`flex h-full ${prefs.readingPane === 'right' ? 'flex-row' : 'flex-col'}`}>
+          <div
+            className={
+              prefs.readingPane === 'right'
+                ? 'w-[22rem] shrink-0 border-r border-border lg:w-[26rem]'
+                : 'h-1/2 shrink-0 border-b border-border'
+            }
+          >
+            {listPane}
+          </div>
+          <div className="min-h-0 min-w-0 flex-1">
+            <ReaderView id={selectedId} onClose={closeReader} embedded />
+          </div>
+        </div>
+      ) : (
+        listPane
+      )}
 
       <Link
         to="/compose"

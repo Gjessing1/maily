@@ -26,6 +26,8 @@ export function MessageRow({
   onToggleRead,
   swipeRight = 'read',
   swipeLeft = 'delete',
+  to,
+  selected = false,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -35,6 +37,10 @@ export function MessageRow({
   swipeRight?: SwipeAction;
   /** Action committed on a left (right→left) swipe. */
   swipeLeft?: SwipeAction;
+  /** Link target; defaults to the full-screen reader. Split mode points at a query param. */
+  to?: string;
+  /** Highlight as the currently open message (split reading pane). */
+  selected?: boolean;
 }) {
   const name = senderName(message.fromName, message.fromAddress);
   const hue = avatarHue(message.fromAddress ?? name);
@@ -119,9 +125,11 @@ export function MessageRow({
         className="flex items-stretch bg-bg"
       >
         <Link
-          to={`/m/${message.id}`}
+          to={to ?? `/m/${message.id}`}
           onClick={onClick}
-          className="flex min-w-0 flex-1 items-start gap-3 border-b border-border/60 px-4 py-3 transition-colors active:bg-surface-2"
+          className={`flex min-w-0 flex-1 items-start gap-3 border-b border-border/60 px-4 py-3 transition-colors active:bg-surface-2 ${
+            selected ? 'bg-surface-2' : ''
+          }`}
         >
           <div
             className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
