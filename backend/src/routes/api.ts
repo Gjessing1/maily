@@ -6,11 +6,7 @@
  */
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import type {
-  AccountSyncStatusDto,
-  PushSubscriptionDto,
-  SendMessageRequest,
-} from '@maily/shared';
+import type { AccountSyncStatusDto, PushSubscriptionDto, SendMessageRequest } from '@maily/shared';
 import { authenticate } from '../http/auth.js';
 import { emitSignal } from '../events.js';
 import {
