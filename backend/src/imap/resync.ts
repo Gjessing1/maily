@@ -72,19 +72,25 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
 
     const currentUidValidity = Number(mb.uidValidity);
     const highestModseq = mb.highestModseq ? Number(mb.highestModseq) : null;
-    const uidValidityChanged =
-      folder.uidValidity === null || folder.uidValidity !== currentUidValidity;
+    const firstSight = folder.uidValidity === null;
+    const uidValidityChanged = !firstSight && folder.uidValidity !== currentUidValidity;
 
-    if (uidValidityChanged) {
+    if (firstSight || uidValidityChanged) {
       ctx.log.info(
-        `${folder.path}: UIDVALIDITY ${folder.uidValidity ?? 'unset'} → ${currentUidValidity}, rebuilding`,
+        `${folder.path}: UIDVALIDITY ${folder.uidValidity ?? 'unset'} → ${currentUidValidity}, ${
+          uidValidityChanged ? 'rebuilding' : 'first sync'
+        }`,
       );
-      clearFolderUids(folder.id);
-      const counts = await fullSyncFolder(ctx, folder);
-      updateFolderSyncState(folder.id, {
+      // A real UIDVALIDITY change invalidates every cached UID; wipe the mappings.
+      // First sight has nothing to wipe (and may hold partial mappings from an
+      // interrupted prior run that we want to keep). `fullSyncFolder` persists the
+      // resync bookkeeping itself, progressively, so an interrupted pass resumes
+      // incrementally next connect instead of rebuilding from scratch.
+      if (uidValidityChanged) clearFolderUids(folder.id);
+      const counts = await fullSyncFolder(ctx, folder, {
         uidValidity: currentUidValidity,
         highestModseq,
-        lastUid: mb.uidNext,
+        uidNext: mb.uidNext,
       });
       return { ...counts, expunged: 0, mode: 'full' };
     }

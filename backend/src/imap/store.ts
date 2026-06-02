@@ -16,7 +16,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
 import { db } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
-import type { ParsedMessage } from './types.js';
+import type { MessageFlags, ParsedMessage } from './types.js';
 
 export interface UpsertResult {
   id: string;
@@ -29,22 +29,31 @@ function parseReferences(raw: string | null): string[] {
   return raw.match(/<[^>]+>/g) ?? [];
 }
 
-/** Find an existing message row for this account by the strongest available identity. */
-function findExisting(accountId: string, parsed: ParsedMessage): { id: string } | undefined {
-  if (parsed.gmMsgId) {
+/**
+ * Find an existing message row for this account by the strongest available identity
+ * (gm_msgid first, then account-scoped message_id). Takes the identity fields
+ * directly — both are available from the IMAP envelope WITHOUT downloading the
+ * body, so the sync engine can dedup before paying for a body fetch.
+ */
+export function findExistingId(
+  accountId: string,
+  gmMsgId: string | null,
+  messageId: string | null,
+): string | undefined {
+  if (gmMsgId) {
     const byGm = db
       .select({ id: messages.id })
       .from(messages)
-      .where(and(eq(messages.accountId, accountId), eq(messages.gmMsgId, parsed.gmMsgId)))
+      .where(and(eq(messages.accountId, accountId), eq(messages.gmMsgId, gmMsgId)))
       .get();
-    if (byGm) return byGm;
+    if (byGm) return byGm.id;
   }
-  if (parsed.messageId) {
+  if (messageId) {
     return db
       .select({ id: messages.id })
       .from(messages)
-      .where(and(eq(messages.accountId, accountId), eq(messages.messageId, parsed.messageId)))
-      .get();
+      .where(and(eq(messages.accountId, accountId), eq(messages.messageId, messageId)))
+      .get()?.id;
   }
   return undefined;
 }
@@ -117,6 +126,35 @@ function linkFolder(messageId: string, folderId: string, uid: number | null): vo
     .run();
 }
 
+/**
+ * Update an already-known message from a re-sighting: refresh its flags and ensure
+ * the folder mapping carries the current UID — WITHOUT re-parsing or re-downloading
+ * the body (the body was stored on first insert). This is the hot path during a
+ * full folder rebuild on Gmail, where most INBOX messages already exist via All Mail;
+ * skipping the body fetch turns a multi-hour rebuild into a near-instant remap.
+ */
+export function touchKnownMessage(
+  messageId: string,
+  folderId: string,
+  uid: number | null,
+  flags: MessageFlags,
+  folderRole: FolderRole,
+): void {
+  const set: Partial<typeof messages.$inferInsert> = {
+    seen: flags.seen,
+    flagged: flags.flagged,
+    answered: flags.answered,
+    draft: flags.draft,
+  };
+  // Re-sighting a message in a non-trash folder un-tombstones it: it clearly still
+  // exists on the server (undelete, or a move-race that briefly orphaned it). A
+  // re-sight in Trash must NOT clear the tombstone — trashed mail stays hidden from
+  // every list/search view (ARCHITECTURE §13).
+  if (folderRole !== 'trash') set.deletedAt = null;
+  db.update(messages).set(set).where(eq(messages.id, messageId)).run();
+  linkFolder(messageId, folderId, uid);
+}
+
 /** Persist a parsed message into the given folder. Idempotent per (identity, folder). */
 export function upsertMessage(
   accountId: string,
@@ -126,22 +164,10 @@ export function upsertMessage(
   folderRole: FolderRole,
 ): UpsertResult {
   return db.transaction((): UpsertResult => {
-    const existing = findExisting(accountId, parsed);
-    if (existing) {
-      const set: Partial<typeof messages.$inferInsert> = {
-        seen: parsed.flags.seen,
-        flagged: parsed.flags.flagged,
-        answered: parsed.flags.answered,
-        draft: parsed.flags.draft,
-      };
-      // Re-sighting a message in a non-trash folder un-tombstones it: it clearly
-      // still exists on the server (undelete, or a move-race that briefly orphaned
-      // it). A re-sight in Trash must NOT clear the tombstone — trashed mail stays
-      // hidden from every list/search view (ARCHITECTURE §13).
-      if (folderRole !== 'trash') set.deletedAt = null;
-      db.update(messages).set(set).where(eq(messages.id, existing.id)).run();
-      linkFolder(existing.id, folderId, uid);
-      return { id: existing.id, inserted: false };
+    const existingId = findExistingId(accountId, parsed.gmMsgId, parsed.messageId);
+    if (existingId) {
+      touchKnownMessage(existingId, folderId, uid, parsed.flags, folderRole);
+      return { id: existingId, inserted: false };
     }
 
     const threadId = resolveThreadId(accountId, parsed);

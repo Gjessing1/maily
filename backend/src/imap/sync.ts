@@ -12,8 +12,9 @@ import type { Logger } from '../logger.js';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type { ParsedMessage } from './types.js';
+import { updateFolderSyncState } from './folders.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
-import { upsertMessage } from './store.js';
+import { findExistingId, touchKnownMessage, upsertMessage } from './store.js';
 
 /** Default local cache window — roughly one year (ARCHITECTURE §1). */
 const CACHE_WINDOW_DAYS = Number(process.env.MAILY_CACHE_WINDOW_DAYS ?? '365');
@@ -59,8 +60,9 @@ async function downloadTextPart(
   part: string,
 ): Promise<string | null> {
   try {
-    const { meta, content } = await ctx.client.download(String(uid), part, { uid: true });
-    return await streamToString(content, meta.charset);
+    const result = await ctx.client.download(String(uid), part, { uid: true });
+    if (!result?.content) return null;
+    return await streamToString(result.content, result.meta?.charset);
   } catch (err) {
     ctx.log.warn(`failed to download part ${part} of uid ${uid}:`, (err as Error).message);
     return null;
@@ -171,8 +173,20 @@ export async function fetchAndStore(
       captured.push(capture(msg as Exclude<FetchMessage, false>));
     }
 
-    // Phase 2: connection is free now — download body parts and persist.
+    // Phase 2: connection is free now — persist. Dedup FIRST using identity from
+    // the envelope (gm_msgid / message_id, already in hand), and only download body
+    // parts for genuinely new messages. A re-sighting (e.g. an INBOX rebuild for a
+    // message already stored via All Mail) just refreshes flags + folder mapping —
+    // no body re-fetch — which is what keeps a full rebuild from taking hours.
     for (const msg of captured) {
+      const gmMsgId = ctx.caps.gmail ? (msg.emailId ?? null) : null;
+      const messageId = msg.envelope?.messageId ?? null;
+      const knownId = findExistingId(ctx.accountId, gmMsgId, messageId);
+      if (knownId) {
+        touchKnownMessage(knownId, folder.id, msg.uid, flagsFromSet(msg.flags), folder.role);
+        updated += 1;
+        continue;
+      }
       const parsed = await toParsedMessage(ctx, msg);
       const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed, folder.role);
       if (result.inserted) insertedIds.push(result.id);
@@ -186,10 +200,50 @@ export async function fetchAndStore(
 /**
  * Full sync of a folder's cache window. Used on first sight of a folder and when
  * UIDVALIDITY changes (cached UIDs become meaningless and must be rebuilt).
+ *
+ * Persists resync bookkeeping AS IT GOES so a process killed mid-sync resumes
+ * incrementally on the next connect instead of rebuilding from scratch (the bug
+ * behind a never-completing INBOX full sync re-running on every restart):
+ *   - UIDVALIDITY is stored up front, so the next connect takes the incremental
+ *     path rather than re-detecting a "first sight" and rebuilding again.
+ *   - `lastUid` starts at the window's lower bound and advances per batch, so the
+ *     incremental resume rescans only from the lowest UID not yet persisted —
+ *     staying inside the cache window (never fetching all history from UID 1).
+ * Re-sighting already-stored messages on resume is cheap (`fetchAndStore` dedups
+ * before any body download), so the catch-up is fast.
  */
-export async function fullSyncFolder(ctx: SyncContext, folder: FolderRow): Promise<StoreCounts> {
+export async function fullSyncFolder(
+  ctx: SyncContext,
+  folder: FolderRow,
+  state: { uidValidity: number; highestModseq: number | null; uidNext: number },
+): Promise<StoreCounts> {
   const since = new Date(Date.now() - CACHE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const uids = (await ctx.client.search({ since }, { uid: true })) || [];
+  const uids = ((await ctx.client.search({ since }, { uid: true })) || []).sort((a, b) => a - b);
   ctx.log.info(`full sync ${folder.path}: ${uids.length} message(s) in window`);
-  return fetchAndStore(ctx, folder, uids);
+
+  // Resume floor: one below the lowest window UID (or just below UIDNEXT when the
+  // window is empty). Stored before any body fetch so an interrupted run resumes
+  // from the window bottom, never from UID 1.
+  const floor = (uids[0] ?? state.uidNext) - 1;
+  updateFolderSyncState(folder.id, {
+    uidValidity: state.uidValidity,
+    highestModseq: state.highestModseq,
+    lastUid: floor,
+  });
+
+  const insertedIds: string[] = [];
+  let updated = 0;
+  for (let i = 0; i < uids.length; i += FETCH_BATCH) {
+    const batch = uids.slice(i, i + FETCH_BATCH);
+    const counts = await fetchAndStore(ctx, folder, batch);
+    insertedIds.push(...counts.insertedIds);
+    updated += counts.updated;
+    // Advance the resume floor as each batch lands (UIDs are ascending).
+    const batchTop = batch[batch.length - 1];
+    if (batchTop !== undefined) updateFolderSyncState(folder.id, { lastUid: batchTop });
+  }
+
+  // Caught up: future incremental passes fetch only mail at/after UIDNEXT.
+  updateFolderSyncState(folder.id, { lastUid: state.uidNext });
+  return { insertedIds, updated };
 }
