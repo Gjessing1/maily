@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
+import { cache, patchCachedFlags } from '../db/cache';
+import { requestDelete } from '../state/undo';
 import { MessageRow } from '../components/MessageRow';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
@@ -55,10 +56,10 @@ export function Home() {
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
 
-  // Optimistic swipe-to-delete: drop the row locally, move to Trash on the server.
+  // Swipe-to-delete: stage the delete with an undo window (drops the row locally
+  // now, commits the Trash move server-side after the snackbar elapses).
   const handleDelete = useCallback((id: string) => {
-    void removeCachedMessage(id);
-    api.deleteMessage(id).catch(() => undefined);
+    void requestDelete(id);
   }, []);
 
   // Optimistic swipe-to-toggle-read: flip the flag locally, reconcile on the server.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { patchCachedFlags, removeCachedMessage } from '../db/cache';
+import { patchCachedFlags } from '../db/cache';
+import { requestDelete } from '../state/undo';
 import { useAccounts, useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
@@ -190,14 +191,12 @@ export function ReaderView({
     navigate('/compose', { state: { ...replyCommon(), to, cc } });
   }
 
-  async function remove() {
+  function remove() {
     if (!detail) return;
-    // Optimistic: drop from cache + leave the reader immediately; the server moves
-    // the message to Trash out-of-band. We don't revert on failure — the next folder
-    // resync is authoritative either way.
-    void removeCachedMessage(detail.id);
+    // Stage with an undo window (app-level snackbar persists past this navigation),
+    // then leave the reader. The Trash move commits server-side once it elapses.
+    void requestDelete(detail.id);
     onClose();
-    api.deleteMessage(detail.id).catch(() => undefined);
   }
 
   function forward() {

@@ -4,6 +4,7 @@ import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { SyncBar } from './components/SyncBar';
+import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
 import { Reader } from './routes/Reader';
@@ -44,6 +45,7 @@ export function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <UndoSnackbar />
     </>
   );
 }
