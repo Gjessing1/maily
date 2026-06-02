@@ -5,16 +5,25 @@
  */
 import { useSyncExternalStore } from 'react';
 
+/** How absolute dates are rendered. 'system' follows the browser locale. */
+export type DateFormat = 'system' | 'dmy' | 'mdy' | 'ymd';
+
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
   blockRemoteImages: boolean;
   /** Sort unread above read in list views (secondary to newest-first). */
   unreadAtTop: boolean;
+  /** Date display format for list/reader timestamps. */
+  dateFormat: DateFormat;
+  /** Messages fetched per page before pagination kicks in. */
+  pageSize: number;
 }
 
 const DEFAULTS: Prefs = {
   blockRemoteImages: false,
   unreadAtTop: false,
+  dateFormat: 'system',
+  pageSize: 100,
 };
 
 const KEY = 'maily.prefs';

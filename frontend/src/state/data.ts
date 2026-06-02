@@ -18,8 +18,6 @@ import {
   type CachedMessage,
 } from '../db/cache';
 
-const PAGE = 50;
-
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
 }
@@ -64,7 +62,8 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { unreadAtTop } = usePrefs();
+  const { unreadAtTop, pageSize } = usePrefs();
+  const PAGE = pageSize;
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
@@ -88,7 +87,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setRefreshing(false));
-  }, [folderId]);
+  }, [folderId, PAGE]);
 
   const loadMore = useCallback(() => {
     if (!folderId || !messages?.length) return;
@@ -104,7 +103,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setRefreshing(false));
-  }, [folderId, messages]);
+  }, [folderId, messages, PAGE]);
 
   // Refetch the head of the folder whenever it changes.
   useEffect(() => {

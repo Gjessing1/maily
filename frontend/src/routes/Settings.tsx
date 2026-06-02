@@ -7,6 +7,11 @@ import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { BackIcon } from '../ui/icons';
 
+/** Keys of Prefs whose value is a boolean — the only ones ToggleRow can drive. */
+type BooleanPrefKey = {
+  [K in keyof Prefs]: Prefs[K] extends boolean ? K : never;
+}[keyof Prefs];
+
 /** A labelled on/off switch backed by a boolean preference. */
 function ToggleRow({
   label,
@@ -15,7 +20,7 @@ function ToggleRow({
 }: {
   label: string;
   hint?: string;
-  prefKey: keyof Prefs;
+  prefKey: BooleanPrefKey;
 }) {
   const value = usePrefs()[prefKey];
   return (
@@ -37,6 +42,45 @@ function ToggleRow({
         />
       </span>
     </button>
+  );
+}
+
+/** A labelled segmented selector backed by a preference with a fixed option set. */
+function SelectRow<K extends keyof Prefs>({
+  label,
+  hint,
+  prefKey,
+  options,
+}: {
+  label: string;
+  hint?: string;
+  prefKey: K;
+  options: { value: Prefs[K]; label: string }[];
+}) {
+  const value = usePrefs()[prefKey];
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3">
+      <span className="min-w-0">
+        <span className="block text-[15px]">{label}</span>
+        {hint && <span className="mt-0.5 block text-xs text-faint">{hint}</span>}
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button
+            key={String(o.value)}
+            onClick={() => setPref(prefKey, o.value)}
+            aria-pressed={value === o.value}
+            className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+              value === o.value
+                ? 'bg-accent text-white'
+                : 'bg-surface-2 text-faint active:bg-surface-3'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -115,6 +159,35 @@ export function Settings() {
               label="Unread at top"
               hint="Float unread messages above read ones in lists."
               prefKey="unreadAtTop"
+            />
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Display
+          </p>
+          <div className="border-y border-border">
+            <SelectRow
+              label="Date format"
+              hint="How message dates are shown in lists and the reader."
+              prefKey="dateFormat"
+              options={[
+                { value: 'system', label: 'System' },
+                { value: 'dmy', label: 'DD.MM.YYYY' },
+                { value: 'mdy', label: 'MM/DD/YYYY' },
+                { value: 'ymd', label: 'YYYY-MM-DD' },
+              ]}
+            />
+            <SelectRow
+              label="Messages per page"
+              hint="How many to load before fetching more."
+              prefKey="pageSize"
+              options={[
+                { value: 50, label: '50' },
+                { value: 100, label: '100' },
+                { value: 200, label: '200' },
+              ]}
             />
           </div>
         </section>
