@@ -14,8 +14,36 @@ import type { SendMessageRequest } from '@maily/shared';
 import type { AccountConfig } from '../config/accounts.js';
 import { createLogger } from '../logger.js';
 import { withTransientConnection } from '../imap/connection.js';
+import { getAttachment } from '../db/queries.js';
+import { ensureAttachmentOnDisk } from '../storage/attachments.js';
 
 const log = createLogger('smtp');
+
+/** Resolve send-time attachment references to nodemailer attachments (bytes from cache/IMAP). */
+async function resolveAttachments(
+  req: SendMessageRequest,
+): Promise<nodemailer.SendMailOptions['attachments']> {
+  if (!req.attachments?.length) return undefined;
+  const out: NonNullable<nodemailer.SendMailOptions['attachments']> = [];
+  for (const ref of req.attachments) {
+    const att = getAttachment(ref.attachmentId);
+    if (!att || att.messageId !== ref.messageId) {
+      log.warn(`skipping unknown attachment ref ${ref.attachmentId}`);
+      continue;
+    }
+    const path = await ensureAttachmentOnDisk(att);
+    if (!path) {
+      log.warn(`skipping attachment ${ref.attachmentId}: bytes unavailable`);
+      continue;
+    }
+    out.push({
+      path,
+      filename: att.filename ?? undefined,
+      contentType: att.mimeType ?? undefined,
+    });
+  }
+  return out.length ? out : undefined;
+}
 
 /** Locate the \Sent mailbox path for an account, if the server exposes one. */
 async function findSentMailbox(client: ImapFlow): Promise<string | null> {
@@ -48,6 +76,7 @@ export async function sendMessage(
     html: req.html,
     inReplyTo: req.inReplyTo ?? undefined,
     references: req.references ?? undefined,
+    attachments: await resolveAttachments(req),
     messageId,
   };
 

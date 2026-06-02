@@ -5,6 +5,7 @@
 import type {
   AccountDto,
   AttachmentDto,
+  EmailAddress,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -14,6 +15,17 @@ import type { accounts, folders } from '../db/schema.js';
 import type { AttachmentRow, MessageRow } from '../db/queries.js';
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
+
+/** Decode a JSON-encoded EmailAddress[] column, tolerating null/legacy/corrupt values. */
+function parseAddresses(json: string | null): EmailAddress[] {
+  if (!json) return [];
+  try {
+    const value = JSON.parse(json);
+    return Array.isArray(value) ? (value as EmailAddress[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 export function toAccountDto(a: typeof accounts.$inferSelect): AccountDto {
   return {
@@ -73,5 +85,7 @@ export function toMessageDetailDto(
     bodyHtml: m.bodyHtml,
     inReplyTo: m.inReplyTo,
     references: m.references,
+    to: parseAddresses(m.toAddresses),
+    cc: parseAddresses(m.ccAddresses),
   };
 }

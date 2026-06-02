@@ -3,6 +3,7 @@
  * A `ParsedMessage` is the provider-agnostic result of parsing one IMAP message,
  * ready to be persisted by the store.
  */
+import type { EmailAddress } from '@maily/shared';
 
 export interface MessageFlags {
   seen: boolean;
@@ -34,6 +35,9 @@ export interface ParsedMessage {
   subject: string | null;
   fromName: string | null;
   fromAddress: string | null;
+  /** Original To/Cc recipients (from the IMAP envelope) — persisted for reply-all. */
+  to: EmailAddress[];
+  cc: EmailAddress[];
   snippet: string | null;
   bodyText: string | null;
   bodyHtml: string | null;

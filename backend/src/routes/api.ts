@@ -4,12 +4,9 @@
  * (ARCHITECTURE §3). Attachment bytes are fetched on demand and streamed to disk,
  * never buffered (ARCHITECTURE §4).
  */
-import { createReadStream, createWriteStream, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import type { PushSubscriptionDto, SendMessageRequest } from '@maily/shared';
-import { env } from '../env.js';
 import { authenticate } from '../http/auth.js';
 import { emitSignal } from '../events.js';
 import {
@@ -21,10 +18,10 @@ import {
   listAccounts,
   listFolders,
   listMessages,
-  markAttachmentDownloaded,
   savePushSubscription,
   uidLocationForMessage,
 } from '../db/queries.js';
+import { ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { updateMessageFlags } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
@@ -112,28 +109,9 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'not found' });
       }
 
-      let path = att.storagePath;
-      if (!path || !existsSync(path)) {
-        // Lazy fetch: pull the bytes from IMAP now, streaming straight to disk.
-        const loc = uidLocationForMessage(req.params.id);
-        const engine = loc ? getEngine(loc.accountId) : undefined;
-        if (!loc || !engine || !att.imapPartId) {
-          return reply.code(409).send({ error: 'attachment bytes unavailable' });
-        }
-        path = join(env.attachmentsDir, att.id);
-        await withTransientConnection(engine.accountConfig, async (client) => {
-          const lock = await client.getMailboxLock(loc.folderPath);
-          try {
-            const { content } = await client.download(String(loc.uid), att.imapPartId!, {
-              uid: true,
-            });
-            await pipeline(content, createWriteStream(path!));
-          } finally {
-            lock.release();
-          }
-        });
-        markAttachmentDownloaded(att.id, path, statSync(path).size);
-      }
+      // Lazy fetch: materialise the bytes on disk (from IMAP) if not yet downloaded.
+      const path = await ensureAttachmentOnDisk(att);
+      if (!path) return reply.code(409).send({ error: 'attachment bytes unavailable' });
 
       reply.header('Content-Type', att.mimeType ?? 'application/octet-stream');
       if (att.filename) {

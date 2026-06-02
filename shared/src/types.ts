@@ -9,6 +9,12 @@ export type Provider = 'gmail' | 'imap';
 /** Well-known special-use folder roles (IMAP SPECIAL-USE / Gmail labels). */
 export type FolderRole = 'inbox' | 'sent' | 'drafts' | 'archive' | 'trash' | 'junk' | 'custom';
 
+/** A parsed mail address (display name optional). */
+export interface EmailAddress {
+  name: string | null;
+  address: string;
+}
+
 /** A connected mail account (credentials are NOT part of this DTO — they live in env). */
 export interface AccountDto {
   id: string;
@@ -61,6 +67,15 @@ export interface MessageDetailDto extends MessageDto {
   bodyHtml: string | null;
   inReplyTo: string | null;
   references: string | null;
+  /** Original To/Cc recipients — drives reply-all (empty for older pre-migration mail). */
+  to: EmailAddress[];
+  cc: EmailAddress[];
+}
+
+/** Reference to an existing stored attachment, re-sent by the backend (e.g. on forward). */
+export interface AttachmentRef {
+  messageId: string;
+  attachmentId: string;
 }
 
 /** Outgoing message composed by the client and sent via the backend (SMTP). */
@@ -74,6 +89,8 @@ export interface SendMessageRequest {
   /** Message-ID being replied to (sets In-Reply-To/References for threading). */
   inReplyTo?: string | null;
   references?: string | null;
+  /** Existing attachments to re-attach (forward): backend resolves bytes from cache/IMAP. */
+  attachments?: AttachmentRef[];
 }
 
 /** A browser Web Push subscription, registered by the PWA for background notifications. */

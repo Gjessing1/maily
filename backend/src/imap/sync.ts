@@ -113,6 +113,12 @@ async function toParsedMessage(ctx: SyncContext, msg: CapturedMessage): Promise<
 
   const envelope = msg.envelope;
   const from = envelope?.from?.[0];
+  const mapAddrs = (
+    list: NonNullable<typeof envelope>['to'] | undefined,
+  ): { name: string | null; address: string }[] =>
+    (list ?? [])
+      .filter((a): a is typeof a & { address: string } => Boolean(a.address))
+      .map((a) => ({ name: a.name || null, address: a.address }));
   const internalDate =
     msg.internalDate instanceof Date
       ? msg.internalDate
@@ -129,6 +135,8 @@ async function toParsedMessage(ctx: SyncContext, msg: CapturedMessage): Promise<
     subject: envelope?.subject ?? null,
     fromName: from?.name ?? null,
     fromAddress: from?.address ?? null,
+    to: mapAddrs(envelope?.to),
+    cc: mapAddrs(envelope?.cc),
     snippet: makeSnippet(bodyText, bodyHtml),
     bodyText,
     bodyHtml,

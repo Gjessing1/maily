@@ -67,6 +67,28 @@ export const PaperclipIcon = (p: IconProps) => (
   </Base>
 );
 
+export const ReplyIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M9 17 4 12l5-5" />
+    <path d="M4 12h11a5 5 0 0 1 5 5v2" />
+  </Base>
+);
+
+export const ReplyAllIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 17 2 12l5-5" />
+    <path d="M12 17 7 12l5-5" />
+    <path d="M7 12h10a4 4 0 0 1 4 4v2" />
+  </Base>
+);
+
+export const ForwardIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m15 17 5-5-5-5" />
+    <path d="M20 12H9a5 5 0 0 0-5 5v2" />
+  </Base>
+);
+
 export const SendIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M22 2 11 13" />

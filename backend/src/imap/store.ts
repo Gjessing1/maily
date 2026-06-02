@@ -152,6 +152,8 @@ export function upsertMessage(
         subject: parsed.subject,
         fromName: parsed.fromName,
         fromAddress: parsed.fromAddress,
+        toAddresses: parsed.to.length ? JSON.stringify(parsed.to) : null,
+        ccAddresses: parsed.cc.length ? JSON.stringify(parsed.cc) : null,
         snippet: parsed.snippet,
         bodyText: parsed.bodyText,
         bodyHtml: parsed.bodyHtml,

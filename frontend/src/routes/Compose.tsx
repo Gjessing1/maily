@@ -1,12 +1,17 @@
 import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { SendMessageRequest } from '@maily/shared';
+import type { AttachmentRef, SendMessageRequest } from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts } from '../state/data';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, SendIcon } from '../ui/icons';
+import { BackIcon, PaperclipIcon, SendIcon } from '../ui/icons';
 
-/** Prefill passed via router state (e.g. from the Reader's reply action). */
+/** A forwarded attachment carried into compose: the send ref plus a name for display. */
+export interface ComposeAttachment extends AttachmentRef {
+  filename: string | null;
+}
+
+/** Prefill passed via router state (e.g. from the Reader's reply/forward actions). */
 export interface ComposePrefill {
   accountId?: string;
   to?: string[];
@@ -15,6 +20,7 @@ export interface ComposePrefill {
   body?: string;
   inReplyTo?: string | null;
   references?: string | null;
+  attachments?: ComposeAttachment[];
 }
 
 function parseAddrs(raw: string): string[] {
@@ -35,6 +41,7 @@ export function Compose() {
   const [showCc, setShowCc] = useState(Boolean(prefill.cc?.length));
   const [subject, setSubject] = useState(prefill.subject ?? '');
   const [body, setBody] = useState(prefill.body ?? '');
+  const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +68,9 @@ export function Compose() {
       text: body,
       inReplyTo: prefill.inReplyTo ?? null,
       references: prefill.references ?? null,
+      attachments: attachments.length
+        ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
+        : undefined,
     };
     try {
       await api.send(fromAccount.id, msg);
@@ -154,6 +164,30 @@ export function Compose() {
             className="flex-1 bg-transparent text-[15px] outline-none"
           />
         </div>
+
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
+            {attachments.map((a) => (
+              <span
+                key={a.attachmentId}
+                className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
+              >
+                <PaperclipIcon className="size-3.5 text-faint" />
+                <span className="max-w-[40vw] truncate">{a.filename || 'attachment'}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAttachments((prev) => prev.filter((x) => x.attachmentId !== a.attachmentId))
+                  }
+                  className="text-faint active:text-fg"
+                  aria-label="Remove attachment"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <textarea
           value={body}

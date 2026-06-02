@@ -82,6 +82,9 @@ export const messages = sqliteTable(
     subject: text('subject'),
     fromName: text('from_name'),
     fromAddress: text('from_address'),
+    /** JSON-encoded EmailAddress[] of the original To/Cc — drives reply-all. */
+    toAddresses: text('to_addresses'),
+    ccAddresses: text('cc_addresses'),
     snippet: text('snippet'),
     bodyText: text('body_text'),
     bodyHtml: text('body_html'),
