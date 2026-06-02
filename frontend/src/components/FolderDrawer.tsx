@@ -1,18 +1,51 @@
+import type { ComponentType, SVGProps } from 'react';
 import { Link } from 'react-router-dom';
-import type { AccountDto, FolderDto } from '@maily/shared';
+import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
 import { useAuth } from '../state/auth';
-import { InboxIcon, SettingsIcon } from '../ui/icons';
+import { setPref, usePrefs, type Theme } from '../state/prefs';
+import {
+  ArchiveIcon,
+  DraftIcon,
+  FolderIcon,
+  InboxIcon,
+  MonitorIcon,
+  MoonIcon,
+  SendIcon,
+  SettingsIcon,
+  SpamIcon,
+  SunIcon,
+  TrashIcon,
+} from '../ui/icons';
 
-const ROLE_ORDER: Record<string, number> = {
+const ROLE_ORDER: Record<FolderRole, number> = {
   inbox: 0,
-  flagged: 1,
   drafts: 2,
   sent: 3,
   archive: 4,
   junk: 5,
   trash: 6,
   custom: 7,
+};
+
+/** Role → icon. Roles are normalised per provider on the backend, so mapping by
+ * role (not folder name) is inherently provider-aware (Gmail labels vs mailbox.org). */
+const ROLE_ICON: Record<FolderRole, ComponentType<SVGProps<SVGSVGElement>>> = {
+  inbox: InboxIcon,
+  drafts: DraftIcon,
+  sent: SendIcon,
+  archive: ArchiveIcon,
+  junk: SpamIcon,
+  trash: TrashIcon,
+  custom: FolderIcon,
+};
+
+/** One-tap theme cycle: System → Light → Dark → System. */
+const THEME_CYCLE: Record<Theme, Theme> = { system: 'light', light: 'dark', dark: 'system' };
+const THEME_META: Record<Theme, { label: string; Icon: ComponentType<SVGProps<SVGSVGElement>> }> = {
+  system: { label: 'System theme', Icon: MonitorIcon },
+  light: { label: 'Light theme', Icon: SunIcon },
+  dark: { label: 'Dark theme', Icon: MoonIcon },
 };
 
 function AccountFolders({
@@ -32,6 +65,8 @@ function AccountFolders({
         (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.name.localeCompare(b.name),
     );
 
+  const Icon = (role: FolderRole) => ROLE_ICON[role] ?? FolderIcon;
+
   return (
     <div className="mb-4">
       <p className="px-4 py-1 text-xs font-medium uppercase tracking-wide text-faint">
@@ -40,6 +75,7 @@ function AccountFolders({
       <ul>
         {sorted.map((f) => {
           const active = f.id === selectedFolderId;
+          const FolderRoleIcon = Icon(f.role);
           return (
             <li key={f.id}>
               <button
@@ -48,7 +84,7 @@ function AccountFolders({
                   active ? 'bg-accent-soft text-accent' : 'text-fg active:bg-surface-2'
                 }`}
               >
-                <InboxIcon className="size-5 shrink-0 opacity-70" />
+                <FolderRoleIcon className="size-5 shrink-0 opacity-70" />
                 <span className="truncate capitalize">{f.name}</span>
               </button>
             </li>
@@ -73,6 +109,8 @@ export function FolderDrawer({
   onSelect: (f: FolderDto) => void;
 }) {
   const { logout } = useAuth();
+  const theme = usePrefs().theme;
+  const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
 
   return (
     <>
@@ -104,6 +142,13 @@ export function FolderDrawer({
           ))}
         </div>
         <div className="border-t border-border">
+          <button
+            onClick={() => setPref('theme', THEME_CYCLE[theme])}
+            className="flex w-full items-center gap-3 px-4 py-3 text-left text-[15px] text-fg active:bg-surface-2"
+          >
+            <ThemeIcon className="size-5 opacity-70" />
+            {themeLabel}
+          </button>
           <Link
             to="/settings"
             onClick={onClose}
