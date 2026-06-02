@@ -22,7 +22,7 @@ import {
   savePushSubscription,
   uidLocationForMessage,
 } from '../db/queries.js';
-import { ensureAttachmentOnDisk } from '../storage/attachments.js';
+import { embedInlineImages, ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
@@ -58,7 +58,18 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/api/messages/:id', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
-    return toMessageDetailDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id));
+    const atts = attachmentsForMessage(m.id);
+    const dto = toMessageDetailDto(m, folderIdsForMessage(m.id), atts);
+    // Embed inline CID images as data: URIs so they render in the sandboxed,
+    // null-origin reader iframe (ROADMAP §3.7.A). Inline parts that couldn't be
+    // embedded (over the size cap, or unreferenced) surface in the attachments
+    // panel instead — flip their isInline hint so the client stops hiding them.
+    const { html, embeddedIds } = await embedInlineImages(dto.bodyHtml, atts);
+    dto.bodyHtml = html;
+    dto.attachments = dto.attachments.map((a) =>
+      a.isInline && !embeddedIds.has(a.id) ? { ...a, isInline: false } : a,
+    );
+    return dto;
   });
 
   app.patch<{ Params: { id: string }; Body: { seen?: boolean; flagged?: boolean } }>(
