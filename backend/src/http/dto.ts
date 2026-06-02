@@ -68,6 +68,7 @@ export function toMessageDetailDto(
 ): MessageDetailDto {
   return {
     ...toMessageDto(m, folderIds, attachmentRows),
+    messageId: m.messageId,
     bodyText: m.bodyText,
     bodyHtml: m.bodyHtml,
     inReplyTo: m.inReplyTo,

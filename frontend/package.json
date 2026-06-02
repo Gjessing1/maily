@@ -4,10 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node -e \"console.log('frontend PWA is scaffolded in Phase 3 — see docs/ROADMAP.md')\"",
-    "build": "node -e \"process.exit(0)\""
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@maily/shared": "*"
+    "@maily/shared": "*",
+    "dexie": "^4.0.10",
+    "dexie-react-hooks": "^1.1.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vite-plugin-pwa": "^0.21.1",
+    "workbox-precaching": "^7.3.0",
+    "workbox-routing": "^7.3.0"
   }
 }

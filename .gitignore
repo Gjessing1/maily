@@ -10,6 +10,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+# Built PWA copied here by backend/Dockerfile for production serving.
+backend/public/
 
 # --- Env & secrets ---
 .env

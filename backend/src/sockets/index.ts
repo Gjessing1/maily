@@ -10,7 +10,9 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('socket');
 
-function tokenFrom(socket: { handshake: { auth?: Record<string, unknown>; headers: Record<string, unknown> } }): string | null {
+function tokenFrom(socket: {
+  handshake: { auth?: Record<string, unknown>; headers: Record<string, unknown> };
+}): string | null {
   const fromAuth = socket.handshake.auth?.token;
   if (typeof fromAuth === 'string') return fromAuth;
   const header = socket.handshake.headers.authorization;

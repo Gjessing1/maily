@@ -55,6 +55,8 @@ export interface MessageDto {
 
 /** Full message including body — returned by the read-one endpoint (not list views). */
 export interface MessageDetailDto extends MessageDto {
+  /** This message's own RFC Message-ID header (for setting In-Reply-To on replies). */
+  messageId: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
   inReplyTo: string | null;

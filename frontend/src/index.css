@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+/*
+ * maily design tokens. Dark-first, mobile-native feel. Kept intentionally small;
+ * components compose these via Tailwind utilities.
+ */
+@theme {
+  --color-bg: #0b0b0f;
+  --color-surface: #15151c;
+  --color-surface-2: #1d1d27;
+  --color-border: #26262f;
+  --color-fg: #f4f4f6;
+  --color-muted: #9a9aa8;
+  --color-faint: #6b6b78;
+  --color-accent: #6d6bff;
+  --color-accent-soft: #2a295a;
+  --color-unread: #6d6bff;
+  --color-danger: #ff5d6c;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Prevent iOS rubber-band exposing white behind the app. */
+  overscroll-behavior-y: none;
+}
+
+/* Respect the device notch / home indicator on installed PWAs. */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Hide scrollbars but keep scrolling (native-app feel). */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Rendered email HTML: constrain so remote content can't break the layout. */
+.mail-html {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.mail-html img {
+  max-width: 100%;
+  height: auto;
+}
+.mail-html a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}

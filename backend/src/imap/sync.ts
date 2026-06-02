@@ -12,12 +12,7 @@ import type { Logger } from '../logger.js';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type { ParsedMessage } from './types.js';
-import {
-  extractHeaderValue,
-  extractStructure,
-  flagsFromSet,
-  makeSnippet,
-} from './parse.js';
+import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
 import { upsertMessage } from './store.js';
 
 /** Default local cache window — roughly one year (ARCHITECTURE §1). */

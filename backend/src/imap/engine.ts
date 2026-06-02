@@ -107,7 +107,8 @@ export class AccountEngine {
   private async onConnected(client: ImapFlow): Promise<void> {
     const ctx = this.ctx(client);
     const folders = await syncFolders(client, this.account!.id);
-    const inbox = folders.find((f) => f.role === 'inbox') ?? folders.find((f) => f.path === 'INBOX');
+    const inbox =
+      folders.find((f) => f.role === 'inbox') ?? folders.find((f) => f.path === 'INBOX');
     if (!inbox) {
       this.log.error('no INBOX folder found; aborting connection');
       return;

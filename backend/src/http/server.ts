@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 import { authRoutes } from '../routes/auth.js';
 import { apiRoutes } from '../routes/api.js';
+import { staticSite } from './static.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -22,6 +23,10 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   await app.register(authRoutes);
   await app.register(apiRoutes);
+  // Last, and on the root context (not encapsulated) so reply.sendFile and the
+  // SPA not-found handler apply app-wide: serves the built PWA in production
+  // (no-op in dev, where Vite serves the app and proxies the API).
+  await staticSite(app);
 
   return app;
 }

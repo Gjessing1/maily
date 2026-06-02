@@ -6,11 +6,7 @@
 import webpush from 'web-push';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
-import {
-  deletePushSubscription,
-  getMessage,
-  listPushSubscriptions,
-} from '../db/queries.js';
+import { deletePushSubscription, getMessage, listPushSubscriptions } from '../db/queries.js';
 import { onSignal } from '../events.js';
 
 const log = createLogger('push');

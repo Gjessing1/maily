@@ -32,7 +32,11 @@ export interface ResyncResult {
 }
 
 /** Apply CONDSTORE flag changes since the last stored MODSEQ to cached messages. */
-async function resyncFlags(ctx: SyncContext, folder: FolderRow, sinceModseq: number): Promise<void> {
+async function resyncFlags(
+  ctx: SyncContext,
+  folder: FolderRow,
+  sinceModseq: number,
+): Promise<void> {
   for await (const msg of ctx.client.fetch(
     '1:*',
     { uid: true, flags: true },
