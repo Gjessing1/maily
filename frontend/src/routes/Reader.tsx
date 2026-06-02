@@ -9,6 +9,7 @@ import { AttachmentChip } from '../components/AttachmentChip';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
+  ChevronDownIcon,
   ForwardIcon,
   MailIcon,
   MailOpenIcon,
@@ -17,8 +18,19 @@ import {
   StarIcon,
   TrashIcon,
 } from '../ui/icons';
+import type { EmailAddress } from '@maily/shared';
 import { avatarHue, fullDate, initials, senderName } from '../ui/format';
 import type { ComposeAttachment, ComposePrefill } from './Compose';
+
+/** One label/value row in the expanded message-header block. */
+function HeaderField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="w-12 shrink-0 text-faint">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words text-fg">{value}</dd>
+    </div>
+  );
+}
 
 export function Reader() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +41,7 @@ export function Reader() {
   const [flagged, setFlagged] = useState(false);
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
 
   // Reflect server flag state once the detail loads; reset the per-message image
@@ -39,6 +52,7 @@ export function Reader() {
       setSeen(detail.seen);
     }
     setShowImages(false);
+    setDetailsOpen(false);
   }, [detail]);
 
   // Auto-mark as read on open (optimistic; server is authoritative), honouring the
@@ -199,6 +213,10 @@ export function Reader() {
     });
   }
 
+  const fmtAddr = (a: EmailAddress): string =>
+    a.name?.trim() ? `${a.name.trim()} <${a.address}>` : a.address;
+  const joinAddrs = (list: EmailAddress[]): string => list.map(fmtAddr).join(', ');
+
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
   const allowImages = !blockRemoteImages || showImages;
@@ -271,7 +289,11 @@ export function Reader() {
               <h1 className="text-xl font-semibold leading-snug">
                 {detail.subject || '(no subject)'}
               </h1>
-              <div className="mt-3 flex items-center gap-3">
+              <button
+                onClick={() => setDetailsOpen((o) => !o)}
+                aria-expanded={detailsOpen}
+                className="mt-3 flex w-full items-center gap-3 text-left"
+              >
                 <div
                   className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
                   style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
@@ -283,10 +305,28 @@ export function Reader() {
                     {senderName(detail.fromName, detail.fromAddress)}
                   </p>
                   <p className="truncate text-xs text-faint">
-                    {fullDate(detail.receivedAt ?? detail.sentAt)}
+                    {detail.to.length ? `to ${joinAddrs(detail.to)}` : ''}
+                    {detail.to.length ? ' · ' : ''}
+                    {fullDate(detail.sentAt ?? detail.receivedAt)}
                   </p>
                 </div>
-              </div>
+                <ChevronDownIcon
+                  className={`size-4 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+
+              {detailsOpen && (
+                <dl className="mt-3 space-y-1.5 rounded-lg bg-surface px-3 py-2.5 text-xs">
+                  <HeaderField
+                    label="From"
+                    value={fmtAddr({ name: detail.fromName, address: detail.fromAddress ?? '' })}
+                  />
+                  {detail.to.length > 0 && <HeaderField label="To" value={joinAddrs(detail.to)} />}
+                  {detail.cc.length > 0 && <HeaderField label="Cc" value={joinAddrs(detail.cc)} />}
+                  <HeaderField label="Date" value={fullDate(detail.sentAt ?? detail.receivedAt)} />
+                  {detail.subject && <HeaderField label="Subject" value={detail.subject} />}
+                </dl>
+              )}
             </div>
 
             <div className="border-t border-border">
