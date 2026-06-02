@@ -8,10 +8,19 @@
     />
     <meta name="theme-color" content="#0b0b0f" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <!--
+      `apple-mobile-web-app-capable` is deprecated in Chromium (which logs a
+      console warning) in favour of the standard `mobile-web-app-capable` above,
+      but iOS Safari still needs it to launch the installed PWA in standalone
+      (full-screen) mode. Both are kept deliberately; the Chromium warning is benign.
+    -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="maily" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <!-- Favicon: PNG PWA icons double as the browser-tab favicon (no separate .ico needed). -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
     <title>maily</title>
     <script>
       // Set the theme before first paint so light-mode users don't flash dark.
