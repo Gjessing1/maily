@@ -61,6 +61,13 @@ export const MailOpenIcon = (p: IconProps) => (
   </Base>
 );
 
+export const MailIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="m3 7 9 6 9-6" />
+  </Base>
+);
+
 export const PaperclipIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M21 11.5 12.5 20a4 4 0 0 1-5.7-5.7l8-8a2.6 2.6 0 0 1 3.7 3.7l-8 8a1.3 1.3 0 0 1-1.8-1.8l7.3-7.3" />

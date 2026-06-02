@@ -7,7 +7,16 @@ import { usePrefs } from '../state/prefs';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ForwardIcon, ReplyAllIcon, ReplyIcon, StarIcon, TrashIcon } from '../ui/icons';
+import {
+  BackIcon,
+  ForwardIcon,
+  MailIcon,
+  MailOpenIcon,
+  ReplyAllIcon,
+  ReplyIcon,
+  StarIcon,
+  TrashIcon,
+} from '../ui/icons';
 import { avatarHue, fullDate, initials, senderName } from '../ui/format';
 import type { ComposeAttachment, ComposePrefill } from './Compose';
 
@@ -18,23 +27,42 @@ export function Reader() {
   const accounts = useAccounts();
   const { blockRemoteImages } = usePrefs();
   const [flagged, setFlagged] = useState(false);
+  const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const markedSeen = useRef(false);
 
   // Reflect server flag state once the detail loads; reset the per-message image
   // override so a newly opened message starts blocked again (when blocking is on).
   useEffect(() => {
-    if (detail) setFlagged(detail.flagged);
+    if (detail) {
+      setFlagged(detail.flagged);
+      setSeen(detail.seen);
+    }
     setShowImages(false);
   }, [detail]);
 
-  // Mark as read on first open (optimistic; server is authoritative).
+  // Mark as read on first open (optimistic; server is authoritative). The guard
+  // fires once per mount, so a later manual "mark unread" is not re-marked read.
   useEffect(() => {
     if (!detail || detail.seen || markedSeen.current) return;
     markedSeen.current = true;
+    setSeen(true);
     void patchCachedFlags(detail.id, { seen: true });
     api.setFlags(detail.id, { seen: true }).catch(() => undefined);
   }, [detail]);
+
+  async function toggleSeen() {
+    if (!detail) return;
+    const next = !seen;
+    setSeen(next);
+    void patchCachedFlags(detail.id, { seen: next });
+    try {
+      await api.setFlags(detail.id, { seen: next });
+    } catch {
+      setSeen(!next); // revert on failure
+      void patchCachedFlags(detail.id, { seen: !next });
+    }
+  }
 
   async function toggleStar() {
     if (!detail) return;
@@ -166,6 +194,17 @@ export function Reader() {
           <BackIcon />
         </button>
         <div className="flex-1" />
+        <button
+          onClick={toggleSeen}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label={seen ? 'Mark as unread' : 'Mark as read'}
+        >
+          {seen ? (
+            <MailIcon className="text-fg" />
+          ) : (
+            <MailOpenIcon className="text-accent" />
+          )}
+        </button>
         <button
           onClick={toggleStar}
           className="rounded-full p-2 active:bg-surface-2"
