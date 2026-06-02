@@ -7,6 +7,7 @@ import { useAuth } from '../state/auth';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { BackIcon } from '../ui/icons';
 
 /** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
@@ -114,6 +115,7 @@ export function Settings() {
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
   const [config, setConfig] = useState<ServerConfigDto | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   // Server config is static for the session — fetch once.
   useEffect(() => {
@@ -422,14 +424,16 @@ export function Settings() {
               </span>
             </div>
             <button
-              onClick={clearCache}
+              onClick={() => setConfirmClear(true)}
               className="w-full px-4 py-3 text-left text-[15px] active:bg-surface-2"
             >
               Clear local cache
             </button>
           </div>
           <p className="px-4 pt-2 text-xs text-faint">
-            The local cache is disposable — mail is re-fetched from the server.
+            The local cache is a disposable copy of mail that’s still on the server. Clearing it
+            re-downloads live mail, but can’t restore anything already archived or purged
+            server-side.
           </p>
         </section>
 
@@ -444,6 +448,19 @@ export function Settings() {
           </div>
         </section>
       </main>
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear local cache?"
+        message="This wipes mail stored on this device. Anything still on the server re-downloads, but mail already archived or purged server-side can’t be recovered here."
+        confirmLabel="Clear cache"
+        danger
+        onConfirm={() => {
+          setConfirmClear(false);
+          void clearCache();
+        }}
+        onCancel={() => setConfirmClear(false)}
+      />
     </div>
   );
 }

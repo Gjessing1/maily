@@ -6,6 +6,7 @@ import { useAccounts, useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
@@ -54,6 +55,7 @@ export function ReaderView({
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
 
   // Reflect server flag state once the detail loads; reset the per-message image
@@ -274,7 +276,7 @@ export function ReaderView({
           <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
         </button>
         <button
-          onClick={remove}
+          onClick={() => setConfirmDelete(true)}
           className="rounded-full p-2 active:bg-surface-2"
           aria-label="Delete"
         >
@@ -384,6 +386,19 @@ export function ReaderView({
           </article>
         ) : null}
       </main>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete message?"
+        message="This moves the message to Trash. You can restore it from there until it’s permanently removed."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          setConfirmDelete(false);
+          void remove();
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }
