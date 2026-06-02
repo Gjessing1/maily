@@ -33,7 +33,7 @@ export function shortDate(iso: string | null): string {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay) {
-    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
   }
   const diffDays = (now.getTime() - d.getTime()) / 86_400_000;
   if (diffDays < 7) return d.toLocaleDateString(undefined, { weekday: 'short' });
@@ -50,14 +50,20 @@ export function fullDate(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const fmt = getPrefs().dateFormat;
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const time = d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
   if (fmt === 'system') {
     return d.toLocaleString(undefined, {
       weekday: 'short',
+      year: 'numeric',
       month: 'short',
       day: 'numeric',
-      hour: 'numeric',
+      hour: '2-digit',
       minute: '2-digit',
+      hour12: false,
     });
   }
   return `${numericDate(d, fmt)} ${time}`;
