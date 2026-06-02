@@ -202,28 +202,33 @@ export function Home() {
           </div>
         ) : (
           <div className="flex items-center gap-1 px-2 py-2">
-            <button
-              onClick={() => setDrawerOpen(true)}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Folders"
-            >
-              <MenuIcon />
-            </button>
-            <h1 className="flex-1 truncate text-lg font-semibold capitalize">
+            {/* On mobile, Folders/Search live in the bottom bar; keep them up top on wide screens. */}
+            {isWide && (
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Folders"
+              >
+                <MenuIcon />
+              </button>
+            )}
+            <h1 className="flex-1 truncate px-2 text-lg font-semibold capitalize">
               {folder?.name ?? 'Inbox'}
             </h1>
-            <Link
-              to="/search"
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Search"
-            >
-              <SearchIcon />
-            </Link>
+            {isWide && (
+              <Link
+                to="/search"
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Search"
+              >
+                <SearchIcon />
+              </Link>
+            )}
           </div>
         )}
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${!isWide ? 'pb-16' : ''}`}>
         {error && <p className="px-4 py-2 text-sm text-danger">Couldn’t refresh: {error}</p>}
 
         {loading ? (
@@ -288,7 +293,9 @@ export function Home() {
         listPane
       )}
 
-      {!selectionMode && (
+      {/* Wide screens keep the floating compose button; on mobile compose moves into
+          the bottom bar with the rest of the navigation. */}
+      {isWide && !selectionMode && (
         <Link
           to="/compose"
           className="safe-bottom fixed bottom-5 right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
@@ -296,6 +303,36 @@ export function Home() {
         >
           <PencilIcon />
         </Link>
+      )}
+
+      {/* Mobile bottom navigation: primary nav + actions within thumb reach. */}
+      {!isWide && !selectionMode && (
+        <nav className="safe-bottom fixed inset-x-0 bottom-0 z-20 flex items-stretch justify-around border-t border-border bg-bg/95 backdrop-blur">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="flex flex-1 flex-col items-center gap-0.5 py-2 text-faint active:text-fg"
+            aria-label="Folders"
+          >
+            <MenuIcon />
+            <span className="text-[10px]">Folders</span>
+          </button>
+          <Link
+            to="/search"
+            className="flex flex-1 flex-col items-center gap-0.5 py-2 text-faint active:text-fg"
+            aria-label="Search"
+          >
+            <SearchIcon />
+            <span className="text-[10px]">Search</span>
+          </Link>
+          <Link
+            to="/compose"
+            className="flex flex-1 flex-col items-center gap-0.5 py-2 text-accent active:opacity-70"
+            aria-label="Compose"
+          >
+            <PencilIcon />
+            <span className="text-[10px]">Compose</span>
+          </Link>
+        </nav>
       )}
 
       <FolderDrawer
