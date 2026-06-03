@@ -194,15 +194,13 @@ export function MessageRow({
             checked ? 'bg-accent-soft' : selected ? 'bg-surface-2' : ''
           }`}
         >
-          {selectionMode ? (
+          {checked ? (
             <div
               role="checkbox"
               aria-checked={checked}
-              aria-label={checked ? 'Deselect' : 'Select'}
+              aria-label="Deselect"
               onClick={onAvatarClick}
-              className={`mt-0.5 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition-colors ${
-                checked ? 'border-accent bg-accent text-white' : 'border-border text-transparent'
-              }`}
+              className="mt-0.5 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-accent bg-accent text-white transition-colors"
             >
               <CheckIcon className="size-5" />
             </div>
