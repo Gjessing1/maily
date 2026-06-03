@@ -159,9 +159,8 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
     const sel = window.getSelection();
     const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
     // Only keep a selection that lives inside this editor.
-    savedRange.current = range && ref.current?.contains(range.commonAncestorContainer)
-      ? range.cloneRange()
-      : null;
+    savedRange.current =
+      range && ref.current?.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
     setLinkDraft({ url: '', text: savedRange.current?.toString() ?? '' });
   }
 

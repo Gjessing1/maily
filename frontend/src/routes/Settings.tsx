@@ -311,11 +311,11 @@ export function Settings() {
         </section>
 
         <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Labels
-          </p>
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Labels</p>
           <div className="border-y border-border">
-            {accounts?.map((a) => <AccountLabels key={a.id} account={a} />)}
+            {accounts?.map((a) => (
+              <AccountLabels key={a.id} account={a} />
+            ))}
           </div>
           <p className="px-4 pt-2 text-xs text-faint">
             Turn a label off to hide it from the folder list (e.g. Gmail’s “Important”). Nothing is

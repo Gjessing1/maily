@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type {
-  AttachmentRef,
-  SaveDraftRequest,
-  SendMessageRequest,
-  UploadDto,
-} from '@maily/shared';
+import type { AttachmentRef, SaveDraftRequest, SendMessageRequest, UploadDto } from '@maily/shared';
 import { api } from '../api/client';
 import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
