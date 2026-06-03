@@ -14,6 +14,7 @@ import { createLogger, type Logger } from '../logger.js';
 import { emitSignal } from '../events.js';
 import { ensureAccount, type AccountRow } from '../db/accounts.js';
 import { createClient, detectCapabilities, type Capabilities } from './connection.js';
+import { backfillRecipients } from './backfill.js';
 import { getFolderById, syncFolders } from './folders.js';
 import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
@@ -37,6 +38,7 @@ export class AccountEngine {
   private connected = false;
   private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
+  private recipientsBackfilled = false;
 
   constructor(private readonly config: AccountConfig) {
     this.log = createLogger(`imap:${config.email}`);
@@ -141,6 +143,13 @@ export class AccountEngine {
 
     // Kick the non-INBOX folders once on connect rather than waiting a full cron cycle.
     void this.runFolderCron();
+
+    // One-time heal of pre-migration-0004 rows with NULL To/Cc (e.g. Sent mail showing
+    // no recipient). Envelope-only refetch over a transient connection; no-op once done.
+    if (!this.recipientsBackfilled) {
+      this.recipientsBackfilled = true;
+      void backfillRecipients(this.config, this.id);
+    }
   }
 
   /** Coalesced INBOX reconcile triggered by live IDLE events. */

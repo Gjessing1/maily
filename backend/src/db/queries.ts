@@ -131,6 +131,45 @@ export function uidLocationInFolder(
   return row && row.uid !== null ? { folderPath: row.folderPath, uid: row.uid } : undefined;
 }
 
+/**
+ * Messages whose To/Cc were never parsed (NULL — synced before the `to_addresses`
+ * column existed, migration 0004). Returns one `(folderPath, uid)` location per
+ * message so a low-bandwidth envelope-only refetch can heal them. Rows that have
+ * been checked (even if genuinely empty) carry `'[]'`, not NULL, so they drop out.
+ */
+export function messagesNeedingRecipientBackfill(
+  accountId: string,
+): { messageId: string; folderPath: string; uid: number }[] {
+  return db
+    .select({
+      messageId: messages.id,
+      folderPath: folders.path,
+      uid: messageFolders.uid,
+    })
+    .from(messages)
+    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
+    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        isNull(messages.toAddresses),
+        isNotNull(messageFolders.uid),
+      ),
+    )
+    .groupBy(messages.id)
+    .all()
+    .filter((r): r is { messageId: string; folderPath: string; uid: number } => r.uid !== null);
+}
+
+/** Set a message's To/Cc (JSON-encoded EmailAddress[]). Used by the recipient backfill. */
+export function setRecipientAddresses(
+  messageId: string,
+  toAddresses: string,
+  ccAddresses: string,
+): void {
+  db.update(messages).set({ toAddresses, ccAddresses }).where(eq(messages.id, messageId)).run();
+}
+
 /** Turn a user query into an FTS5 MATCH expression: prefix-match every term, AND-joined. */
 function toFtsMatch(query: string): string {
   const terms = query.match(/[\p{L}\p{N}]+/gu) ?? [];
