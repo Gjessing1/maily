@@ -3,8 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import type { AttachmentRef, SendMessageRequest } from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts } from '../state/data';
+import { usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RichTextEditor } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
+import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
 import { BackIcon, PaperclipIcon, SendIcon } from '../ui/icons';
 
 /** A forwarded attachment carried into compose: the send ref plus a name for display. */
@@ -36,29 +39,49 @@ function isValidEmail(addr: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr);
 }
 
+/**
+ * Compose the editor's starting HTML from a prefill: the user's typing line, the
+ * signature (when enabled), then the quoted reply/forward text. Reply quotes are
+ * plain text (`> …` prefixes) carried over from replyPrefill.ts.
+ */
+function buildInitialHtml(prefill: ComposePrefill, signature: string): string {
+  const blocks = ['<div><br></div>'];
+  if (signature) blocks.push(`<div>-- </div><div>${plainTextToHtml(signature)}</div>`);
+  if (prefill.body?.trim()) blocks.push(`<div>${plainTextToHtml(prefill.body)}</div>`);
+  return blocks.join('');
+}
+
 export function Compose() {
   const navigate = useNavigate();
   const prefill = (useLocation().state as ComposePrefill | null) ?? {};
   const accounts = useAccounts();
+  const { signature, signatureEnabled } = usePrefs();
 
   const [accountId, setAccountId] = useState(prefill.accountId ?? '');
   const [to, setTo] = useState((prefill.to ?? []).join(', '));
   const [cc, setCc] = useState((prefill.cc ?? []).join(', '));
   const [showCc, setShowCc] = useState(Boolean(prefill.cc?.length));
   const [subject, setSubject] = useState(prefill.subject ?? '');
-  const [body, setBody] = useState(prefill.body ?? '');
+
+  // The editor is uncontrolled (seeded once with this HTML); `bodyHtml` tracks its
+  // live content for sending and dirty-detection.
+  const [initialHtml] = useState(() =>
+    buildInitialHtml(prefill, signatureEnabled ? signature : ''),
+  );
+  const [bodyHtml, setBodyHtml] = useState(initialHtml);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // "Dirty" = the user changed something relative to the prefill (reply/forward
-  // quotes don't count as user input, so an untouched draft discards silently).
+  // quotes + signature don't count as user input, so an untouched draft discards
+  // silently). Body comparison is on rendered text so whitespace-only edits don't count.
   const isDirty =
     to !== (prefill.to ?? []).join(', ') ||
     (showCc && cc !== (prefill.cc ?? []).join(', ')) ||
     subject !== (prefill.subject ?? '') ||
-    body !== (prefill.body ?? '') ||
+    htmlToPlainText(bodyHtml) !== htmlToPlainText(initialHtml) ||
     attachments.length !== (prefill.attachments?.length ?? 0);
 
   function cancel() {
@@ -92,11 +115,14 @@ export function Compose() {
     }
     setSending(true);
     setError(null);
+    const html = cleanEditorHtml(bodyHtml);
+    const text = htmlToPlainText(bodyHtml);
     const msg: SendMessageRequest = {
       to: recipients,
       cc: ccList.length ? ccList : undefined,
       subject,
-      text: body,
+      text,
+      html: html || undefined,
       inReplyTo: prefill.inReplyTo ?? null,
       references: prefill.references ?? null,
       attachments: attachments.length
@@ -220,11 +246,11 @@ export function Compose() {
           </div>
         )}
 
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
+        <RichTextEditor
+          initialHtml={initialHtml}
+          onChange={setBodyHtml}
           placeholder="Write your message…"
-          className="min-h-[40vh] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed outline-none placeholder:text-faint"
+          className="min-h-[40vh] px-4 py-3"
         />
       </main>
 

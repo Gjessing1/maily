@@ -45,6 +45,10 @@ export interface Prefs {
   clientCacheDays: number;
   /** Reading-pane placement on wide screens (Gmail-style split). */
   readingPane: ReadingPane;
+  /** Plain-text signature appended to new messages (empty = none). */
+  signature: string;
+  /** Append the signature automatically when composing. */
+  signatureEnabled: boolean;
 }
 
 const DEFAULTS: Prefs = {
@@ -58,6 +62,8 @@ const DEFAULTS: Prefs = {
   swipeLeft: 'delete',
   clientCacheDays: 30,
   readingPane: 'none',
+  signature: '',
+  signatureEnabled: false,
 };
 
 const KEY = 'maily.prefs';

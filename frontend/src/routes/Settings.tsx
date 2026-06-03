@@ -111,6 +111,7 @@ export function Settings() {
   const navigate = useNavigate();
   const accounts = useAccounts();
   const { logout } = useAuth();
+  const { signature } = usePrefs();
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
@@ -317,6 +318,29 @@ export function Settings() {
                 { value: 200, label: '200' },
               ]}
             />
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Composing
+          </p>
+          <div className="border-y border-border">
+            <ToggleRow
+              label="Append signature"
+              hint="Add your signature to the bottom of new messages."
+              prefKey="signatureEnabled"
+            />
+            <div className="px-4 py-3">
+              <label className="mb-2 block text-[15px]">Signature</label>
+              <textarea
+                value={signature}
+                onChange={(e) => setPref('signature', e.target.value)}
+                rows={4}
+                placeholder="Lars Gjessing&#10;Sent from maily"
+                className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none placeholder:text-faint"
+              />
+            </div>
           </div>
         </section>
 

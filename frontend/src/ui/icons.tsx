@@ -192,3 +192,37 @@ export const CloseIcon = (p: IconProps) => (
     <path d="M18 6 6 18M6 6l12 12" />
   </Base>
 );
+
+export const BoldIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 5h6a3.5 3.5 0 0 1 0 7H7Z" />
+    <path d="M7 12h7a3.5 3.5 0 0 1 0 7H7Z" />
+  </Base>
+);
+
+export const ItalicIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M19 5h-6M11 19H5M15 5 9 19" />
+  </Base>
+);
+
+export const ListIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M8 6h13M8 12h13M8 18h13" />
+    <path d="M3 6h.01M3 12h.01M3 18h.01" />
+  </Base>
+);
+
+export const ListOrderedIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 6h11M10 12h11M10 18h11" />
+    <path d="M4 4v4M3 8h2M3 4h1.5M3 14h2l-2 2.5h2" />
+  </Base>
+);
+
+export const LinkIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" />
+    <path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" />
+  </Base>
+);
