@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { AttachmentRef, SendMessageRequest, UploadDto } from '@maily/shared';
 import { api } from '../api/client';
+import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
 import { usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -9,6 +10,9 @@ import { RichTextEditor } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
 import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
 import { BackIcon, PaperclipIcon, SendIcon } from '../ui/icons';
+
+/** sessionStorage key holding the id of the compose draft in progress (for reload restore). */
+const ACTIVE_DRAFT_KEY = 'maily.activeDraft';
 
 /** A forwarded attachment carried into compose: the send ref plus a name for display. */
 export interface ComposeAttachment extends AttachmentRef {
@@ -53,21 +57,42 @@ function buildInitialHtml(prefill: ComposePrefill, signature: string): string {
 
 export function Compose() {
   const navigate = useNavigate();
-  const prefill = (useLocation().state as ComposePrefill | null) ?? {};
+  // `fresh` marks a brand-new compose navigation (reply/forward/new). A reload of an
+  // in-progress compose loses it (we clear it after consuming), so we restore the
+  // autosaved draft instead — see the effects below.
+  const stateObj = useLocation().state as (ComposePrefill & { fresh?: boolean }) | null;
+  const isFresh = Boolean(stateObj?.fresh);
+  const prefill = stateObj ?? {};
   const accounts = useAccounts();
   const { signature, signatureEnabled } = usePrefs();
+
+  // Stable draft id for this compose session: a fresh navigation mints a new one;
+  // a reload reuses the one parked in sessionStorage so the draft can be restored.
+  const [draftId] = useState(() => {
+    const existing = sessionStorage.getItem(ACTIVE_DRAFT_KEY);
+    if (isFresh || !existing) {
+      const id = crypto.randomUUID();
+      sessionStorage.setItem(ACTIVE_DRAFT_KEY, id);
+      return id;
+    }
+    return existing;
+  });
 
   const [accountId, setAccountId] = useState(prefill.accountId ?? '');
   const [to, setTo] = useState((prefill.to ?? []).join(', '));
   const [cc, setCc] = useState((prefill.cc ?? []).join(', '));
   const [showCc, setShowCc] = useState(Boolean(prefill.cc?.length));
   const [subject, setSubject] = useState(prefill.subject ?? '');
+  const [inReplyTo, setInReplyTo] = useState(prefill.inReplyTo ?? null);
+  const [references, setReferences] = useState(prefill.references ?? null);
 
-  // The editor is uncontrolled (seeded once with this HTML); `bodyHtml` tracks its
-  // live content for sending and dirty-detection.
+  // The editor is uncontrolled; `initialHtml` is the dirty-detection baseline, while
+  // `editorSeed`/`seedKey` reseed the editor's DOM on a draft restore.
   const [initialHtml] = useState(() =>
     buildInitialHtml(prefill, signatureEnabled ? signature : ''),
   );
+  const [editorSeed, setEditorSeed] = useState(initialHtml);
+  const [seedKey, setSeedKey] = useState(0);
   const [bodyHtml, setBodyHtml] = useState(initialHtml);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
   const [uploads, setUploads] = useState<UploadDto[]>([]);
@@ -76,6 +101,40 @@ export function Compose() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // On a fresh navigation, strip the `fresh` flag from history state so a subsequent
+  // reload falls through to the restore path instead of re-seeding from the prefill.
+  useEffect(() => {
+    if (isFresh) {
+      const rest = { ...stateObj } as Record<string, unknown>;
+      delete rest.fresh;
+      navigate('.', { replace: true, state: rest });
+    }
+  }, []);
+
+  // Restore an autosaved draft after a reload (non-fresh mount with a saved record).
+  useEffect(() => {
+    if (isFresh) return;
+    let alive = true;
+    void getDraft(draftId).then((d) => {
+      if (!alive || !d) return;
+      setAccountId(d.accountId ?? '');
+      setTo(d.to);
+      setCc(d.cc);
+      setShowCc(d.showCc);
+      setSubject(d.subject);
+      setInReplyTo(d.inReplyTo);
+      setReferences(d.references);
+      setAttachments(d.attachments);
+      setUploads(d.uploads);
+      setBodyHtml(d.bodyHtml);
+      setEditorSeed(d.bodyHtml);
+      setSeedKey((k) => k + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // "Dirty" = the user changed something relative to the prefill (reply/forward
   // quotes + signature don't count as user input, so an untouched draft discards
@@ -88,15 +147,61 @@ export function Compose() {
     uploads.length > 0 ||
     attachments.length !== (prefill.attachments?.length ?? 0);
 
-  function cancel() {
-    if (isDirty) setConfirmDiscard(true);
-    else navigate(-1);
+  // Local-first autosave (ROADMAP §3.7.B): persist an in-progress draft to IndexedDB
+  // (debounced) so it survives a reload/refresh. Untouched composes aren't saved.
+  useEffect(() => {
+    if (!isDirty) return;
+    const t = setTimeout(() => {
+      void saveDraft({
+        id: draftId,
+        accountId,
+        to,
+        cc,
+        showCc,
+        subject,
+        bodyHtml,
+        inReplyTo,
+        references,
+        attachments,
+        uploads,
+        updatedAt: Date.now(),
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [
+    isDirty,
+    draftId,
+    accountId,
+    to,
+    cc,
+    showCc,
+    subject,
+    bodyHtml,
+    inReplyTo,
+    references,
+    attachments,
+    uploads,
+  ]);
+
+  /** Forget the persisted draft for this compose session. */
+  function clearDraft() {
+    sessionStorage.removeItem(ACTIVE_DRAFT_KEY);
+    void deleteDraft(draftId);
   }
 
-  /** Discard staged uploads server-side, then leave the composer. */
+  function cancel() {
+    if (isDirty) setConfirmDiscard(true);
+    else {
+      clearDraft();
+      navigate(-1);
+    }
+  }
+
+  /** Discard staged uploads + the persisted draft, then leave the composer. */
   function discardDraft() {
     setConfirmDiscard(false);
     for (const u of uploads) void api.deleteUpload(u.uploadId);
+    clearDraft();
     navigate(-1);
   }
 
@@ -155,8 +260,8 @@ export function Compose() {
       subject,
       text,
       html: html || undefined,
-      inReplyTo: prefill.inReplyTo ?? null,
-      references: prefill.references ?? null,
+      inReplyTo,
+      references,
       attachments: attachments.length
         ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
         : undefined,
@@ -166,6 +271,7 @@ export function Compose() {
     };
     try {
       await api.send(fromAccount.id, msg);
+      clearDraft();
       navigate(-1);
     } catch (e) {
       setError((e as Error).message || 'Send failed.');
@@ -314,7 +420,8 @@ export function Compose() {
         )}
 
         <RichTextEditor
-          initialHtml={initialHtml}
+          initialHtml={editorSeed}
+          resetKey={seedKey}
           onChange={setBodyHtml}
           placeholder="Write your message…"
           className="min-h-[40vh] px-4 py-3"

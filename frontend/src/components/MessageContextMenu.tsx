@@ -71,7 +71,7 @@ export function MessageContextMenu({
     onClose();
     try {
       const detail = await api.message(message.id);
-      navigate('/compose', { state: build(detail) });
+      navigate('/compose', { state: { ...(build(detail) as object), fresh: true } });
     } catch {
       /* transient fetch failure — drop silently, user can reopen the message */
     }

@@ -312,6 +312,7 @@ export function Home() {
       {isWide && !selectionMode && (
         <Link
           to="/compose"
+          state={{ fresh: true }}
           className="safe-bottom fixed bottom-5 right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
           aria-label="Compose"
         >
@@ -340,6 +341,7 @@ export function Home() {
           </Link>
           <Link
             to="/compose"
+            state={{ fresh: true }}
             className="flex flex-1 flex-col items-center gap-0.5 py-2 text-accent active:opacity-70"
             aria-label="Compose"
           >

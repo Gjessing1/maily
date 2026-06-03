@@ -5,7 +5,7 @@
  * expected. We store list DTOs and (separately) full bodies so list views stay light.
  */
 import Dexie, { type EntityTable } from 'dexie';
-import type { AccountDto, FolderDto, MessageDetailDto, MessageDto } from '@maily/shared';
+import type { AccountDto, FolderDto, MessageDetailDto, MessageDto, UploadDto } from '@maily/shared';
 import { getPrefs } from '../state/prefs';
 
 /** Cached list-view message: the DTO plus bookkeeping for eviction. */
@@ -23,6 +23,26 @@ interface MetaRow {
   value: unknown;
 }
 
+/**
+ * A locally-persisted compose draft (ROADMAP §3.7.B). Local-first so an in-progress
+ * message survives reload/refresh; the backend SQLite is unaware of it. Optional
+ * IMAP APPEND to \Drafts is deferred.
+ */
+export interface DraftRecord {
+  id: string;
+  accountId?: string;
+  to: string;
+  cc: string;
+  showCc: boolean;
+  subject: string;
+  bodyHtml: string;
+  inReplyTo: string | null;
+  references: string | null;
+  attachments: { messageId: string; attachmentId: string; filename: string | null }[];
+  uploads: UploadDto[];
+  updatedAt: number;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 class MailyCache extends Dexie {
@@ -31,6 +51,7 @@ class MailyCache extends Dexie {
   messages!: EntityTable<CachedMessage, 'id'>;
   bodies!: EntityTable<CachedBody, 'id'>;
   meta!: EntityTable<MetaRow, 'key'>;
+  drafts!: EntityTable<DraftRecord, 'id'>;
 
   constructor() {
     super('maily');
@@ -41,6 +62,10 @@ class MailyCache extends Dexie {
       messages: 'id, receivedAt, threadId, accountId, cachedAt, *folderIds',
       bodies: 'id, cachedAt',
       meta: 'key',
+    });
+    // v2 adds the compose drafts store (other tables carry over unchanged).
+    this.version(2).stores({
+      drafts: 'id, updatedAt',
     });
   }
 }
@@ -101,4 +126,20 @@ export async function evictStale(): Promise<void> {
   const cutoff = Date.now() - getPrefs().clientCacheDays * DAY_MS;
   await cache.messages.where('cachedAt').below(cutoff).delete();
   await cache.bodies.where('cachedAt').below(cutoff).delete();
+  // Abandoned drafts (never sent, never discarded) age out on the same window.
+  await cache.drafts.where('updatedAt').below(cutoff).delete();
+}
+
+// --- Compose drafts ---
+
+export async function saveDraft(draft: DraftRecord): Promise<void> {
+  await cache.drafts.put(draft);
+}
+
+export async function getDraft(id: string): Promise<DraftRecord | undefined> {
+  return cache.drafts.get(id);
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  await cache.drafts.delete(id);
 }

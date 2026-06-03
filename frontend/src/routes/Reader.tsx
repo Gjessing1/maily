@@ -133,12 +133,12 @@ export function ReaderView({
 
   function reply() {
     if (!detail) return;
-    navigate('/compose', { state: buildReply(detail) });
+    navigate('/compose', { state: { ...buildReply(detail), fresh: true } });
   }
 
   function replyAll() {
     if (!detail) return;
-    navigate('/compose', { state: buildReplyAll(detail, accounts ?? []) });
+    navigate('/compose', { state: { ...buildReplyAll(detail, accounts ?? []), fresh: true } });
   }
 
   function remove() {
@@ -160,7 +160,7 @@ export function ReaderView({
 
   function forward() {
     if (!detail) return;
-    navigate('/compose', { state: buildForward(detail) });
+    navigate('/compose', { state: { ...buildForward(detail), fresh: true } });
   }
 
   const fmtAddr = (a: EmailAddress): string =>
