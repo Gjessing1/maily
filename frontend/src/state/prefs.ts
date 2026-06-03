@@ -1,9 +1,12 @@
 /**
- * Tiny localStorage-backed UI preferences. Client-only display prefs — never
- * secrets and never server state (those live in env / SQLite). Reactive via
- * useSyncExternalStore so flipping a toggle in Settings updates every mounted view.
+ * UI preferences. Display-only prefs (never secrets) that the user expects to be
+ * "global" — the same on every device. The server (SQLite) is the source of truth
+ * and `localStorage` is a fast offline cache: we render from the cache instantly,
+ * hydrate from the server on login, and push every change back (debounced).
+ * Reactive via useSyncExternalStore so flipping a toggle updates every mounted view.
  */
 import { useSyncExternalStore } from 'react';
+import { api } from '../api/client';
 
 /** How absolute dates are rendered. 'system' follows the browser locale. */
 export type DateFormat = 'system' | 'dmy' | 'mdy' | 'ymd';
@@ -49,11 +52,13 @@ export interface Prefs {
   signature: string;
   /** Append the signature automatically when composing. */
   signatureEnabled: boolean;
+  /** Folder/label ids the user has hidden from the drawer (e.g. Gmail's "Important"). */
+  hiddenFolderIds: string[];
 }
 
 const DEFAULTS: Prefs = {
   blockRemoteImages: false,
-  unreadAtTop: false,
+  unreadAtTop: true,
   dateFormat: 'system',
   theme: 'system',
   pageSize: 100,
@@ -64,6 +69,7 @@ const DEFAULTS: Prefs = {
   readingPane: 'none',
   signature: '',
   signatureEnabled: false,
+  hiddenFolderIds: [],
 };
 
 const KEY = 'maily.prefs';
@@ -80,18 +86,60 @@ function load(): Prefs {
 let current = load();
 const listeners = new Set<() => void>();
 
+function saveLocal(): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(current));
+  } catch {
+    // Best-effort: storage may be full or disabled — the offline cache just won't persist.
+  }
+}
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+// Debounced write-back to the server so rapid edits (e.g. typing a signature)
+// coalesce into one request. The whole prefs object is sent; the server owns it.
+let pushTimer: ReturnType<typeof setTimeout> | undefined;
+function schedulePush(): void {
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    void api.putSettings(current as unknown as Record<string, unknown>).catch(() => {
+      // Offline / unauthorized — local cache holds the change; it re-syncs next save.
+    });
+  }, 600);
+}
+
 export function getPrefs(): Prefs {
   return current;
 }
 
 export function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): void {
   current = { ...current, [key]: value };
+  saveLocal();
+  notify();
+  schedulePush();
+}
+
+/**
+ * Adopt the server's preferences on login (they're the cross-device source of
+ * truth). A fresh server with nothing stored yet is seeded from this device's
+ * local cache, so existing users' prefs migrate up on first run. Best-effort:
+ * offline/unauthorized just keeps the local cache.
+ */
+export async function hydratePrefs(): Promise<void> {
   try {
-    localStorage.setItem(KEY, JSON.stringify(current));
+    const server = await api.getSettings();
+    if (server && Object.keys(server).length > 0) {
+      current = { ...DEFAULTS, ...(server as Partial<Prefs>) };
+      saveLocal();
+      notify();
+    } else {
+      await api.putSettings(current as unknown as Record<string, unknown>);
+    }
   } catch {
-    // Best-effort: storage may be full or disabled — prefs just won't persist.
+    // Keep local prefs; they push up on the next successful save.
   }
-  for (const l of listeners) l();
 }
 
 function subscribe(listener: () => void): () => void {

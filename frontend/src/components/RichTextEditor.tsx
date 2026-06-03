@@ -13,7 +13,7 @@
  * The element is uncontrolled: `initialHtml` seeds it once on mount so the caret
  * never jumps. `resetKey` forces a reseed (e.g. when a draft is restored).
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BoldIcon, ItalicIcon, LinkIcon, ListIcon, ListOrderedIcon } from '../ui/icons';
 
 interface Props {
@@ -30,6 +30,24 @@ interface Props {
 // is far heavier than this composer warrants.
 function exec(command: string, value?: string): void {
   document.execCommand(command, false, value);
+}
+
+/** Escape a string for safe interpolation into an HTML attribute or text node. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Add a default scheme to a bare URL so `example.com` becomes a real link. */
+function normalizeUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  // Leave explicit schemes (http, https, mailto, tel, …) untouched.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
 }
 
 /** Remove `count` characters immediately before the collapsed caret. */
@@ -121,6 +139,11 @@ function applyBlockMarkdown(marker: string): boolean {
 
 export function RichTextEditor({ initialHtml, onChange, placeholder, className, resetKey }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // The caret/selection at the moment the link dialog opened. A dialog input steals
+  // focus and collapses the editor selection, so we stash the range and restore it
+  // before inserting the anchor.
+  const savedRange = useRef<Range | null>(null);
+  const [linkDraft, setLinkDraft] = useState<{ url: string; text: string } | null>(null);
 
   // Seed once on mount, and again whenever resetKey changes (draft restore).
   useEffect(() => {
@@ -130,6 +153,39 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
   const emit = (): void => {
     if (ref.current) onChange(ref.current.innerHTML);
   };
+
+  /** Open the link dialog, seeding the display text from the current selection. */
+  function openLinkDialog(): void {
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    // Only keep a selection that lives inside this editor.
+    savedRange.current = range && ref.current?.contains(range.commonAncestorContainer)
+      ? range.cloneRange()
+      : null;
+    setLinkDraft({ url: '', text: savedRange.current?.toString() ?? '' });
+  }
+
+  /** Insert the composed link at the saved selection and close the dialog. */
+  function applyLink(): void {
+    const draft = linkDraft;
+    setLinkDraft(null);
+    if (!draft) return;
+    const href = normalizeUrl(draft.url);
+    if (!href) return;
+    const text = draft.text.trim() || href;
+
+    ref.current?.focus();
+    const sel = window.getSelection();
+    if (savedRange.current && sel) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
+    }
+    savedRange.current = null;
+    // insertHTML replaces the selection (if any) with the anchor, so a selection's
+    // text is swapped for the chosen display text rather than left orphaned.
+    exec('insertHTML', `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`);
+    emit();
+  }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
     const mod = e.metaKey || e.ctrlKey;
@@ -149,9 +205,7 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
       }
       if (key === 'k') {
         e.preventDefault();
-        const url = window.prompt('Link URL');
-        if (url) exec('createLink', url);
-        emit();
+        openLinkDialog();
         return;
       }
     }
@@ -209,12 +263,9 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
         />
         <ToolbarButton
           label="Link"
-          onClick={() => {
-            const url = window.prompt('Link URL');
-            if (url) exec('createLink', url);
-          }}
+          onClick={openLinkDialog}
           icon={<LinkIcon className="size-4" />}
-          after={emit}
+          after={() => undefined}
         />
       </div>
       <div
@@ -228,6 +279,88 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
         onInput={onInput}
         className={`rich-editor flex-1 overflow-y-auto bg-transparent text-[15px] leading-relaxed outline-none ${className ?? ''}`}
       />
+      {linkDraft && (
+        <LinkDialog
+          draft={linkDraft}
+          onChange={setLinkDraft}
+          onCancel={() => {
+            savedRange.current = null;
+            setLinkDraft(null);
+          }}
+          onConfirm={applyLink}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Modal for composing a link: separate URL and display-text fields. */
+function LinkDialog({
+  draft,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  draft: { url: string; text: string };
+  onChange: (d: { url: string; text: string }) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-4 shadow-xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-3 text-base font-semibold">Insert link</h2>
+        <label className="mb-1 block text-xs text-faint">URL</label>
+        <input
+          autoFocus
+          value={draft.url}
+          onChange={(e) => onChange({ ...draft, url: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onConfirm();
+            }
+          }}
+          placeholder="https://example.com"
+          className="mb-3 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint"
+        />
+        <label className="mb-1 block text-xs text-faint">Display text</label>
+        <input
+          value={draft.text}
+          onChange={(e) => onChange({ ...draft, text: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onConfirm();
+            }
+          }}
+          placeholder="Link text (defaults to the URL)"
+          className="mb-4 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full px-4 py-2 text-sm text-faint active:bg-surface-2"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!draft.url.trim()}
+            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white active:scale-95 disabled:opacity-40"
+          >
+            Insert
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

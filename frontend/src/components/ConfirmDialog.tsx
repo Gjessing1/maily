@@ -11,19 +11,24 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  neutralLabel,
   danger = false,
   onConfirm,
   onCancel,
+  onNeutral,
 }: {
   open: boolean;
   title: string;
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Optional third, non-destructive action (e.g. "Save draft") shown between cancel and confirm. */
+  neutralLabel?: string;
   /** Style the confirm button as destructive (red). */
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  onNeutral?: () => void;
 }) {
   // Escape cancels while the dialog is open.
   useEffect(() => {
@@ -55,7 +60,7 @@ export function ConfirmDialog({
           {title}
         </h2>
         <p className="mt-2 text-sm text-faint">{message}</p>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
@@ -63,6 +68,15 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
+          {neutralLabel && onNeutral && (
+            <button
+              type="button"
+              onClick={onNeutral}
+              className="rounded-full bg-surface-2 px-4 py-2 text-sm font-medium text-fg active:opacity-80"
+            >
+              {neutralLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onConfirm}

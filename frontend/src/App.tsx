@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
+import { hydratePrefs } from './state/prefs';
 import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
@@ -19,6 +20,12 @@ export function App() {
   // Signal handling must live above the routes so flag/new-mail updates land in
   // the cache regardless of which screen is mounted.
   const { progress } = useSignals();
+
+  // Pull server-side preferences once authenticated so settings are consistent
+  // across devices (the server is the source of truth; local storage is a cache).
+  useEffect(() => {
+    if (authed) void hydratePrefs();
+  }, [authed]);
 
   // Reflect the resolved theme onto <html> (drives the CSS token overrides) and
   // the PWA status-bar colour. The pre-paint script in index.html sets the initial

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { AttachmentRef, SendMessageRequest, UploadDto } from '@maily/shared';
+import type {
+  AttachmentRef,
+  SaveDraftRequest,
+  SendMessageRequest,
+  UploadDto,
+} from '@maily/shared';
 import { api } from '../api/client';
 import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
@@ -27,9 +32,13 @@ export interface ComposePrefill {
   cc?: string[];
   subject?: string;
   body?: string;
+  /** Raw HTML to seed the editor verbatim (used when editing an existing draft). */
+  bodyHtml?: string;
   inReplyTo?: string | null;
   references?: string | null;
   attachments?: ComposeAttachment[];
+  /** Internal id of the \Drafts message being edited; removed on save/send. */
+  sourceDraftId?: string;
 }
 
 function parseAddrs(raw: string): string[] {
@@ -56,6 +65,9 @@ function isValidEmail(addr: string): boolean {
  * plain text (`> …` prefixes) carried over from replyPrefill.ts.
  */
 function buildInitialHtml(prefill: ComposePrefill, signature: string): string {
+  // Editing an existing draft: seed the editor with its exact HTML — no signature
+  // injection or re-quoting, the draft already holds whatever the user wrote.
+  if (prefill.bodyHtml != null) return prefill.bodyHtml;
   const blocks = ['<div><br></div>'];
   if (signature) blocks.push(`<div>-- </div><div>${plainTextToHtml(signature)}</div>`);
   if (prefill.body?.trim()) blocks.push(`<div>${plainTextToHtml(prefill.body)}</div>`);
@@ -92,6 +104,8 @@ export function Compose() {
   const [subject, setSubject] = useState(prefill.subject ?? '');
   const [inReplyTo, setInReplyTo] = useState(prefill.inReplyTo ?? null);
   const [references, setReferences] = useState(prefill.references ?? null);
+  // The \Drafts message this compose edits, if any — superseded (removed) on save/send.
+  const [sourceDraftId] = useState(prefill.sourceDraftId);
 
   // The editor is uncontrolled; `initialHtml` is the dirty-detection baseline, while
   // `editorSeed`/`seedKey` reseed the editor's DOM on a draft restore.
@@ -105,6 +119,7 @@ export function Compose() {
   const [uploads, setUploads] = useState<UploadDto[]>([]);
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +227,49 @@ export function Compose() {
     navigate(-1);
   }
 
+  /**
+   * Save the in-progress message to the account's \Drafts mailbox (syncs across
+   * devices), drop the local autosave, and leave. Recipients are optional for a
+   * draft. Editing an existing draft passes `replaceDraftId` so the old copy is
+   * removed rather than duplicated.
+   */
+  async function saveDraftToServer() {
+    setConfirmDiscard(false);
+    if (!fromAccount) {
+      clearDraft();
+      navigate(-1);
+      return;
+    }
+    setSavingDraft(true);
+    setError(null);
+    const html = cleanEditorHtml(bodyHtml);
+    const ccList = showCc ? parseAddrs(cc) : [];
+    const msg: SaveDraftRequest = {
+      to: parseAddrs(to),
+      cc: ccList.length ? ccList : undefined,
+      subject,
+      text: htmlToPlainText(bodyHtml),
+      html: html || undefined,
+      inReplyTo,
+      references,
+      attachments: attachments.length
+        ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
+        : undefined,
+      uploads: uploads.length
+        ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
+        : undefined,
+      replaceDraftId: sourceDraftId,
+    };
+    try {
+      await api.saveDraft(fromAccount.id, msg);
+      clearDraft();
+      navigate(-1);
+    } catch (e) {
+      setError((e as Error).message || 'Could not save draft.');
+      setSavingDraft(false);
+    }
+  }
+
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // allow re-picking the same file
@@ -238,7 +296,9 @@ export function Compose() {
     [accounts, accountId],
   );
 
-  const canSend = Boolean(fromAccount && parseAddrs(to).length && !sending && uploading === 0);
+  const canSend = Boolean(
+    fromAccount && parseAddrs(to).length && !sending && !savingDraft && uploading === 0,
+  );
 
   async function send() {
     if (!fromAccount) return;
@@ -275,6 +335,7 @@ export function Compose() {
       uploads: uploads.length
         ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
         : undefined,
+      replaceDraftId: sourceDraftId,
     };
     try {
       await api.send(fromAccount.id, msg);
@@ -429,12 +490,14 @@ export function Compose() {
 
       <ConfirmDialog
         open={confirmDiscard}
-        title="Discard draft?"
-        message="You’ve started a message. Discarding loses what you’ve written."
+        title="Save this draft?"
+        message="Save it to your Drafts folder (available on all your devices), or discard what you’ve written."
         confirmLabel="Discard"
         cancelLabel="Keep editing"
+        neutralLabel="Save draft"
         danger
         onConfirm={discardDraft}
+        onNeutral={() => void saveDraftToServer()}
         onCancel={() => setConfirmDiscard(false)}
       />
     </div>

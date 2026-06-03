@@ -15,6 +15,7 @@ import type {
   AccountSyncStatusDto,
   ContactCardInput,
   PushSubscriptionDto,
+  SaveDraftRequest,
   SendMessageRequest,
   ServerConfigDto,
   UploadDto,
@@ -38,12 +39,14 @@ import {
   uidLocationForMessage,
   uidLocationInFolder,
 } from '../db/queries.js';
+import { getPrefs as getStoredPrefs, putPrefs as putStoredPrefs } from '../db/settings.js';
 import { embedInlineImages, ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { allEngines, getEngine } from '../imap/registry.js';
 import { toAccountDto, toFolderDto, toMessageDetailDto, toMessageDto } from '../http/dto.js';
 import { sendMessage } from '../mail/send.js';
+import { saveDraft } from '../mail/draft.js';
 import { searchMessages } from '../search/search.js';
 import { getCardByKey, listCards, searchContacts } from '../contacts/store.js';
 import { CardDavError, createCard, deleteCard, updateCard } from '../contacts/carddav.js';
@@ -71,6 +74,19 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       cacheWindowDays: env.cacheWindowDays,
     }),
   );
+
+  // UI preferences, persisted server-side so they sync across devices (ROADMAP §B).
+  // The client owns the schema; the server stores the object verbatim (never secrets).
+  app.get('/api/settings', async () => getStoredPrefs());
+
+  app.put<{ Body: Record<string, unknown> }>('/api/settings', async (req, reply) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'settings object required' });
+    }
+    putStoredPrefs(body);
+    return { ok: true };
+  });
 
   app.get('/api/accounts', async () => listAccounts().map(toAccountDto));
 
@@ -332,6 +348,20 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       if (!engine) return reply.code(404).send({ error: 'unknown account' });
       if (!req.body?.to?.length) return reply.code(400).send({ error: 'recipient required' });
       const result = await sendMessage(engine.accountConfig, req.body);
+      return result;
+    },
+  );
+
+  // Save a draft → APPEND to \Drafts (no SMTP). Recipients are optional for a draft.
+  // Reconciles the non-INBOX folders right after so the new draft surfaces promptly
+  // instead of waiting for the next cron pass.
+  app.post<{ Params: { id: string }; Body: SaveDraftRequest }>(
+    '/api/accounts/:id/draft',
+    async (req, reply) => {
+      const engine = getEngine(req.params.id);
+      if (!engine) return reply.code(404).send({ error: 'unknown account' });
+      const result = await saveDraft(engine.accountConfig, req.body ?? { to: [], subject: '' });
+      if (result.savedToDrafts) engine.reconcileFoldersNow();
       return result;
     },
   );

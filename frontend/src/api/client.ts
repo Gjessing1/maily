@@ -13,6 +13,8 @@ import type {
   MessageDetailDto,
   MessageDto,
   PushSubscriptionDto,
+  SaveDraftRequest,
+  SaveDraftResult,
   SendMessageRequest,
   ServerConfigDto,
   UploadDto,
@@ -94,6 +96,14 @@ export const api = {
 
   config: () => request<ServerConfigDto>('/api/config'),
 
+  /** Server-persisted UI preferences (synced across devices). */
+  getSettings: () => request<Record<string, unknown>>('/api/settings'),
+  putSettings: (prefs: Record<string, unknown>) =>
+    request<{ ok: boolean }>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(prefs),
+    }),
+
   messages: (folderId: string, opts: { limit?: number; before?: number } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set('limit', String(opts.limit));
@@ -129,6 +139,13 @@ export const api = {
 
   send: (accountId: string, msg: SendMessageRequest) =>
     request<{ messageId?: string; appended?: boolean }>(`/api/accounts/${accountId}/send`, {
+      method: 'POST',
+      body: JSON.stringify(msg),
+    }),
+
+  /** Save a draft → APPEND to the account's \Drafts mailbox (syncs across devices). */
+  saveDraft: (accountId: string, msg: SaveDraftRequest) =>
+    request<SaveDraftResult>(`/api/accounts/${accountId}/draft`, {
       method: 'POST',
       body: JSON.stringify(msg),
     }),

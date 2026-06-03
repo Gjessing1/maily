@@ -108,6 +108,28 @@ export interface SendMessageRequest {
   attachments?: AttachmentRef[];
   /** Freshly uploaded files (composer): backend resolves bytes from the uploads staging dir. */
   uploads?: UploadRef[];
+  /**
+   * The internal id of a saved draft this message supersedes. When sending an
+   * edited draft, the backend removes that draft copy from \Drafts after a
+   * successful send so it doesn't linger. Ignored when absent.
+   */
+  replaceDraftId?: string | null;
+}
+
+/**
+ * Save (or update) a draft: same shape as a send, minus the SMTP step. The backend
+ * APPENDs the composed MIME to the account's \Drafts mailbox (ROADMAP §B), so drafts
+ * sync across devices instead of living only in the composer. `replaceDraftId` swaps
+ * a previously-saved copy (edit-in-place) rather than accumulating duplicates.
+ */
+export type SaveDraftRequest = SendMessageRequest;
+
+/** Result of saving a draft. */
+export interface SaveDraftResult {
+  /** RFC Message-ID of the appended draft. */
+  messageId: string;
+  /** False when the account has no \Drafts mailbox to APPEND into. */
+  savedToDrafts: boolean;
 }
 
 /** A contact from the cached CardDAV addressbook — drives compose autocomplete. */

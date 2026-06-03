@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AccountSyncStatusDto, ServerConfigDto } from '@maily/shared';
+import type { AccountDto, AccountSyncStatusDto, ServerConfigDto } from '@maily/shared';
 import { api } from '../api/client';
-import { useAccounts } from '../state/data';
+import { useAccounts, useFolders } from '../state/data';
 import { useAuth } from '../state/auth';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
@@ -103,6 +103,52 @@ function SelectRow<K extends keyof Prefs>({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** A compact on/off pill, used for the per-label visibility switches. */
+function Switch({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${on ? 'bg-accent' : 'bg-surface-2'}`}
+    >
+      <span
+        className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
+      />
+    </span>
+  );
+}
+
+/** Per-account list of custom labels with a show/hide switch (ROADMAP §B). Hidden
+ * labels drop out of the folder drawer but are never deleted server-side. */
+function AccountLabels({ account }: { account: AccountDto }) {
+  const folders = useFolders(account.id);
+  const hidden = usePrefs().hiddenFolderIds;
+  const labels = (folders ?? []).filter((f) => f.role === 'custom');
+  if (!labels.length) return null;
+
+  const setHidden = (id: string, hide: boolean) =>
+    setPref('hiddenFolderIds', hide ? [...hidden, id] : hidden.filter((x) => x !== id));
+
+  return (
+    <div>
+      <p className="px-4 pt-3 text-xs text-faint">{account.displayName || account.email}</p>
+      {labels.map((f) => {
+        const shown = !hidden.includes(f.id);
+        return (
+          <button
+            key={f.id}
+            onClick={() => setHidden(f.id, shown)}
+            role="switch"
+            aria-checked={shown}
+            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left active:bg-surface-2"
+          >
+            <span className="min-w-0 truncate text-[15px] capitalize">{f.name}</span>
+            <Switch on={shown} />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -262,6 +308,19 @@ export function Settings() {
               ]}
             />
           </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Labels
+          </p>
+          <div className="border-y border-border">
+            {accounts?.map((a) => <AccountLabels key={a.id} account={a} />)}
+          </div>
+          <p className="px-4 pt-2 text-xs text-faint">
+            Turn a label off to hide it from the folder list (e.g. Gmail’s “Important”). Nothing is
+            deleted — the label and its mail stay on the server.
+          </p>
         </section>
 
         <section className="mt-6">

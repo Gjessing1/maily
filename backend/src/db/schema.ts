@@ -179,6 +179,18 @@ export const contacts = sqliteTable(
   (t) => [uniqueIndex('contacts_email_uq').on(t.email), index('contacts_name_idx').on(t.name)],
 );
 
+/**
+ * Single-user app settings — the source of truth for UI preferences so they sync
+ * across every device/browser instead of living only in each client's localStorage
+ * (ARCHITECTURE §5: never secrets, only display prefs). Key-value with a JSON blob;
+ * the whole prefs object is stored under one well-known key ('prefs').
+ */
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+});
+
 /** Attachment metadata. storagePath is null until the bytes are lazily fetched (ARCHITECTURE §4). */
 export const attachments = sqliteTable(
   'attachments',

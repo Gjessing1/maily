@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { requestDelete } from '../state/undo';
-import { useAccounts, useMessageDetail } from '../state/data';
+import { useAccounts, useFolders, useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
+import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -16,6 +17,7 @@ import {
   ForwardIcon,
   MailIcon,
   MailOpenIcon,
+  PencilIcon,
   ReplyAllIcon,
   ReplyIcon,
   StarIcon,
@@ -163,9 +165,36 @@ export function ReaderView({
     navigate('/compose', { state: { ...buildForward(detail), fresh: true } });
   }
 
+  /** Reopen a saved draft in the composer; saving/sending supersedes this copy. */
+  function editDraft() {
+    if (!detail) return;
+    const toAddr = (a: EmailAddress): string =>
+      a.name?.trim() ? `${a.name.trim()} <${a.address}>` : a.address;
+    navigate('/compose', {
+      state: {
+        fresh: true,
+        accountId: detail.accountId,
+        to: detail.to.map(toAddr),
+        cc: detail.cc.length ? detail.cc.map(toAddr) : undefined,
+        subject: detail.subject ?? undefined,
+        // Seed the editor verbatim — prefer stored HTML, else wrap the plain text.
+        bodyHtml: detail.bodyHtml ?? plainTextToHtml(detail.bodyText ?? ''),
+        inReplyTo: detail.inReplyTo,
+        references: detail.references,
+        sourceDraftId: detail.id,
+      },
+    });
+  }
+
   const fmtAddr = (a: EmailAddress): string =>
     a.name?.trim() ? `${a.name.trim()} <${a.address}>` : a.address;
   const joinAddrs = (list: EmailAddress[]): string => list.map(fmtAddr).join(', ');
+
+  // A message that lives in a \Drafts folder is editable rather than repliable.
+  const folders = useFolders(detail?.accountId);
+  const isDraft = Boolean(
+    detail && folders?.some((f) => f.role === 'drafts' && detail.folderIds.includes(f.id)),
+  );
 
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
@@ -225,23 +254,39 @@ export function ReaderView({
         >
           <TrashIcon className="text-fg" />
         </button>
-        <button onClick={reply} className="rounded-full p-2 active:bg-surface-2" aria-label="Reply">
-          <ReplyIcon className="text-fg" />
-        </button>
-        <button
-          onClick={replyAll}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Reply all"
-        >
-          <ReplyAllIcon className="text-fg" />
-        </button>
-        <button
-          onClick={forward}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Forward"
-        >
-          <ForwardIcon className="text-fg" />
-        </button>
+        {isDraft ? (
+          <button
+            onClick={editDraft}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Edit draft"
+          >
+            <PencilIcon className="text-accent" />
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={reply}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Reply"
+            >
+              <ReplyIcon className="text-fg" />
+            </button>
+            <button
+              onClick={replyAll}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Reply all"
+            >
+              <ReplyAllIcon className="text-fg" />
+            </button>
+            <button
+              onClick={forward}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Forward"
+            >
+              <ForwardIcon className="text-fg" />
+            </button>
+          </>
+        )}
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
