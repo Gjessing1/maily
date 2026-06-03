@@ -9,6 +9,18 @@ export function hasRemoteImages(html: string): boolean {
 }
 
 /**
+ * Remove `<script>` blocks from sender HTML. The sandbox + CSP already prevent
+ * execution, but the browser still logs a "Blocked script execution in
+ * 'about:srcdoc'" warning for every script it refuses to run. Stripping them up
+ * front keeps that out of the console and is harmless defence in depth.
+ */
+function stripScripts(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<script\b[^>]*\/>/gi, '');
+}
+
+/**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
  * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
@@ -47,7 +59,7 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
   img { max-width:100%; height:auto; }
   a { color:${linkFg}; }
   table { max-width:100% !important; }
-</style></head><body>${html}</body></html>`;
+</style></head><body>${stripScripts(html)}</body></html>`;
 
   useEffect(() => {
     const iframe = ref.current;
