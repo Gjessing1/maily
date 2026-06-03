@@ -62,8 +62,10 @@ export function toMessageDto(
     accountId: m.accountId,
     threadId: m.threadId,
     subject: m.subject,
-    // Fall back to the CardDAV contact name when the message carried no display name.
-    fromName: m.fromName || contactNameFor(m.fromAddress),
+    // Radicale is the source of truth for contact names (ROADMAP §3.7.D): a known
+    // contact's name overrides the sender-supplied From display name; fall back to
+    // the message's own display name only for addresses we don't have a card for.
+    fromName: contactNameFor(m.fromAddress) ?? m.fromName,
     fromAddress: m.fromAddress,
     snippet: m.snippet,
     sentAt: iso(m.sentAt),

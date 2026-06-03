@@ -8,6 +8,7 @@ import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import { deletePushSubscription, getMessage, listPushSubscriptions } from '../db/queries.js';
 import { onSignal } from '../events.js';
+import { contactNameFor } from '../contacts/store.js';
 
 const log = createLogger('push');
 let enabled = false;
@@ -61,7 +62,8 @@ export function wirePushNotifications(): void {
     const m = getMessage(signal.messageId);
     if (!m) return;
     void broadcast({
-      title: m.fromName ?? m.fromAddress ?? 'New mail',
+      // Radicale-first sender name (ROADMAP §3.7.D), matching the DTO precedence.
+      title: contactNameFor(m.fromAddress) ?? m.fromName ?? m.fromAddress ?? 'New mail',
       body: m.subject ?? '(no subject)',
       messageId: m.id,
     });
