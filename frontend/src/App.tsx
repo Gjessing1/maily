@@ -11,6 +11,7 @@ import { Reader } from './routes/Reader';
 import { Compose } from './routes/Compose';
 import { Search } from './routes/Search';
 import { Settings } from './routes/Settings';
+import { Contacts } from './routes/Contacts';
 
 export function App() {
   const { authed } = useAuth();
@@ -43,6 +44,7 @@ export function App() {
         <Route path="/compose" element={<Compose />} />
         <Route path="/search" element={<Search />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/contacts" element={<Contacts />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <UndoSnackbar />

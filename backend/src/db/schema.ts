@@ -169,6 +169,10 @@ export const contacts = sqliteTable(
     name: text('name'),
     /** vCard UID — stable per card across syncs; groups a card's multiple emails. */
     vcardUid: text('vcard_uid'),
+    /** Card's CardDAV resource path (relative to server origin) — for PUT/DELETE. */
+    href: text('href'),
+    /** Card's getetag — sent as If-Match on update to detect concurrent edits. */
+    etag: text('etag'),
     createdAt: now(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
   },

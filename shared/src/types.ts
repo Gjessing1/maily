@@ -116,6 +116,22 @@ export interface ContactDto {
   email: string;
 }
 
+/** A whole CardDAV card (one vCard) as listed/edited in the Contacts manager. */
+export interface ContactCardDto {
+  /** vCard UID — stable identity used to update/delete the card. */
+  uid: string;
+  /** Formatted display name (vCard FN). */
+  name: string | null;
+  /** All email addresses on the card, in card order. */
+  emails: string[];
+}
+
+/** Create/update payload for a contact card (UID assigned server-side on create). */
+export interface ContactCardInput {
+  name: string | null;
+  emails: string[];
+}
+
 /** Per-folder cached sync state for the Settings → Sync view. */
 export interface FolderSyncStatusDto {
   id: string;

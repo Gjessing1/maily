@@ -7,7 +7,7 @@
  *     mapping a list of messages to DTOs costs no per-message query.
  */
 import { sql } from 'drizzle-orm';
-import type { ContactDto } from '@maily/shared';
+import type { ContactCardDto, ContactDto } from '@maily/shared';
 import { db, sqlite } from '../db/client.js';
 import { contacts } from '../db/schema.js';
 
@@ -16,6 +16,9 @@ export interface ParsedContact {
   email: string;
   name: string | null;
   vcardUid: string | null;
+  /** Card resource path + etag (same across a card's email rows). */
+  href?: string | null;
+  etag?: string | null;
 }
 
 /** In-memory email→display-name map, rebuilt from the DB after every sync. */
@@ -54,12 +57,87 @@ export function replaceContacts(parsed: ParsedContact[]): number {
   const tx = sqlite.transaction(() => {
     db.delete(contacts).run();
     for (const r of rows) {
-      db.insert(contacts).values({ email: r.email, name: r.name, vcardUid: r.vcardUid }).run();
+      db.insert(contacts)
+        .values({
+          email: r.email,
+          name: r.name,
+          vcardUid: r.vcardUid,
+          href: r.href ?? null,
+          etag: r.etag ?? null,
+        })
+        .run();
     }
   });
   tx();
   reloadContactCache();
   return rows.length;
+}
+
+/** A card's identity + addresses, reassembled from its email rows. */
+export interface CardRecord {
+  uid: string;
+  href: string | null;
+  etag: string | null;
+  name: string | null;
+  emails: string[];
+}
+
+/**
+ * List the cached addressbook as whole cards. Email rows are grouped by their card
+ * key — the vCard UID, or the href for legacy cards that carry no UID — so a
+ * multi-email contact appears once. Ordered by display name.
+ */
+export function listCards(): ContactCardDto[] {
+  const rows = db
+    .select({
+      email: contacts.email,
+      name: contacts.name,
+      vcardUid: contacts.vcardUid,
+      href: contacts.href,
+    })
+    .from(contacts)
+    .all();
+
+  const byCard = new Map<string, { name: string | null; emails: string[] }>();
+  for (const r of rows) {
+    const key = r.vcardUid ?? r.href;
+    if (!key) continue; // un-addressable (pre-sync) row — skip
+    const card = byCard.get(key) ?? { name: r.name, emails: [] };
+    if (!card.name && r.name) card.name = r.name;
+    card.emails.push(r.email);
+    byCard.set(key, card);
+  }
+
+  return [...byCard.entries()]
+    .map(([uid, c]) => ({ uid, name: c.name, emails: c.emails }))
+    .sort((a, b) => (a.name ?? a.emails[0] ?? '').localeCompare(b.name ?? b.emails[0] ?? ''));
+}
+
+/**
+ * Resolve a card key (UID, or href for UID-less legacy cards) to its resource path
+ * and etag for a write-back. Returns null when no such card is cached.
+ */
+export function getCardByKey(key: string): CardRecord | null {
+  const rows = db
+    .select({
+      email: contacts.email,
+      name: contacts.name,
+      vcardUid: contacts.vcardUid,
+      href: contacts.href,
+      etag: contacts.etag,
+    })
+    .from(contacts)
+    .where(sql`${contacts.vcardUid} = ${key} OR ${contacts.href} = ${key}`)
+    .all();
+  if (rows.length === 0) return null;
+  const first = rows[0]!;
+  return {
+    uid: first.vcardUid ?? key,
+    href: first.href,
+    etag: first.etag,
+    name: rows.find((r) => r.name)?.name ?? null,
+    emails: rows.map((r) => r.email),
+  };
 }
 
 function escapeLike(s: string): string {

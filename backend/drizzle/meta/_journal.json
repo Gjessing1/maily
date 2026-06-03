@@ -57,6 +57,13 @@
       "when": 1780343723886,
       "tag": "0007_full_source",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1780343723887,
+      "tag": "0008_contacts_card",
+      "breakpoints": true
     }
   ]
 }

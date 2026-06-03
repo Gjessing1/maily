@@ -17,6 +17,7 @@ import {
   SpamIcon,
   SunIcon,
   TrashIcon,
+  UsersIcon,
 } from '../ui/icons';
 
 const ROLE_ORDER: Record<FolderRole, number> = {
@@ -153,6 +154,14 @@ export function FolderDrawer({
             <ThemeIcon className="size-5 opacity-70" />
             {themeLabel}
           </button>
+          <Link
+            to="/contacts"
+            onClick={onClose}
+            className="flex items-center gap-3 px-4 py-3 text-[15px] text-fg active:bg-surface-2"
+          >
+            <UsersIcon className="size-5 opacity-70" />
+            Contacts
+          </Link>
           <Link
             to="/settings"
             onClick={onClose}

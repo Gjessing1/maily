@@ -6,6 +6,8 @@
 import type {
   AccountDto,
   AccountSyncStatusDto,
+  ContactCardDto,
+  ContactCardInput,
   ContactDto,
   FolderDto,
   MessageDetailDto,
@@ -164,6 +166,26 @@ export const api = {
     qs.set('limit', String(limit));
     return request<ContactDto[]>(`/api/contacts?${qs}`);
   },
+
+  /** Whole-card management (CardDAV write-back) for the Contacts manager. */
+  contactCards: () => request<ContactCardDto[]>('/api/contacts/cards'),
+
+  createContactCard: (input: ContactCardInput) =>
+    request<ContactCardDto>('/api/contacts/cards', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  updateContactCard: (key: string, input: ContactCardInput) =>
+    request<ContactCardDto>(`/api/contacts/cards/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+
+  deleteContactCard: (key: string) =>
+    request<{ ok: boolean }>(`/api/contacts/cards/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }),
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
 
