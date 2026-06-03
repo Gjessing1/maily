@@ -16,11 +16,12 @@ import { env } from '../env.js';
 import { ensureAccount, type AccountRow } from '../db/accounts.js';
 import { createClient, detectCapabilities, type Capabilities } from './connection.js';
 import { backfillRecipients } from './backfill.js';
-import { budgetRemaining, canDownloadSource } from './budget.js';
+import { canDownloadSource } from './budget.js';
 import { getFolderById, syncFolders } from './folders.js';
 import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
-import { sweepFolderSource, type SyncContext } from './sync.js';
+import { type SyncContext } from './sync.js';
+import { enqueueSweep } from '../worker/host.js';
 
 const INITIAL_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -37,7 +38,6 @@ export class AccountEngine {
   private reconnecting = false;
   private idleBusy = false;
   private cronBusy = false;
-  private sweepBusy = false;
   private connected = false;
   private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
@@ -72,9 +72,11 @@ export class AccountEngine {
     this.cronTimer = setInterval(() => void this.runFolderCron(), CRON_INTERVAL_MS);
     if (typeof this.cronTimer.unref === 'function') this.cronTimer.unref();
     // Full-source historical backfill (ROADMAP §3.7.E), throttled by its own timer and
-    // the shared daily byte budget. On by default; MAILY_SOURCE_SWEEP=false pauses it.
+    // the shared daily byte budget. The heavy work runs on the shared sync worker thread
+    // (synchronous SQLite + `.eml` parsing must stay off the event loop); this timer only
+    // nudges it. On by default; MAILY_SOURCE_SWEEP=false pauses it.
     if (env.sourceSweepEnabled) {
-      this.sweepTimer = setInterval(() => void this.runSourceSweep(), env.sourceSweepIntervalMs);
+      this.sweepTimer = setInterval(() => this.tickSweep(), env.sourceSweepIntervalMs);
       if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
     }
   }
@@ -239,45 +241,17 @@ export class AccountEngine {
   }
 
   /**
-   * Full-source sweep pass (ROADMAP §3.7.E): archive raw `.eml` for the backlog, one
-   * folder at a time, over a transient connection so the INBOX IDLE connection is never
-   * disturbed (ARCHITECTURE §2/§9). The shared daily byte budget gates the work — a pass
-   * stops as soon as the budget is spent and the next tick no-ops cheaply until the UTC
-   * day rolls. `sweepBusy` prevents overlap when a pass outlives the timer interval.
+   * Nudge the shared sync worker to run a full-source sweep pass (ROADMAP §3.7.E). The
+   * actual fetch + archive + parse runs on the worker thread, over its own transient
+   * connection, so neither the event loop nor the INBOX IDLE connection is disturbed
+   * (ARCHITECTURE §2/§9). The worker serialises and dedups passes, so a tick that
+   * arrives while a sweep is still running is harmlessly dropped. We make a cheap
+   * main-side budget pre-check (the budget is DB-backed, shared across threads) to avoid
+   * waking the worker at all once the day's quota is spent.
    */
-  private async runSourceSweep(): Promise<void> {
-    if (this.stopped || !this.account || this.sweepBusy) return;
-    if (!canDownloadSource()) return; // budget spent for today — retry on a later tick
-    this.sweepBusy = true;
-    const client = createClient(this.config);
-    try {
-      await client.connect();
-      const caps = detectCapabilities(client);
-      const ctx: SyncContext = { client, accountId: this.account.id, caps, log: this.log };
-      const folders = await syncFolders(client, this.account.id);
-      for (const folder of folders) {
-        if (this.stopped || !canDownloadSource()) break;
-        const fresh = getFolderById(folder.id);
-        if (!fresh) continue;
-        const r = await sweepFolderSource(ctx, fresh);
-        if (r.archived || r.inserted) {
-          const leftMb = Math.round(budgetRemaining() / 1e6);
-          this.log.info(
-            `${folder.path} sweep: ↑${r.archived} +${r.inserted}` +
-              `${r.done ? ' (folder complete)' : ''} — ${leftMb}MB budget left`,
-          );
-        }
-      }
-    } catch (err) {
-      this.log.warn('source sweep failed:', (err as Error).message);
-    } finally {
-      try {
-        await client.logout();
-      } catch {
-        client.close();
-      }
-      this.sweepBusy = false;
-    }
+  private tickSweep(): void {
+    if (this.stopped || !this.account || !canDownloadSource()) return;
+    enqueueSweep(this.account.id, this.config.email);
   }
 
   private scheduleReconnect(): void {

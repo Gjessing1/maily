@@ -12,6 +12,7 @@ import { runMigrations } from './db/migrate.js';
 import { createLogger } from './logger.js';
 import { loadAccountConfigs } from './config/accounts.js';
 import { startSyncEngines, type AccountEngine } from './imap/engine.js';
+import { shutdownWorker } from './worker/host.js';
 import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
@@ -41,7 +42,7 @@ function installShutdown(engines: AccountEngine[], io: IoServer): void {
     shuttingDown = true;
     log.info(`received ${signal}, shutting down…`);
     io.close();
-    await Promise.allSettled(engines.map((e) => e.stop()));
+    await Promise.allSettled([...engines.map((e) => e.stop()), shutdownWorker()]);
     sqlite.close();
     process.exit(0);
   };
