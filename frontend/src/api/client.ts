@@ -12,6 +12,7 @@ import type {
   PushSubscriptionDto,
   SendMessageRequest,
   ServerConfigDto,
+  UploadDto,
 } from '@maily/shared';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -128,6 +129,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(msg),
     }),
+
+  /** Stream a composer attachment to the backend's staging dir; returns a send handle. */
+  async uploadAttachment(file: File): Promise<UploadDto> {
+    const qs = new URLSearchParams({ filename: file.name });
+    if (file.type) qs.set('type', file.type);
+    const headers = new Headers({ 'Content-Type': 'application/octet-stream' });
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const res = await fetch(`${API_BASE}/api/uploads?${qs}`, {
+      method: 'POST',
+      headers,
+      body: file,
+    });
+    if (!res.ok)
+      throw new ApiError(res.status, (await res.text().catch(() => '')) || 'upload failed');
+    return (await res.json()) as UploadDto;
+  },
+
+  /** Discard a staged upload (chip removed before send). */
+  deleteUpload: (uploadId: string) =>
+    request<{ ok: boolean }>(`/api/uploads/${uploadId}`, { method: 'DELETE' }),
 
   search: (q: string, opts: { accountId?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams({ q });

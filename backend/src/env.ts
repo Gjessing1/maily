@@ -22,10 +22,13 @@ function optional(name: string, fallback: string): string {
 const dataDir = resolve(optional('MAILY_DATA_DIR', './data'));
 const dbPath = resolve(dataDir, optional('MAILY_DB_FILE', 'mail.sqlite'));
 const attachmentsDir = resolve(dataDir, 'attachments');
+/** Staging area for outbound attachments uploaded from the composer (pre-send). */
+const uploadsDir = resolve(dataDir, 'uploads');
 
 // Ensure the data directory exists before SQLite tries to open the file.
 mkdirSync(dirname(dbPath), { recursive: true });
 mkdirSync(attachmentsDir, { recursive: true });
+mkdirSync(uploadsDir, { recursive: true });
 
 /** VAPID config for Web Push, or null when not configured (push disabled). */
 function vapidConfig(): { publicKey: string; privateKey: string; subject: string } | null {
@@ -45,6 +48,7 @@ export const env = {
   dataDir,
   dbPath,
   attachmentsDir,
+  uploadsDir,
   /** Local SQLite cache window: how many days back the sync `since` filter reaches. */
   cacheWindowDays: Number(optional('MAILY_CACHE_WINDOW_DAYS', '365')),
   // Read lazily where needed so the app can boot in Phase 0 without them set:

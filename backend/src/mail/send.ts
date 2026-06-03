@@ -16,16 +16,21 @@ import { createLogger } from '../logger.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getAttachment } from '../db/queries.js';
 import { ensureAttachmentOnDisk } from '../storage/attachments.js';
+import { deleteUpload, openUpload } from '../storage/uploads.js';
 
 const log = createLogger('smtp');
 
-/** Resolve send-time attachment references to nodemailer attachments (bytes from cache/IMAP). */
+/**
+ * Resolve send-time attachments to nodemailer attachments: existing stored files
+ * (forward — bytes from cache/IMAP) plus freshly staged composer uploads (bytes
+ * from the uploads dir). Both reference files on disk, never buffered into memory.
+ */
 async function resolveAttachments(
   req: SendMessageRequest,
 ): Promise<nodemailer.SendMailOptions['attachments']> {
-  if (!req.attachments?.length) return undefined;
   const out: NonNullable<nodemailer.SendMailOptions['attachments']> = [];
-  for (const ref of req.attachments) {
+
+  for (const ref of req.attachments ?? []) {
     const att = getAttachment(ref.attachmentId);
     if (!att || att.messageId !== ref.messageId) {
       log.warn(`skipping unknown attachment ref ${ref.attachmentId}`);
@@ -42,6 +47,20 @@ async function resolveAttachments(
       contentType: att.mimeType ?? undefined,
     });
   }
+
+  for (const ref of req.uploads ?? []) {
+    const staged = openUpload(ref.uploadId);
+    if (!staged) {
+      log.warn(`skipping unknown upload ${ref.uploadId}`);
+      continue;
+    }
+    out.push({
+      path: staged.path,
+      filename: ref.filename || undefined,
+      contentType: ref.mimeType ?? undefined,
+    });
+  }
+
   return out.length ? out : undefined;
 }
 
@@ -108,6 +127,11 @@ export async function sendMessage(
     } catch (err) {
       log.warn(`APPEND to Sent failed for ${config.email}:`, (err as Error).message);
     }
+  }
+
+  // The staged uploads are now embedded in the sent (and appended) MIME — drop them.
+  for (const ref of req.uploads ?? []) {
+    await deleteUpload(ref.uploadId);
   }
 
   return { messageId, appendedToSent };

@@ -78,6 +78,21 @@ export interface AttachmentRef {
   attachmentId: string;
 }
 
+/** A freshly uploaded outbound attachment, staged on the backend before sending. */
+export interface UploadDto {
+  uploadId: string;
+  filename: string;
+  mimeType: string | null;
+  sizeBytes: number;
+}
+
+/** Reference to a staged upload, attached to an outgoing message by `uploadId`. */
+export interface UploadRef {
+  uploadId: string;
+  filename: string;
+  mimeType?: string | null;
+}
+
 /** Outgoing message composed by the client and sent via the backend (SMTP). */
 export interface SendMessageRequest {
   to: string[];
@@ -91,6 +106,8 @@ export interface SendMessageRequest {
   references?: string | null;
   /** Existing attachments to re-attach (forward): backend resolves bytes from cache/IMAP. */
   attachments?: AttachmentRef[];
+  /** Freshly uploaded files (composer): backend resolves bytes from the uploads staging dir. */
+  uploads?: UploadRef[];
 }
 
 /** Per-folder cached sync state for the Settings → Sync view. */

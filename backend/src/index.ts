@@ -15,6 +15,7 @@ import { startSyncEngines, type AccountEngine } from './imap/engine.js';
 import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
+import { sweepStaleUploads } from './storage/uploads.js';
 
 const log = createLogger('maily');
 
@@ -57,6 +58,9 @@ async function main(): Promise<void> {
   wirePushNotifications();
   await app.listen({ host: '0.0.0.0', port: env.port });
   log.info(`HTTP + Socket.io listening on :${env.port}`);
+
+  // Clear abandoned composer uploads left from previous runs.
+  void sweepStaleUploads();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {

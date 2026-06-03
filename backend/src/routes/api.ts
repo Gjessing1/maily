@@ -4,13 +4,19 @@
  * (ARCHITECTURE §3). Attachment bytes are fetched on demand and streamed to disk,
  * never buffered (ARCHITECTURE §4).
  */
-import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import type {
   AccountSyncStatusDto,
   PushSubscriptionDto,
   SendMessageRequest,
   ServerConfigDto,
+  UploadDto,
 } from '@maily/shared';
 import { env } from '../env.js';
 import { authenticate } from '../http/auth.js';
@@ -38,13 +44,22 @@ import { allEngines, getEngine } from '../imap/registry.js';
 import { toAccountDto, toFolderDto, toMessageDetailDto, toMessageDto } from '../http/dto.js';
 import { sendMessage } from '../mail/send.js';
 import { searchMessages } from '../search/search.js';
+import { deleteUpload } from '../storage/uploads.js';
 import { vapidPublicKey } from '../push/webpush.js';
 
 const MAX_PAGE = 200;
+/** Cap on a single composer attachment upload (streamed straight to disk). */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export async function apiRoutes(app: FastifyInstance): Promise<void> {
   // Gate the whole encapsulated plugin behind JWT auth.
   app.addHook('onRequest', authenticate);
+
+  // Raw binary uploads (composer attachments) arrive as octet-stream; pass the
+  // request stream straight through so the route can pipe it to disk unbuffered.
+  app.addContentTypeParser('application/octet-stream', (_req, payload, done) =>
+    done(null, payload),
+  );
 
   // Non-secret server config (Settings → Storage shows the server cache window).
   app.get(
@@ -271,6 +286,41 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       return reply.send(createReadStream(path));
     },
   );
+
+  // Stage a composer attachment: stream the raw body to the uploads dir, capped at
+  // MAX_UPLOAD_BYTES, returning a handle the send route resolves by uploadId.
+  app.post<{ Querystring: { filename?: string; type?: string } }>(
+    '/api/uploads',
+    async (req, reply): Promise<UploadDto | undefined> => {
+      const uploadId = randomUUID();
+      const path = join(env.uploadsDir, uploadId);
+      const filename = (req.query.filename ?? 'attachment').slice(0, 255);
+      const mimeType = req.query.type ?? null;
+
+      let total = 0;
+      const limiter = new Transform({
+        transform(chunk, _enc, cb) {
+          total += chunk.length;
+          if (total > MAX_UPLOAD_BYTES) cb(new Error('upload too large'));
+          else cb(null, chunk);
+        },
+      });
+
+      try {
+        await pipeline(req.body as NodeJS.ReadableStream, limiter, createWriteStream(path));
+      } catch (err) {
+        await unlink(path).catch(() => undefined);
+        return reply.code(413).send({ error: (err as Error).message });
+      }
+      return { uploadId, filename, mimeType, sizeBytes: total };
+    },
+  );
+
+  // Discard a staged upload (user removed the chip before sending).
+  app.delete<{ Params: { id: string } }>('/api/uploads/:id', async (req) => {
+    await deleteUpload(req.params.id);
+    return { ok: true };
+  });
 
   app.post<{ Params: { id: string }; Body: SendMessageRequest }>(
     '/api/accounts/:id/send',

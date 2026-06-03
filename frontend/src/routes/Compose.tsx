@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { AttachmentRef, SendMessageRequest } from '@maily/shared';
+import type { AttachmentRef, SendMessageRequest, UploadDto } from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts } from '../state/data';
 import { usePrefs } from '../state/prefs';
@@ -70,9 +70,12 @@ export function Compose() {
   );
   const [bodyHtml, setBodyHtml] = useState(initialHtml);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
+  const [uploads, setUploads] = useState<UploadDto[]>([]);
+  const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // "Dirty" = the user changed something relative to the prefill (reply/forward
   // quotes + signature don't count as user input, so an untouched draft discards
@@ -82,6 +85,7 @@ export function Compose() {
     (showCc && cc !== (prefill.cc ?? []).join(', ')) ||
     subject !== (prefill.subject ?? '') ||
     htmlToPlainText(bodyHtml) !== htmlToPlainText(initialHtml) ||
+    uploads.length > 0 ||
     attachments.length !== (prefill.attachments?.length ?? 0);
 
   function cancel() {
@@ -89,12 +93,40 @@ export function Compose() {
     else navigate(-1);
   }
 
+  /** Discard staged uploads server-side, then leave the composer. */
+  function discardDraft() {
+    setConfirmDiscard(false);
+    for (const u of uploads) void api.deleteUpload(u.uploadId);
+    navigate(-1);
+  }
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // allow re-picking the same file
+    for (const file of files) {
+      setUploading((n) => n + 1);
+      try {
+        const dto = await api.uploadAttachment(file);
+        setUploads((prev) => [...prev, dto]);
+      } catch (err) {
+        setError((err as Error).message || `Couldn't upload ${file.name}.`);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  }
+
+  function removeUpload(uploadId: string) {
+    setUploads((prev) => prev.filter((u) => u.uploadId !== uploadId));
+    void api.deleteUpload(uploadId);
+  }
+
   const fromAccount = useMemo(
     () => accounts?.find((a) => a.id === accountId) ?? accounts?.[0],
     [accounts, accountId],
   );
 
-  const canSend = Boolean(fromAccount && parseAddrs(to).length && !sending);
+  const canSend = Boolean(fromAccount && parseAddrs(to).length && !sending && uploading === 0);
 
   async function send() {
     if (!fromAccount) return;
@@ -128,6 +160,9 @@ export function Compose() {
       attachments: attachments.length
         ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
         : undefined,
+      uploads: uploads.length
+        ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
+        : undefined,
     };
     try {
       await api.send(fromAccount.id, msg);
@@ -149,6 +184,15 @@ export function Compose() {
           <BackIcon />
         </button>
         <h1 className="flex-1 text-lg font-semibold">New message</h1>
+        <input ref={fileInputRef} type="file" multiple onChange={onPickFiles} className="hidden" />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label="Attach files"
+          type="button"
+        >
+          <PaperclipIcon />
+        </button>
         <button
           onClick={send}
           disabled={!canSend}
@@ -222,7 +266,7 @@ export function Compose() {
           />
         </div>
 
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || uploads.length > 0 || uploading > 0) && (
           <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
             {attachments.map((a) => (
               <span
@@ -243,6 +287,29 @@ export function Compose() {
                 </button>
               </span>
             ))}
+            {uploads.map((u) => (
+              <span
+                key={u.uploadId}
+                className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
+              >
+                <PaperclipIcon className="size-3.5 text-faint" />
+                <span className="max-w-[40vw] truncate">{u.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => removeUpload(u.uploadId)}
+                  className="text-faint active:text-fg"
+                  aria-label="Remove attachment"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {uploading > 0 && (
+              <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">
+                <Spinner className="size-3.5" />
+                Uploading…
+              </span>
+            )}
           </div>
         )}
 
@@ -261,10 +328,7 @@ export function Compose() {
         confirmLabel="Discard"
         cancelLabel="Keep editing"
         danger
-        onConfirm={() => {
-          setConfirmDiscard(false);
-          navigate(-1);
-        }}
+        onConfirm={discardDraft}
         onCancel={() => setConfirmDiscard(false)}
       />
     </div>
