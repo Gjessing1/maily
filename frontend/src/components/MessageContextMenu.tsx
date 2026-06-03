@@ -100,7 +100,9 @@ export function MessageContextMenu({
     },
     {
       label: message.seen ? 'Mark as unread' : 'Mark as read',
-      icon: message.seen ? <MailOpenIcon className="size-4" /> : <MailIcon className="size-4" />,
+      // Icon depicts the resulting state (matches the row toggle + bulk bar):
+      // open envelope = mark as read, closed envelope = mark as unread.
+      icon: message.seen ? <MailIcon className="size-4" /> : <MailOpenIcon className="size-4" />,
       onClick: run(() => onToggleRead(message.id, !message.seen)),
       divider: true,
     },

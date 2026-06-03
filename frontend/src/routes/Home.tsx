@@ -191,14 +191,14 @@ export function Home() {
               className="rounded-full p-2 text-fg active:bg-surface-2"
               aria-label="Mark as read"
             >
-              <MailIcon />
+              <MailOpenIcon />
             </button>
             <button
               onClick={() => bulkMarkRead(false)}
               className="rounded-full p-2 text-fg active:bg-surface-2"
               aria-label="Mark as unread"
             >
-              <MailOpenIcon />
+              <MailIcon />
             </button>
             <button
               onClick={bulkArchive}
