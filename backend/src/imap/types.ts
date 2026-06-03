@@ -18,6 +18,8 @@ export interface ParsedAttachment {
   sizeBytes: number | null;
   /** IMAP BODYSTRUCTURE part id used to fetch the bytes on demand (ARCHITECTURE §4). */
   imapPartId: string | null;
+  /** Document-order index among attachment parts — local-source match key (§3.7.E). */
+  partOrdinal: number;
   contentId: string | null;
   isInline: boolean;
 }

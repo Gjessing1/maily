@@ -208,6 +208,7 @@ export function upsertMessage(
           mimeType: att.mimeType,
           sizeBytes: att.sizeBytes,
           imapPartId: att.imapPartId,
+          partOrdinal: att.partOrdinal,
           contentId: att.contentId,
           isInline: att.isInline,
         })

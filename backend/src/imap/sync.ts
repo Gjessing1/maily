@@ -17,7 +17,10 @@ import { updateFolderSyncState } from './folders.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
 import { findExistingId, touchKnownMessage, upsertMessage } from './store.js';
 
-/** Local cache window — roughly one year by default (ARCHITECTURE §1). */
+/**
+ * Local cache window — roughly one year by default (ARCHITECTURE §1). A value of 0
+ * means "all": no `since` filter, sync the entire folder (ROADMAP §3.7.E).
+ */
 const CACHE_WINDOW_DAYS = env.cacheWindowDays;
 const FETCH_BATCH = 100;
 
@@ -218,9 +221,16 @@ export async function fullSyncFolder(
   folder: FolderRow,
   state: { uidValidity: number; highestModseq: number | null; uidNext: number },
 ): Promise<StoreCounts> {
-  const since = new Date(Date.now() - CACHE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const uids = ((await ctx.client.search({ since }, { uid: true })) || []).sort((a, b) => a - b);
-  ctx.log.info(`full sync ${folder.path}: ${uids.length} message(s) in window`);
+  // CACHE_WINDOW_DAYS === 0 ⇒ "all": no date floor, enumerate the whole folder.
+  const searchQuery =
+    CACHE_WINDOW_DAYS > 0
+      ? { since: new Date(Date.now() - CACHE_WINDOW_DAYS * 24 * 60 * 60 * 1000) }
+      : { all: true };
+  const uids = ((await ctx.client.search(searchQuery, { uid: true })) || []).sort((a, b) => a - b);
+  ctx.log.info(
+    `full sync ${folder.path}: ${uids.length} message(s)` +
+      (CACHE_WINDOW_DAYS > 0 ? ' in window' : ' (full folder)'),
+  );
 
   // Resume floor: one below the lowest window UID (or just below UIDNEXT when the
   // window is empty). Stored before any body fetch so an interrupted run resumes

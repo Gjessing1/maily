@@ -57,6 +57,12 @@ export const folders = sqliteTable(
     highestModseq: integer('highest_modseq'),
     /** UIDNEXT at last sync — new messages are fetched from `lastUid:*` on resync. */
     lastUid: integer('last_uid'),
+    /**
+     * Low-watermark of the resumable full-source sweep (ROADMAP §3.7.E): the lowest
+     * UID whose raw `.eml` has been archived. The sweep walks downward from here, so
+     * an interrupted run resumes instead of restarting. Null = sweep not yet started.
+     */
+    oldestSyncedUid: integer('oldest_synced_uid'),
     createdAt: now(),
   },
   (t) => [uniqueIndex('folders_account_path_uq').on(t.accountId, t.path)],
@@ -88,6 +94,13 @@ export const messages = sqliteTable(
     snippet: text('snippet'),
     bodyText: text('body_text'),
     bodyHtml: text('body_html'),
+    /**
+     * On-disk path of the complete raw RFC822 (.eml) — the canonical content store
+     * (ROADMAP §3.7.E / ARCHITECTURE §15). Null = not yet archived; the parsed
+     * columns above are then the message's only copy. Once set, the parsed rows /
+     * FTS / attachment bytes are a rebuildable cache over this file.
+     */
+    sourcePath: text('source_path'),
     sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
     receivedAt: integer('received_at', { mode: 'timestamp_ms' }),
     seen: integer('seen', { mode: 'boolean' }).notNull().default(false),
@@ -175,6 +188,13 @@ export const attachments = sqliteTable(
     sizeBytes: integer('size_bytes'),
     /** IMAP body part id used to fetch the bytes on demand. */
     imapPartId: text('imap_part_id'),
+    /**
+     * Stable document-order index assigned during the BODYSTRUCTURE walk
+     * (`extractStructure`, DFS order). The local-source resolver selects the matching
+     * MIME part by walking the `.eml` in the same order with the same classifier, so
+     * the match is exact regardless of duplicate filenames/sizes (ROADMAP §3.7.E).
+     */
+    partOrdinal: integer('part_ordinal'),
     /** Content-ID for inline (CID) images. */
     contentId: text('content_id'),
     isInline: integer('is_inline', { mode: 'boolean' }).notNull().default(false),

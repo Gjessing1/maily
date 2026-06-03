@@ -21,6 +21,32 @@ function filenameOf(node: MessageStructureObject): string | null {
   return node.dispositionParameters?.filename ?? node.parameters?.name ?? null;
 }
 
+/** The leaf-part attributes the shared classifier needs — parser-agnostic. */
+export interface PartTraits {
+  /** Lowercased MIME type, e.g. `image/png` (empty string if unknown). */
+  type: string;
+  /** Lowercased Content-Disposition, e.g. `attachment` / `inline` (empty if none). */
+  disposition: string;
+  /** Whether the part declares a filename (disposition filename or `name` param). */
+  hasFilename: boolean;
+  /** Whether the part carries a Content-ID (the inline-CID marker). */
+  hasContentId: boolean;
+}
+
+/**
+ * THE single attachment classifier (ROADMAP §3.7.E). Both the IMAP BODYSTRUCTURE
+ * walk (`extractStructure`) and the local-source `.eml` walk (the unified attachment
+ * resolver) run *this one* predicate over their respective trees, so their part
+ * enumerations — and therefore `part_ordinal` — are identical **by construction**.
+ * Any edit to what counts as an attachment MUST live here so both walks follow it.
+ */
+export function classifyPart(t: PartTraits): { selected: boolean; isInline: boolean } {
+  const isInline = t.disposition === 'inline' && t.hasContentId;
+  const isAttachment = t.disposition === 'attachment' || (t.hasFilename && !isInline);
+  const selected = isAttachment || (isInline && !t.type.startsWith('text/'));
+  return { selected, isInline };
+}
+
 /** Walk the BODYSTRUCTURE tree, collecting body part ids and attachment metadata. */
 export function extractStructure(root: MessageStructureObject | undefined): ExtractedStructure {
   const out: ExtractedStructure = { textPartId: null, htmlPartId: null, attachments: [] };
@@ -33,21 +59,27 @@ export function extractStructure(root: MessageStructureObject | undefined): Extr
     }
 
     const type = (node.type || '').toLowerCase();
-    const disposition = (node.disposition || '').toLowerCase();
     const filename = filenameOf(node);
     // A non-multipart message has no `part`; its single body is part "1".
     const partId = node.part ?? '1';
     const contentId = node.id ? node.id.replace(/^<|>$/g, '') : null;
 
-    const isInline = disposition === 'inline' && Boolean(node.id);
-    const isAttachment = disposition === 'attachment' || (Boolean(filename) && !isInline);
+    const { selected, isInline } = classifyPart({
+      type,
+      disposition: (node.disposition || '').toLowerCase(),
+      hasFilename: Boolean(filename),
+      hasContentId: Boolean(node.id),
+    });
 
-    if (isAttachment || (isInline && !type.startsWith('text/'))) {
+    if (selected) {
+      // partOrdinal is just the document-order push index (DFS): the local-source
+      // resolver reproduces it by walking the .eml with the same classifier.
       out.attachments.push({
         filename,
         mimeType: type || null,
         sizeBytes: node.size ?? null,
         imapPartId: partId,
+        partOrdinal: out.attachments.length,
         contentId,
         isInline,
       });
