@@ -98,6 +98,15 @@ export const api = {
     return request<MessageDto[]>(`/api/folders/${folderId}/messages${suffix}`);
   },
 
+  /** Virtual "Archived" view for an account (archive folder minus inbox/sent/…). */
+  archived: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.before) qs.set('before', String(opts.before));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<MessageDto[]>(`/api/accounts/${accountId}/archived${suffix}`);
+  },
+
   message: (id: string) => request<MessageDetailDto>(`/api/messages/${id}`),
 
   setFlags: (id: string, flags: { seen?: boolean; flagged?: boolean }) =>

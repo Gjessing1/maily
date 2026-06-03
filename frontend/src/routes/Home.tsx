@@ -9,6 +9,7 @@ import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
+import { isArchivedView } from '../state/archived';
 import { usePrefs } from '../state/prefs';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
@@ -73,9 +74,11 @@ export function Home() {
   }, [folderId, firstFolders, setParams]);
 
   const folder = useLiveQuery(
-    () => (folderId ? cache.folders.get(folderId) : undefined),
+    () => (folderId && !isArchivedView(folderId) ? cache.folders.get(folderId) : undefined),
     [folderId],
   );
+  // The Archived view is synthetic (no cached folder row), so name it explicitly.
+  const folderName = isArchivedView(folderId) ? 'Archive' : (folder?.name ?? 'Inbox');
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
 
@@ -224,9 +227,7 @@ export function Home() {
                 <MenuIcon />
               </button>
             )}
-            <h1 className="flex-1 truncate px-2 text-lg font-semibold capitalize">
-              {folder?.name ?? 'Inbox'}
-            </h1>
+            <h1 className="flex-1 truncate px-2 text-lg font-semibold capitalize">{folderName}</h1>
             {isWide && (
               <Link
                 to="/search"

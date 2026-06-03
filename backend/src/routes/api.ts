@@ -24,6 +24,7 @@ import {
   getAttachment,
   getMessage,
   listAccounts,
+  listArchived,
   listFolders,
   listMessages,
   savePushSubscription,
@@ -88,6 +89,20 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       const limit = Math.min(Number(req.query.limit ?? 50) || 50, MAX_PAGE);
       const before = req.query.before ? Number(req.query.before) : undefined;
       const rows = listMessages(req.params.folderId, limit, before);
+      return rows.map((m) =>
+        toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)),
+      );
+    },
+  );
+
+  // Virtual "Archived" view for an account: archive-role folder minus inbox/sent/
+  // trash/junk/drafts. Surfaces archived mail on Gmail, where "archive" == All Mail.
+  app.get<{ Params: { accountId: string }; Querystring: { limit?: string; before?: string } }>(
+    '/api/accounts/:accountId/archived',
+    async (req) => {
+      const limit = Math.min(Number(req.query.limit ?? 50) || 50, MAX_PAGE);
+      const before = req.query.before ? Number(req.query.before) : undefined;
+      const rows = listArchived(req.params.accountId, limit, before);
       return rows.map((m) =>
         toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)),
       );

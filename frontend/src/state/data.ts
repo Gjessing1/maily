@@ -17,6 +17,7 @@ import {
   cacheMessages,
   type CachedMessage,
 } from '../db/cache';
+import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
@@ -65,29 +66,54 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const { unreadAtTop, pageSize } = usePrefs();
   const PAGE = pageSize;
 
+  // The virtual "Archived" view has no real folder id; it reads its own endpoint
+  // and, offline, filters the cached archive-folder rows by the same role subtraction.
+  const archived = isArchivedView(folderId);
+  const accountId = archived ? archivedAccountId(folderId) : undefined;
+
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
-    const rows = await cache.messages.where('folderIds').equals(folderId).toArray();
+    let rows: CachedMessage[];
+    if (archived && accountId) {
+      const folders = await cache.folders.where('accountId').equals(accountId).toArray();
+      const archiveId = folders.find((f) => f.role === 'archive')?.id;
+      if (!archiveId) return [];
+      const excluded = new Set(
+        folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
+      );
+      const inArchive = await cache.messages.where('folderIds').equals(archiveId).toArray();
+      rows = inArchive.filter((m) => !m.folderIds.some((id) => excluded.has(id)));
+    } else {
+      rows = await cache.messages.where('folderIds').equals(folderId).toArray();
+    }
     // Newest-first always; optionally float unread above read as the primary key.
     return rows.sort((a, b) => {
       if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
       return receivedMs(b) - receivedMs(a);
     });
-  }, [folderId, unreadAtTop]);
+  }, [folderId, archived, accountId, unreadAtTop]);
+
+  // One page fetch for either the real folder or the archived view.
+  const fetchPage = useCallback(
+    (before?: number) =>
+      archived && accountId
+        ? api.archived(accountId, { limit: PAGE, before })
+        : api.messages(folderId!, { limit: PAGE, before }),
+    [archived, accountId, folderId, PAGE],
+  );
 
   const refresh = useCallback(() => {
     if (!folderId) return;
     setRefreshing(true);
     setError(null);
-    api
-      .messages(folderId, { limit: PAGE })
+    fetchPage()
       .then(async (rows) => {
         await cacheMessages(rows);
         setHasMore(rows.length === PAGE);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setRefreshing(false));
-  }, [folderId, PAGE]);
+  }, [folderId, PAGE, fetchPage]);
 
   const loadMore = useCallback(() => {
     if (!folderId || !messages?.length) return;
@@ -95,15 +121,14 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     const before = oldest ? receivedMs(oldest) : 0;
     if (!before) return;
     setRefreshing(true);
-    api
-      .messages(folderId, { limit: PAGE, before })
+    fetchPage(before)
       .then(async (rows) => {
         await cacheMessages(rows);
         setHasMore(rows.length === PAGE);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setRefreshing(false));
-  }, [folderId, messages, PAGE]);
+  }, [folderId, messages, PAGE, fetchPage]);
 
   // Refetch the head of the folder whenever it changes.
   useEffect(() => {

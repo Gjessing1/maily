@@ -2,6 +2,7 @@ import type { ComponentType, SVGProps } from 'react';
 import { Link } from 'react-router-dom';
 import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
+import { archivedFolder } from '../state/archived';
 import { useAuth } from '../state/auth';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
 import {
@@ -63,7 +64,10 @@ function AccountFolders({
     .sort(
       (a, b) =>
         (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.name.localeCompare(b.name),
-    );
+    )
+    // The raw archive folder (Gmail "All Mail") holds everything; swap it for the
+    // virtual "Archived" smart view so the entry actually means archived mail.
+    .map((f) => (f.role === 'archive' ? archivedFolder(account.id) : f));
 
   const Icon = (role: FolderRole) => ROLE_ICON[role] ?? FolderIcon;
 

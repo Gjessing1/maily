@@ -3,7 +3,19 @@
  * keeps all SQL in one place. Local full-text search goes through the FTS5 index
  * (ARCHITECTURE §12 — never LIKE-scan).
  */
-import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  notExists,
+  sql,
+} from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { db } from './client.js';
 import {
   accounts,
@@ -64,6 +76,44 @@ export function listMessages(folderId: string, limit: number, beforeMs?: number)
     .from(messages)
     .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
     .where(where)
+    .orderBy(desc(messages.receivedAt))
+    .limit(limit)
+    .all();
+}
+
+/** Roles whose presence disqualifies a message from the virtual "Archived" view. */
+const NON_ARCHIVE_ROLES = ['inbox', 'sent', 'trash', 'junk', 'drafts'] as const;
+
+/**
+ * Virtual "Archived" view: messages in the account's archive-role folder that are
+ * NOT also in the inbox/sent/trash/junk/drafts. Gmail conflates archive with "All
+ * Mail" (everything), so this subtraction is what makes "Archived" mean archived;
+ * on providers with a real Archive folder the subtraction is a harmless no-op.
+ * Tombstones hidden (§13); newest first, keyset-paginated by receivedAt.
+ */
+export function listArchived(accountId: string, limit: number, beforeMs?: number): MessageRow[] {
+  const mf2 = alias(messageFolders, 'mf2');
+  const f2 = alias(folders, 'f2');
+  return db
+    .select(getTableColumns(messages))
+    .from(messages)
+    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
+    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        eq(folders.role, 'archive'),
+        isNull(messages.deletedAt),
+        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(mf2)
+            .innerJoin(f2, eq(f2.id, mf2.folderId))
+            .where(and(eq(mf2.messageId, messages.id), inArray(f2.role, [...NON_ARCHIVE_ROLES]))),
+        ),
+      ),
+    )
     .orderBy(desc(messages.receivedAt))
     .limit(limit)
     .all();
