@@ -7,12 +7,16 @@
  * source, because that would drag attachment bytes over the wire in bulk
  * (ARCHITECTURE §4 / KEY GOTCHA). Attachment bytes are fetched on demand later.
  */
+import { randomUUID } from 'node:crypto';
 import type { FetchQueryObject, ImapFlow } from 'imapflow';
 import type { Logger } from '../logger.js';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type { ParsedMessage } from './types.js';
 import { env } from '../env.js';
+import { canDownloadSource, recordDownloadedBytes } from './budget.js';
+import { deriveBodyFromSource } from './source-parse.js';
+import { discardSource, sourcePathFor, writeSourceStream } from '../storage/source.js';
 import { updateFolderSyncState } from './folders.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
 import { findExistingId, touchKnownMessage, upsertMessage } from './store.js';
@@ -107,16 +111,19 @@ function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
   };
 }
 
-/** Assemble a ParsedMessage from a captured message + its downloaded body parts. */
-async function toParsedMessage(ctx: SyncContext, msg: CapturedMessage): Promise<ParsedMessage> {
+/**
+ * Assemble a ParsedMessage from a captured message + a supplied body. Attachment
+ * metadata is always derived from the IMAP BODYSTRUCTURE (`extractStructure`) so
+ * `part_ordinal` is identical on the live and bulk paths; only the text bodies vary
+ * by source (downloaded parts on bulk, parsed from the `.eml` on live).
+ */
+function buildParsedMessage(
+  ctx: SyncContext,
+  msg: CapturedMessage,
+  body: { bodyText: string | null; bodyHtml: string | null },
+  sourcePath: string | null,
+): ParsedMessage {
   const structure = extractStructure(msg.bodyStructure);
-  const bodyText = structure.textPartId
-    ? await downloadTextPart(ctx, msg.uid, structure.textPartId)
-    : null;
-  const bodyHtml = structure.htmlPartId
-    ? await downloadTextPart(ctx, msg.uid, structure.htmlPartId)
-    : null;
-
   const envelope = msg.envelope;
   const from = envelope?.from?.[0];
   const mapAddrs = (
@@ -143,14 +150,65 @@ async function toParsedMessage(ctx: SyncContext, msg: CapturedMessage): Promise<
     fromAddress: from?.address ?? null,
     to: mapAddrs(envelope?.to),
     cc: mapAddrs(envelope?.cc),
-    snippet: makeSnippet(bodyText, bodyHtml),
-    bodyText,
-    bodyHtml,
+    snippet: makeSnippet(body.bodyText, body.bodyHtml),
+    bodyText: body.bodyText,
+    bodyHtml: body.bodyHtml,
+    sourcePath,
     sentAt: envelope?.date ?? null,
     receivedAt: internalDate,
     flags: flagsFromSet(msg.flags),
     attachments: structure.attachments,
   };
+}
+
+/** Bulk/body-only body acquisition: download just the text/plain + text/html parts. */
+async function downloadBodyParts(
+  ctx: SyncContext,
+  msg: CapturedMessage,
+): Promise<{ bodyText: string | null; bodyHtml: string | null }> {
+  const structure = extractStructure(msg.bodyStructure);
+  const bodyText = structure.textPartId
+    ? await downloadTextPart(ctx, msg.uid, structure.textPartId)
+    : null;
+  const bodyHtml = structure.htmlPartId
+    ? await downloadTextPart(ctx, msg.uid, structure.htmlPartId)
+    : null;
+  return { bodyText, bodyHtml };
+}
+
+/** A staged full-source capture: the pre-assigned UUID, its `.eml` path, and the body. */
+interface SourceCapture {
+  id: string;
+  sourcePath: string;
+  body: { bodyText: string | null; bodyHtml: string | null };
+}
+
+/**
+ * Live-path full-source capture (ROADMAP §3.7.E — the day-one invariant). Streams the
+ * complete RFC822 to `<sourceDir>/{account}/{uuid}/source.eml`, charges the bytes to
+ * the shared per-day budget, and derives the body by parsing that `.eml`. Returns null
+ * (caller falls back to body-only) when the budget is exhausted or the fetch fails, so
+ * a new message is never lost — it just isn't archived yet (the sweep gets it later).
+ */
+async function captureFullSource(
+  ctx: SyncContext,
+  msg: CapturedMessage,
+): Promise<SourceCapture | null> {
+  if (!canDownloadSource()) return null;
+  const id = randomUUID();
+  const sourcePath = sourcePathFor(ctx.accountId, id);
+  try {
+    const { content } = await ctx.client.download(String(msg.uid), undefined, { uid: true });
+    if (!content) return null;
+    const bytes = await writeSourceStream(content, sourcePath);
+    recordDownloadedBytes(bytes);
+    const body = await deriveBodyFromSource(sourcePath);
+    return { id, sourcePath, body };
+  } catch (err) {
+    ctx.log.warn(`full-source capture failed for uid ${msg.uid}:`, (err as Error).message);
+    await discardSource(sourcePath);
+    return null;
+  }
 }
 
 export interface StoreCounts {
@@ -159,11 +217,20 @@ export interface StoreCounts {
   updated: number;
 }
 
+/**
+ * Fetch mode (ROADMAP §3.7.E). `live` is the low-volume IDLE path: it captures the
+ * full RFC822 source and derives the parsed row from it (the day-one canonical
+ * invariant). `bulk` is the body-only fast path for the initial cache-window sync;
+ * its backlog gets archived later by the throttled, budgeted full-source sweep.
+ */
+export type FetchMode = 'live' | 'bulk';
+
 /** Fetch a set of UIDs and persist them into the folder. */
 export async function fetchAndStore(
   ctx: SyncContext,
   folder: FolderRow,
   uids: number[],
+  mode: FetchMode = 'bulk',
 ): Promise<StoreCounts> {
   const insertedIds: string[] = [];
   let updated = 0;
@@ -178,8 +245,8 @@ export async function fetchAndStore(
     }
 
     // Phase 2: connection is free now — persist. Dedup FIRST using identity from
-    // the envelope (gm_msgid / message_id, already in hand), and only download body
-    // parts for genuinely new messages. A re-sighting (e.g. an INBOX rebuild for a
+    // the envelope (gm_msgid / message_id, already in hand), and only acquire the
+    // body for genuinely new messages. A re-sighting (e.g. an INBOX rebuild for a
     // message already stored via All Mail) just refreshes flags + folder mapping —
     // no body re-fetch — which is what keeps a full rebuild from taking hours.
     for (const msg of captured) {
@@ -191,10 +258,27 @@ export async function fetchAndStore(
         updated += 1;
         continue;
       }
-      const parsed = await toParsedMessage(ctx, msg);
-      const result = upsertMessage(ctx.accountId, folder.id, msg.uid, parsed, folder.role);
-      if (result.inserted) insertedIds.push(result.id);
-      else updated += 1;
+
+      // Live path: capture full source once and derive the body from it. Falls back
+      // to body-only when the byte budget is spent or the source fetch fails.
+      const cap = mode === 'live' ? await captureFullSource(ctx, msg) : null;
+      const body = cap ? cap.body : await downloadBodyParts(ctx, msg);
+      const parsed = buildParsedMessage(ctx, msg, body, cap?.sourcePath ?? null);
+      const result = upsertMessage(
+        ctx.accountId,
+        folder.id,
+        msg.uid,
+        parsed,
+        folder.role,
+        cap ? { id: cap.id } : undefined,
+      );
+      if (result.inserted) {
+        insertedIds.push(result.id);
+      } else {
+        updated += 1;
+        // Dedup race: the row already existed, so the staged `.eml` is orphaned.
+        if (cap) await discardSource(cap.sourcePath);
+      }
     }
   }
 

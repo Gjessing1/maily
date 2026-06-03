@@ -43,6 +43,8 @@ export interface ParsedMessage {
   snippet: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  /** On-disk raw `.eml` path when captured on the live path; null until archived (§3.7.E). */
+  sourcePath: string | null;
   sentAt: Date | null;
   receivedAt: Date | null;
   flags: MessageFlags;

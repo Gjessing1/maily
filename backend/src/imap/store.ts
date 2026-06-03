@@ -155,13 +155,19 @@ export function touchKnownMessage(
   linkFolder(messageId, folderId, uid);
 }
 
-/** Persist a parsed message into the given folder. Idempotent per (identity, folder). */
+/** Persist a parsed message into the given folder. Idempotent per (identity, folder).
+ *
+ * `opts.id` lets the caller pre-assign the internal UUID — used by live full-source
+ * capture, which must know the UUID to stream the `.eml` to its partitioned path
+ * before the row exists. On a dedup hit nothing is inserted (the caller discards the
+ * staged source file), so the pre-assigned id is harmless when unused. */
 export function upsertMessage(
   accountId: string,
   folderId: string,
   uid: number | null,
   parsed: ParsedMessage,
   folderRole: FolderRole,
+  opts?: { id?: string },
 ): UpsertResult {
   return db.transaction((): UpsertResult => {
     const existingId = findExistingId(accountId, parsed.gmMsgId, parsed.messageId);
@@ -174,6 +180,7 @@ export function upsertMessage(
     const inserted = db
       .insert(messages)
       .values({
+        ...(opts?.id ? { id: opts.id } : {}),
         accountId,
         messageId: parsed.messageId,
         gmMsgId: parsed.gmMsgId,
@@ -188,6 +195,7 @@ export function upsertMessage(
         snippet: parsed.snippet,
         bodyText: parsed.bodyText,
         bodyHtml: parsed.bodyHtml,
+        sourcePath: parsed.sourcePath,
         sentAt: parsed.sentAt,
         receivedAt: parsed.receivedAt,
         seen: parsed.flags.seen,

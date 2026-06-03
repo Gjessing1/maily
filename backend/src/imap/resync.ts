@@ -108,7 +108,8 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
       for await (const msg of ctx.client.fetch(`${fromUid}:*`, { uid: true }, { uid: true })) {
         if (msg.uid >= fromUid) newUids.push(msg.uid);
       }
-      counts = await fetchAndStore(ctx, folder, newUids);
+      // Incremental new mail is the live, low-volume path — capture full source.
+      counts = await fetchAndStore(ctx, folder, newUids, 'live');
     }
 
     const expunged = await reconcileExpunges(ctx, folder);
