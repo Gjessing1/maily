@@ -6,6 +6,7 @@ import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { requestDelete } from '../state/undo';
 import { MessageRow } from '../components/MessageRow';
+import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
 import { usePrefs } from '../state/prefs';
@@ -96,6 +97,17 @@ export function Home() {
     void patchCachedFlags(id, { seen });
     api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
   }, []);
+
+  // Single archive (context menu): drop locally, move the inbox copy server-side.
+  const handleArchive = useCallback((id: string) => {
+    void removeCachedMessage(id);
+    api.archiveMessage(id).catch(() => undefined);
+  }, []);
+
+  // ── Right-click context menu (desktop) ──────────────────────────────────────
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const openMenu = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), []);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   // ── Multi-select (long-press / right-click a row to enter) ──────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -255,6 +267,7 @@ export function Home() {
                   checked={selectedIds.has(m.id)}
                   onEnterSelect={enterSelect}
                   onToggleSelect={toggleSelect}
+                  onContextMenu={openMenu}
                 />
               </Fragment>
             ))}
@@ -342,6 +355,24 @@ export function Home() {
         selectedFolderId={folderId}
         onSelect={(f) => setParams({ folder: f.id })}
       />
+
+      {menu &&
+        (() => {
+          const target = messages?.find((m) => m.id === menu.id);
+          return target ? (
+            <MessageContextMenu
+              message={target}
+              accounts={accounts ?? []}
+              x={menu.x}
+              y={menu.y}
+              onClose={closeMenu}
+              onToggleRead={handleToggleRead}
+              onArchive={handleArchive}
+              onDelete={handleDelete}
+              onSelect={enterSelect}
+            />
+          ) : null;
+        })()}
     </div>
   );
 }

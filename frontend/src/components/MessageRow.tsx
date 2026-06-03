@@ -34,6 +34,7 @@ export function MessageRow({
   checked = false,
   onEnterSelect,
   onToggleSelect,
+  onContextMenu: onContextMenuOpen,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -51,10 +52,12 @@ export function MessageRow({
   selectionMode?: boolean;
   /** Whether this row is currently selected (multi-select). */
   checked?: boolean;
-  /** Long-press / right-click handler to enter multi-select mode. */
+  /** Long-press (mobile) handler to enter multi-select mode. */
   onEnterSelect?: (id: string) => void;
-  /** Toggle this row's selection (multi-select mode). */
+  /** Toggle this row's selection (also enters selection mode from empty). */
   onToggleSelect?: (id: string) => void;
+  /** Right-click (desktop) opens the action context menu at the cursor. */
+  onContextMenu?: (id: string, x: number, y: number) => void;
 }) {
   const name = senderName(message.fromName, message.fromAddress);
   const hue = avatarHue(message.fromAddress ?? name);
@@ -136,12 +139,21 @@ export function MessageRow({
     }
   }
 
-  // Desktop: right-click enters selection mode.
+  // Desktop: right-click opens the action context menu at the cursor.
   function onContextMenu(e: React.MouseEvent) {
-    if (onEnterSelect && !selectionMode) {
+    if (onContextMenuOpen) {
       e.preventDefault();
-      onEnterSelect(message.id);
+      onContextMenuOpen(message.id, e.clientX, e.clientY);
     }
+  }
+
+  // Clicking the avatar selects the row (Gmail-style) instead of opening it —
+  // entering selection mode from empty. preventDefault stops the Link navigating.
+  function onAvatarClick(e: React.MouseEvent) {
+    if (!onToggleSelect) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onToggleSelect(message.id);
   }
 
   // Right swipe reveals from the left edge; left swipe reveals from the right edge.
@@ -184,7 +196,11 @@ export function MessageRow({
         >
           {selectionMode ? (
             <div
-              className={`mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+              role="checkbox"
+              aria-checked={checked}
+              aria-label={checked ? 'Deselect' : 'Select'}
+              onClick={onAvatarClick}
+              className={`mt-0.5 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition-colors ${
                 checked ? 'border-accent bg-accent text-white' : 'border-border text-transparent'
               }`}
             >
@@ -192,10 +208,19 @@ export function MessageRow({
             </div>
           ) : (
             <div
-              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+              role="button"
+              aria-label="Select message"
+              onClick={onAvatarClick}
+              className="group/avatar relative mt-0.5 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-sm font-semibold text-white"
               style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
             >
-              {initials(message.fromName, message.fromAddress)}
+              <span className="transition-opacity group-hover/avatar:opacity-0">
+                {initials(message.fromName, message.fromAddress)}
+              </span>
+              {/* Hover (desktop) reveals a checkbox affordance over the avatar. */}
+              <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/25 opacity-0 transition-opacity group-hover/avatar:opacity-100">
+                <CheckIcon className="size-5" />
+              </span>
             </div>
           )}
 

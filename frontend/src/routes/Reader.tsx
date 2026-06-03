@@ -23,7 +23,7 @@ import {
 } from '../ui/icons';
 import type { EmailAddress } from '@maily/shared';
 import { avatarHue, fullDate, initials, senderName } from '../ui/format';
-import type { ComposeAttachment, ComposePrefill } from './Compose';
+import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
 
 /** One label/value row in the expanded message-header block. */
 function HeaderField({ label, value }: { label: string; value: string }) {
@@ -131,65 +131,14 @@ export function ReaderView({
     }
   }
 
-  // Addresses belonging to us — excluded from reply-all so we don't reply to ourselves.
-  const ownAddresses = new Set((accounts ?? []).map((a) => a.email.toLowerCase()));
-
-  function quotedReply(): string {
-    if (!detail?.bodyText) return '';
-    const lead = `On ${fullDate(detail.sentAt ?? detail.receivedAt)}, ${senderName(
-      detail.fromName,
-      detail.fromAddress,
-    )} wrote:`;
-    const body = detail.bodyText
-      .split('\n')
-      .map((l) => `> ${l}`)
-      .join('\n');
-    return `\n\n${lead}\n${body}`;
-  }
-
-  function replyCommon(): ComposePrefill {
-    const subject = detail!.subject ?? '';
-    return {
-      accountId: detail!.accountId,
-      subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-      body: quotedReply(),
-      inReplyTo: detail!.messageId,
-      references: [detail!.references, detail!.messageId].filter(Boolean).join(' ') || null,
-    };
-  }
-
-  /** Dedup (case-insensitive), preserving order and dropping our own + excluded addresses. */
-  function pickAddrs(addrs: string[], exclude: Set<string>): string[] {
-    const seen = new Set(exclude);
-    const out: string[] = [];
-    for (const a of addrs) {
-      const key = a.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(a);
-    }
-    return out;
-  }
-
   function reply() {
     if (!detail) return;
-    navigate('/compose', {
-      state: { ...replyCommon(), to: detail.fromAddress ? [detail.fromAddress] : [] },
-    });
+    navigate('/compose', { state: buildReply(detail) });
   }
 
   function replyAll() {
     if (!detail) return;
-    const to = pickAddrs(
-      [detail.fromAddress ?? '', ...detail.to.map((a) => a.address)].filter(Boolean),
-      ownAddresses,
-    );
-    // Cc carries the remaining recipients, minus anyone already in To.
-    const cc = pickAddrs(
-      detail.cc.map((a) => a.address),
-      new Set([...ownAddresses, ...to.map((a) => a.toLowerCase())]),
-    );
-    navigate('/compose', { state: { ...replyCommon(), to, cc } });
+    navigate('/compose', { state: buildReplyAll(detail, accounts ?? []) });
   }
 
   function remove() {
@@ -211,29 +160,7 @@ export function ReaderView({
 
   function forward() {
     if (!detail) return;
-    const subject = detail.subject ?? '';
-    const header = [
-      '---------- Forwarded message ----------',
-      `From: ${senderName(detail.fromName, detail.fromAddress)}`,
-      `Date: ${fullDate(detail.sentAt ?? detail.receivedAt)}`,
-      `Subject: ${subject}`,
-      detail.to.length ? `To: ${detail.to.map((a) => a.address).join(', ')}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const fwdAttachments: ComposeAttachment[] = visibleAttachments.map((a) => ({
-      messageId: detail.id,
-      attachmentId: a.id,
-      filename: a.filename,
-    }));
-    navigate('/compose', {
-      state: {
-        accountId: detail.accountId,
-        subject: /^fwd:/i.test(subject) ? subject : `Fwd: ${subject}`,
-        body: `\n\n${header}\n\n${detail.bodyText ?? ''}`,
-        attachments: fwdAttachments,
-      } satisfies ComposePrefill,
-    });
+    navigate('/compose', { state: buildForward(detail) });
   }
 
   const fmtAddr = (a: EmailAddress): string =>
