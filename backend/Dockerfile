@@ -1,5 +1,5 @@
 # Multi-stage build for the maily backend (native better-sqlite3 needs build tools).
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
@@ -17,7 +17,7 @@ RUN npm run build -w @maily/frontend
 # above, so prune just removes packages — no native rebuild needed.
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
