@@ -67,7 +67,16 @@ export function Search() {
       <main className="flex-1 overflow-y-auto no-scrollbar">
         {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}
         {results === null ? (
-          <p className="px-4 py-16 text-center text-faint">Search subjects, senders, and bodies.</p>
+          <div className="px-6 py-16 text-center text-faint">
+            <p>Search subjects, senders, and bodies.</p>
+            <p className="mt-3 text-xs leading-relaxed">
+              Filters: <code className="text-muted">from:</code>{' '}
+              <code className="text-muted">to:</code> <code className="text-muted">subject:</code>{' '}
+              <code className="text-muted">since:</code> <code className="text-muted">before:</code>{' '}
+              <code className="text-muted">has:attachment</code>{' '}
+              <code className="text-muted">larger:1M</code>
+            </p>
+          </div>
         ) : results.length === 0 && !busy ? (
           <p className="px-4 py-16 text-center text-faint">No matches.</p>
         ) : (
