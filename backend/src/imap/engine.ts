@@ -12,13 +12,15 @@ import type { ImapFlow } from 'imapflow';
 import type { AccountConfig } from '../config/accounts.js';
 import { createLogger, type Logger } from '../logger.js';
 import { emitSignal } from '../events.js';
+import { env } from '../env.js';
 import { ensureAccount, type AccountRow } from '../db/accounts.js';
 import { createClient, detectCapabilities, type Capabilities } from './connection.js';
 import { backfillRecipients } from './backfill.js';
+import { budgetRemaining, canDownloadSource } from './budget.js';
 import { getFolderById, syncFolders } from './folders.js';
 import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
-import type { SyncContext } from './sync.js';
+import { sweepFolderSource, type SyncContext } from './sync.js';
 
 const INITIAL_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -35,9 +37,11 @@ export class AccountEngine {
   private reconnecting = false;
   private idleBusy = false;
   private cronBusy = false;
+  private sweepBusy = false;
   private connected = false;
   private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
+  private sweepTimer: NodeJS.Timeout | null = null;
   private recipientsBackfilled = false;
 
   constructor(private readonly config: AccountConfig) {
@@ -67,12 +71,19 @@ export class AccountEngine {
     void this.connect();
     this.cronTimer = setInterval(() => void this.runFolderCron(), CRON_INTERVAL_MS);
     if (typeof this.cronTimer.unref === 'function') this.cronTimer.unref();
+    // Full-source historical backfill (ROADMAP §3.7.E), throttled by its own timer and
+    // the shared daily byte budget. On by default; MAILY_SOURCE_SWEEP=false pauses it.
+    if (env.sourceSweepEnabled) {
+      this.sweepTimer = setInterval(() => void this.runSourceSweep(), env.sourceSweepIntervalMs);
+      if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
+    }
   }
 
   /** Tear the engine down cleanly. */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.cronTimer) clearInterval(this.cronTimer);
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
     const client = this.client;
     this.client = null;
     if (client) {
@@ -224,6 +235,48 @@ export class AccountEngine {
         client.close();
       }
       this.cronBusy = false;
+    }
+  }
+
+  /**
+   * Full-source sweep pass (ROADMAP §3.7.E): archive raw `.eml` for the backlog, one
+   * folder at a time, over a transient connection so the INBOX IDLE connection is never
+   * disturbed (ARCHITECTURE §2/§9). The shared daily byte budget gates the work — a pass
+   * stops as soon as the budget is spent and the next tick no-ops cheaply until the UTC
+   * day rolls. `sweepBusy` prevents overlap when a pass outlives the timer interval.
+   */
+  private async runSourceSweep(): Promise<void> {
+    if (this.stopped || !this.account || this.sweepBusy) return;
+    if (!canDownloadSource()) return; // budget spent for today — retry on a later tick
+    this.sweepBusy = true;
+    const client = createClient(this.config);
+    try {
+      await client.connect();
+      const caps = detectCapabilities(client);
+      const ctx: SyncContext = { client, accountId: this.account.id, caps, log: this.log };
+      const folders = await syncFolders(client, this.account.id);
+      for (const folder of folders) {
+        if (this.stopped || !canDownloadSource()) break;
+        const fresh = getFolderById(folder.id);
+        if (!fresh) continue;
+        const r = await sweepFolderSource(ctx, fresh);
+        if (r.archived || r.inserted) {
+          const leftMb = Math.round(budgetRemaining() / 1e6);
+          this.log.info(
+            `${folder.path} sweep: ↑${r.archived} +${r.inserted}` +
+              `${r.done ? ' (folder complete)' : ''} — ${leftMb}MB budget left`,
+          );
+        }
+      }
+    } catch (err) {
+      this.log.warn('source sweep failed:', (err as Error).message);
+    } finally {
+      try {
+        await client.logout();
+      } catch {
+        client.close();
+      }
+      this.sweepBusy = false;
     }
   }
 

@@ -259,6 +259,25 @@ export function updateMessageFlags(
   db.update(messages).set(flags).where(eq(messages.id, messageId)).run();
 }
 
+/**
+ * Read a message's archived source path (ROADMAP §3.7.E). Non-null ⇒ the raw `.eml`
+ * is on disk and the full-source sweep can skip it; null ⇒ still body-only.
+ */
+export function sourcePathForMessage(messageId: string): string | null {
+  return (
+    db
+      .select({ sourcePath: messages.sourcePath })
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .get()?.sourcePath ?? null
+  );
+}
+
+/** Mark a message as archived: record the on-disk path of its raw `.eml` (ROADMAP §3.7.E). */
+export function setMessageSourcePath(messageId: string, sourcePath: string): void {
+  db.update(messages).set({ sourcePath }).where(eq(messages.id, messageId)).run();
+}
+
 /** Look up the internal message id owning a given UID in a folder (for flag/expunge events). */
 export function messageIdForUid(folderId: string, uid: number): string | undefined {
   return db

@@ -19,7 +19,14 @@ import { deriveBodyFromSource } from './source-parse.js';
 import { discardSource, sourcePathFor, writeSourceStream } from '../storage/source.js';
 import { updateFolderSyncState } from './folders.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
-import { findExistingId, touchKnownMessage, upsertMessage } from './store.js';
+import {
+  findExistingId,
+  messageIdForUid,
+  setMessageSourcePath,
+  sourcePathForMessage,
+  touchKnownMessage,
+  upsertMessage,
+} from './store.js';
 
 /**
  * Local cache window — roughly one year by default (ARCHITECTURE §1). A value of 0
@@ -184,6 +191,31 @@ interface SourceCapture {
 }
 
 /**
+ * Stream a message's complete RFC822 to `sourcePath` and charge the bytes to the shared
+ * per-day budget. Returns the byte count, or null on fetch failure (the staged file is
+ * discarded). Callers MUST budget-check (`canDownloadSource`) before invoking — this is
+ * the single place source bytes are pulled off the wire, for both the live capture and
+ * the historical sweep.
+ */
+async function streamSourceToDisk(
+  ctx: SyncContext,
+  uid: number,
+  sourcePath: string,
+): Promise<number | null> {
+  try {
+    const { content } = await ctx.client.download(String(uid), undefined, { uid: true });
+    if (!content) return null;
+    const bytes = await writeSourceStream(content, sourcePath);
+    recordDownloadedBytes(bytes);
+    return bytes;
+  } catch (err) {
+    ctx.log.warn(`full-source fetch failed for uid ${uid}:`, (err as Error).message);
+    await discardSource(sourcePath);
+    return null;
+  }
+}
+
+/**
  * Live-path full-source capture (ROADMAP §3.7.E — the day-one invariant). Streams the
  * complete RFC822 to `<sourceDir>/{account}/{uuid}/source.eml`, charges the bytes to
  * the shared per-day budget, and derives the body by parsing that `.eml`. Returns null
@@ -197,18 +229,28 @@ async function captureFullSource(
   if (!canDownloadSource()) return null;
   const id = randomUUID();
   const sourcePath = sourcePathFor(ctx.accountId, id);
-  try {
-    const { content } = await ctx.client.download(String(msg.uid), undefined, { uid: true });
-    if (!content) return null;
-    const bytes = await writeSourceStream(content, sourcePath);
-    recordDownloadedBytes(bytes);
-    const body = await deriveBodyFromSource(sourcePath);
-    return { id, sourcePath, body };
-  } catch (err) {
-    ctx.log.warn(`full-source capture failed for uid ${msg.uid}:`, (err as Error).message);
-    await discardSource(sourcePath);
-    return null;
-  }
+  const bytes = await streamSourceToDisk(ctx, msg.uid, sourcePath);
+  if (bytes === null) return null;
+  const body = await deriveBodyFromSource(sourcePath);
+  return { id, sourcePath, body };
+}
+
+/**
+ * Upgrade an already-stored (body-only) message to full source: archive its `.eml` under
+ * its existing UUID-partitioned path and set `source_path`. The sweep's hot path on the
+ * cache window, where rows already exist from the body-only bulk sync. Returns true on
+ * success; false on fetch failure (the caller skips this UID and moves on).
+ */
+async function archiveSourceForExisting(
+  ctx: SyncContext,
+  messageId: string,
+  uid: number,
+): Promise<boolean> {
+  const sourcePath = sourcePathFor(ctx.accountId, messageId);
+  const bytes = await streamSourceToDisk(ctx, uid, sourcePath);
+  if (bytes === null) return false;
+  setMessageSourcePath(messageId, sourcePath);
+  return true;
 }
 
 export interface StoreCounts {
@@ -341,4 +383,158 @@ export async function fullSyncFolder(
   // Caught up: future incremental passes fetch only mail at/after UIDNEXT.
   updateFolderSyncState(folder.id, { lastUid: state.uidNext });
   return { insertedIds, updated };
+}
+
+/** Pause between sweep batches so the historical backfill stays gentle on the server. */
+const SWEEP_INTER_BATCH_MS = 1_000;
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface SweepResult {
+  /** Existing body-only rows upgraded to full source this pass. */
+  archived: number;
+  /** Pre-cache-window messages newly inserted with full source this pass. */
+  inserted: number;
+  /** UIDs skipped (already archived, vanished, or a transient fetch failure). */
+  skipped: number;
+  /** True when the folder is archived all the way down to UID 1. */
+  done: boolean;
+  /** True when the pass stopped early because the daily byte budget ran out. */
+  budgetExhausted: boolean;
+}
+
+/**
+ * Resumable, throttled, budgeted full-source sweep (ROADMAP §3.7.E — the historical
+ * backfill). Walks a folder's UIDs from the `oldest_synced_uid` watermark DOWNWARD,
+ * archiving the raw `.eml` for every message that lacks one:
+ *   - a row already exists (body-only) → upgrade it in place (set `source_path`);
+ *   - no row yet (older than the cache window) → fetch + insert with full source.
+ * The watermark advances as each batch lands, so a pass interrupted by restart or
+ * disconnect resumes from where it stopped instead of restarting. Every source byte is
+ * charged to the shared per-day budget (`budget.ts`); when it runs out the pass stops
+ * and resumes after the UTC day rolls — so the provider's ~2.5 GB/day cap is never
+ * breached. Runs over a transient connection (caller's), never the INBOX IDLE one.
+ *
+ * NOTE: the Pipeline Horizon (ROADMAP Phase 4) is not yet built — there is no enrichment
+ * pipeline for a deep backfill to flood — so this sweep is not horizon-gated. When the
+ * pipeline lands, the ingest hook must tier old swept mail (search/analytical only) so a
+ * years-deep backfill can't fire operational side effects.
+ */
+export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Promise<SweepResult> {
+  const empty: SweepResult = {
+    archived: 0,
+    inserted: 0,
+    skipped: 0,
+    done: false,
+    budgetExhausted: false,
+  };
+  // Not yet first-synced: let resync/cron populate the folder before backfilling source.
+  if (folder.uidValidity === null) return empty;
+  if (!canDownloadSource()) return { ...empty, budgetExhausted: true };
+
+  const lock = await ctx.client.getMailboxLock(folder.path);
+  try {
+    const mb = ctx.client.mailbox;
+    if (!mb) throw new Error(`mailbox ${folder.path} did not open`);
+
+    // Process UIDs strictly below the watermark; the first pass starts at the top of
+    // the mailbox (UIDNEXT−1) and re-considers the recent window — cheap, since those
+    // rows are either already archived (skip) or get upgraded in place.
+    const ceiling = (folder.oldestSyncedUid ?? mb.uidNext) - 1;
+    if (ceiling < 1) return { ...empty, done: true };
+
+    const all = ((await ctx.client.search({ all: true }, { uid: true })) || [])
+      .filter((u) => u <= ceiling)
+      .sort((a, b) => b - a); // descending — oldest mail last
+    if (all.length === 0) {
+      updateFolderSyncState(folder.id, { oldestSyncedUid: 1 });
+      return { ...empty, done: true };
+    }
+
+    let archived = 0;
+    let inserted = 0;
+    let skipped = 0;
+    for (let i = 0; i < all.length; i += FETCH_BATCH) {
+      if (!canDownloadSource()) {
+        return { archived, inserted, skipped, done: false, budgetExhausted: true };
+      }
+      const batch = all.slice(i, i + FETCH_BATCH); // descending
+
+      // Drain the fetch fully before any download (imapflow serial-command deadlock rule).
+      const byUid = new Map<number, CapturedMessage>();
+      for await (const msg of ctx.client.fetch(batch, FETCH_QUERY, { uid: true })) {
+        const captured = capture(msg as Exclude<FetchMessage, false>);
+        byUid.set(captured.uid, captured);
+      }
+
+      // `lowestDone` tracks the lowest UID we've fully handled this batch; the watermark
+      // only advances to it, so a mid-batch budget stop never skips unprocessed mail.
+      let lowestDone = ceiling + 1;
+      let budgetStop = false;
+      for (const uid of batch) {
+        const msg = byUid.get(uid);
+        if (!msg) {
+          skipped += 1; // vanished between search and fetch (expunged) — nothing to archive
+          lowestDone = uid;
+          continue;
+        }
+
+        // Dedup by identity first (covers a Gmail message seen across folders), then by
+        // (folder, uid) for messages without a usable Message-ID. A hit means the row
+        // exists; if it already has source we skip, else we upgrade it in place.
+        const gmMsgId = ctx.caps.gmail ? (msg.emailId ?? null) : null;
+        const messageId = msg.envelope?.messageId ?? null;
+        const existingId =
+          findExistingId(ctx.accountId, gmMsgId, messageId) ?? messageIdForUid(folder.id, uid);
+
+        if (existingId) {
+          if (sourcePathForMessage(existingId)) {
+            skipped += 1;
+            lowestDone = uid;
+            continue;
+          }
+          if (!canDownloadSource()) {
+            budgetStop = true;
+            break;
+          }
+          if (await archiveSourceForExisting(ctx, existingId, uid)) archived += 1;
+          else skipped += 1;
+          lowestDone = uid;
+          continue;
+        }
+
+        // Genuinely new (older than the cache window): insert with full source.
+        if (!canDownloadSource()) {
+          budgetStop = true;
+          break;
+        }
+        const cap = await captureFullSource(ctx, msg);
+        if (cap) {
+          const parsed = buildParsedMessage(ctx, msg, cap.body, cap.sourcePath);
+          const result = upsertMessage(ctx.accountId, folder.id, uid, parsed, folder.role, {
+            id: cap.id,
+          });
+          if (result.inserted) inserted += 1;
+          else {
+            await discardSource(cap.sourcePath); // dedup race: row appeared meanwhile
+            skipped += 1;
+          }
+        } else {
+          skipped += 1; // transient fetch failure — skip and let the watermark advance
+        }
+        lowestDone = uid;
+      }
+
+      if (lowestDone <= ceiling) updateFolderSyncState(folder.id, { oldestSyncedUid: lowestDone });
+      if (budgetStop) {
+        return { archived, inserted, skipped, done: false, budgetExhausted: true };
+      }
+      await delay(SWEEP_INTER_BATCH_MS);
+    }
+
+    // Every UID below the ceiling processed → folder archived to the bottom.
+    updateFolderSyncState(folder.id, { oldestSyncedUid: 1 });
+    return { archived, inserted, skipped, done: true, budgetExhausted: false };
+  } finally {
+    lock.release();
+  }
 }

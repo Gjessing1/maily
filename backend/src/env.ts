@@ -82,6 +82,14 @@ export const env = {
   dailyDownloadBudgetBytes: Number(
     optional('MAILY_DAILY_DOWNLOAD_BUDGET_BYTES', String(2_400_000_000)),
   ),
+  /**
+   * Full-source sweep (ROADMAP §3.7.E): the throttled, budgeted historical backfill that
+   * archives raw `.eml` for the backlog. On by default; set `MAILY_SOURCE_SWEEP=false` to
+   * pause it (e.g. to spare the provider's daily IMAP download quota).
+   */
+  sourceSweepEnabled: optional('MAILY_SOURCE_SWEEP', 'true') !== 'false',
+  /** How often each account's sweep driver wakes to do more backfill work. */
+  sourceSweepIntervalMs: Number(optional('MAILY_SOURCE_SWEEP_MS', String(5 * 60_000))),
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),

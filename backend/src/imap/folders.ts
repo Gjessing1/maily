@@ -137,7 +137,13 @@ export function getFolderById(id: string): FolderRow | undefined {
 /** Persist resync bookkeeping for a folder after a sync pass. */
 export function updateFolderSyncState(
   folderId: string,
-  state: { uidValidity?: number; highestModseq?: number | null; lastUid?: number | null },
+  state: {
+    uidValidity?: number;
+    highestModseq?: number | null;
+    lastUid?: number | null;
+    /** Low-watermark of the resumable full-source sweep (ROADMAP §3.7.E). */
+    oldestSyncedUid?: number | null;
+  },
 ): void {
   db.update(folders).set(state).where(eq(folders.id, folderId)).run();
 }
