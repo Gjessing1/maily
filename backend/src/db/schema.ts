@@ -140,6 +140,28 @@ export const pushSubscriptions = sqliteTable('push_subscriptions', {
   createdAt: now(),
 });
 
+/**
+ * Contacts cached from the Radicale CardDAV addressbook (ROADMAP §3.7.D). One row
+ * per (card, email) so an address autocompletes directly; `vcardUid` ties the rows
+ * of a multi-email card together. The whole table is a rebuildable cache of the
+ * remote addressbook — refreshed by a periodic sync, never the source of truth.
+ */
+export const contacts = sqliteTable(
+  'contacts',
+  {
+    id: uuid(),
+    /** Lowercased email address — the autocomplete + sender-enrichment key. */
+    email: text('email').notNull(),
+    /** Formatted name (vCard FN), if the card carries one. */
+    name: text('name'),
+    /** vCard UID — stable per card across syncs; groups a card's multiple emails. */
+    vcardUid: text('vcard_uid'),
+    createdAt: now(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex('contacts_email_uq').on(t.email), index('contacts_name_idx').on(t.name)],
+);
+
 /** Attachment metadata. storagePath is null until the bytes are lazily fetched (ARCHITECTURE §4). */
 export const attachments = sqliteTable(
   'attachments',

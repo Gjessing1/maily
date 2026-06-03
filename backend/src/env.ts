@@ -30,6 +30,25 @@ mkdirSync(dirname(dbPath), { recursive: true });
 mkdirSync(attachmentsDir, { recursive: true });
 mkdirSync(uploadsDir, { recursive: true });
 
+/** Radicale CardDAV config for contacts sync, or null when not configured. */
+function carddavConfig(): {
+  url: string;
+  user: string;
+  password: string;
+  refreshMs: number;
+} | null {
+  const url = process.env.CARDDAV_URL;
+  const user = process.env.CARDDAV_USER;
+  const password = process.env.CARDDAV_PASSWORD;
+  if (!url || !user || !password) return null;
+  return {
+    url,
+    user,
+    password,
+    refreshMs: Number(optional('CARDDAV_REFRESH_MS', String(6 * 60 * 60 * 1000))),
+  };
+}
+
 /** VAPID config for Web Push, or null when not configured (push disabled). */
 function vapidConfig(): { publicKey: string; privateKey: string; subject: string } | null {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -55,4 +74,5 @@ export const env = {
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),
   vapid: vapidConfig,
+  carddav: carddavConfig,
 } as const;

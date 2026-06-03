@@ -13,6 +13,7 @@ import type {
 } from '@maily/shared';
 import type { accounts, folders } from '../db/schema.js';
 import type { AttachmentRow, MessageRow } from '../db/queries.js';
+import { contactNameFor } from '../contacts/store.js';
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
@@ -61,7 +62,8 @@ export function toMessageDto(
     accountId: m.accountId,
     threadId: m.threadId,
     subject: m.subject,
-    fromName: m.fromName,
+    // Fall back to the CardDAV contact name when the message carried no display name.
+    fromName: m.fromName || contactNameFor(m.fromAddress),
     fromAddress: m.fromAddress,
     snippet: m.snippet,
     sentAt: iso(m.sentAt),

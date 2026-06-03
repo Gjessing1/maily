@@ -16,6 +16,8 @@ import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
 import { sweepStaleUploads } from './storage/uploads.js';
+import { startContactsSync } from './contacts/carddav.js';
+import { reloadContactCache } from './contacts/store.js';
 
 const log = createLogger('maily');
 
@@ -51,6 +53,9 @@ async function main(): Promise<void> {
   runMigrations();
   reportBoot();
 
+  // Warm the sender-name enrichment map from any contacts already cached on disk.
+  reloadContactCache();
+
   // Transport layer first so the PWA can authenticate even before mail syncs.
   const app = await buildServer();
   const io = attachSockets(app);
@@ -61,6 +66,9 @@ async function main(): Promise<void> {
 
   // Clear abandoned composer uploads left from previous runs.
   void sweepStaleUploads();
+
+  // Keep the contacts cache fresh from the Radicale addressbook (no-op if unset).
+  startContactsSync();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {

@@ -44,6 +44,7 @@ import { allEngines, getEngine } from '../imap/registry.js';
 import { toAccountDto, toFolderDto, toMessageDetailDto, toMessageDto } from '../http/dto.js';
 import { sendMessage } from '../mail/send.js';
 import { searchMessages } from '../search/search.js';
+import { searchContacts } from '../contacts/store.js';
 import { deleteUpload } from '../storage/uploads.js';
 import { vapidPublicKey } from '../push/webpush.js';
 
@@ -345,6 +346,14 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       );
     },
   );
+
+  // Contact autocomplete for the composer (cached CardDAV addressbook).
+  app.get<{ Querystring: { q?: string; limit?: string } }>('/api/contacts', async (req) => {
+    const q = (req.query.q ?? '').trim();
+    if (!q) return [];
+    const limit = Math.min(Number(req.query.limit ?? 8) || 8, 25);
+    return searchContacts(q, limit);
+  });
 
   // --- Web Push subscription management ---
   app.get('/api/push/key', async () => ({ publicKey: vapidPublicKey() }));

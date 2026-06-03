@@ -6,6 +6,7 @@
 import type {
   AccountDto,
   AccountSyncStatusDto,
+  ContactDto,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -155,6 +156,13 @@ export const api = {
     if (opts.accountId) qs.set('accountId', opts.accountId);
     if (opts.limit) qs.set('limit', String(opts.limit));
     return request<MessageDto[]>(`/api/search?${qs}`);
+  },
+
+  /** Contact autocomplete from the cached CardDAV addressbook. */
+  contacts: (q: string, limit = 8) => {
+    const qs = new URLSearchParams({ q });
+    qs.set('limit', String(limit));
+    return request<ContactDto[]>(`/api/contacts?${qs}`);
   },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),

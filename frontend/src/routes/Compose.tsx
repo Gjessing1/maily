@@ -6,6 +6,7 @@ import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
 import { usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
 import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
@@ -38,9 +39,15 @@ function parseAddrs(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Extract the bare address from a `Name <email>` token (autocomplete inserts these). */
+function addrEmail(token: string): string {
+  const m = /<([^>]+)>/.exec(token);
+  return (m?.[1] ?? token).trim();
+}
+
 /** Pragmatic address shape check — catches typos, not a full RFC 5322 validation. */
 function isValidEmail(addr: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addrEmail(addr));
 }
 
 /**
@@ -335,13 +342,11 @@ export function Compose() {
 
         <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <span className="w-12 text-sm text-faint">To</span>
-          <input
+          <RecipientInput
             value={to}
-            onChange={(e) => setTo(e.target.value)}
-            inputMode="email"
-            autoCapitalize="off"
+            onChange={setTo}
+            ariaLabel="To"
             placeholder="recipient@example.com"
-            className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
           />
           {!showCc && (
             <button onClick={() => setShowCc(true)} className="text-xs text-accent" type="button">
@@ -353,13 +358,7 @@ export function Compose() {
         {showCc && (
           <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
             <span className="w-12 text-sm text-faint">Cc</span>
-            <input
-              value={cc}
-              onChange={(e) => setCc(e.target.value)}
-              inputMode="email"
-              autoCapitalize="off"
-              className="flex-1 bg-transparent text-[15px] outline-none"
-            />
+            <RecipientInput value={cc} onChange={setCc} ariaLabel="Cc" />
           </div>
         )}
 

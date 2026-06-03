@@ -110,6 +110,12 @@ export interface SendMessageRequest {
   uploads?: UploadRef[];
 }
 
+/** A contact from the cached CardDAV addressbook — drives compose autocomplete. */
+export interface ContactDto {
+  name: string | null;
+  email: string;
+}
+
 /** Per-folder cached sync state for the Settings → Sync view. */
 export interface FolderSyncStatusDto {
   id: string;
