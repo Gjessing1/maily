@@ -396,8 +396,8 @@ export function Compose() {
           </label>
         )}
 
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-          <span className="w-12 text-sm text-faint">To</span>
+        <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
+          <span className="w-12 pt-1 text-sm text-faint">To</span>
           <RecipientInput
             value={to}
             onChange={setTo}
@@ -405,15 +405,19 @@ export function Compose() {
             placeholder="recipient@example.com"
           />
           {!showCc && (
-            <button onClick={() => setShowCc(true)} className="text-xs text-accent" type="button">
+            <button
+              onClick={() => setShowCc(true)}
+              className="pt-1 text-xs text-accent"
+              type="button"
+            >
               Cc
             </button>
           )}
         </div>
 
         {showCc && (
-          <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-            <span className="w-12 text-sm text-faint">Cc</span>
+          <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
+            <span className="w-12 pt-1 text-sm text-faint">Cc</span>
             <RecipientInput value={cc} onChange={setCc} ariaLabel="Cc" />
           </div>
         )}
