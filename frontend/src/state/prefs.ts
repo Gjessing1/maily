@@ -48,6 +48,13 @@ export interface Prefs {
   clientCacheDays: number;
   /** Reading-pane placement on wide screens (Gmail-style split). */
   readingPane: ReadingPane;
+  /**
+   * Minimum viewport width (px) for the split reading pane to engage. Below it,
+   * messages open full-screen — so a narrow window (e.g. a laptop with the
+   * browser's vertical tab strip eating horizontal space) isn't forced into a
+   * cramped two-pane layout.
+   */
+  readingPaneMinWidth: number;
   /** Plain-text signature appended to new messages (empty = none). */
   signature: string;
   /** Append the signature automatically when composing. */
@@ -67,6 +74,7 @@ const DEFAULTS: Prefs = {
   swipeLeft: 'delete',
   clientCacheDays: 30,
   readingPane: 'none',
+  readingPaneMinWidth: 1024,
   signature: '',
   signatureEnabled: false,
   hiddenFolderIds: [],

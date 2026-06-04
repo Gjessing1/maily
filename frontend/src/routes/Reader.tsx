@@ -14,6 +14,7 @@ import {
   ArchiveIcon,
   BackIcon,
   ChevronDownIcon,
+  ExpandIcon,
   ForwardIcon,
   MailIcon,
   MailOpenIcon,
@@ -223,6 +224,17 @@ export function ReaderView({
             aria-label="Back"
           >
             <BackIcon />
+          </button>
+        )}
+        {/* In the split pane the message can feel cramped; offer a one-tap jump to the
+            full-screen reader (the list collapses, the message gets the whole width). */}
+        {embedded && id && (
+          <button
+            onClick={() => navigate(`/m/${id}`)}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Open full screen"
+          >
+            <ExpandIcon className="text-fg" />
           </button>
         )}
         <div className="flex-1" />

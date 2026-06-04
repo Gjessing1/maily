@@ -157,7 +157,7 @@ export function Settings() {
   const navigate = useNavigate();
   const accounts = useAccounts();
   const { logout } = useAuth();
-  const { signature } = usePrefs();
+  const { signature, readingPane } = usePrefs();
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
@@ -307,6 +307,18 @@ export function Settings() {
                 { value: 'below', label: 'Below list' },
               ]}
             />
+            {readingPane !== 'none' && (
+              <SelectRow
+                label="Split from"
+                hint="Minimum window width for the split to appear. Narrower windows open messages full-screen — handy when the browser's side tab strip leaves little room."
+                prefKey="readingPaneMinWidth"
+                options={[
+                  { value: 768, label: 'Compact (768)' },
+                  { value: 1024, label: 'Standard (1024)' },
+                  { value: 1280, label: 'Wide (1280)' },
+                ]}
+              />
+            )}
           </div>
         </section>
 

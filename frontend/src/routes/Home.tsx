@@ -43,9 +43,13 @@ export function Home() {
 
   const accounts = useAccounts();
   const prefs = usePrefs();
-  // Split reading pane only engages on wide screens; mobile always opens full-screen.
+  // `isWide` drives the desktop chrome (top menu/search, floating compose) vs the
+  // mobile bottom bar — a fixed phone/non-phone breakpoint. The split reading pane
+  // has its own, configurable threshold so a wide-but-narrow window (browser vertical
+  // tabs) still gets full-screen reading instead of a cramped two-pane layout.
   const isWide = useMediaQuery('(min-width: 768px)');
-  const splitMode = prefs.readingPane !== 'none' && isWide;
+  const splitWide = useMediaQuery(`(min-width: ${prefs.readingPaneMinWidth}px)`);
+  const splitMode = prefs.readingPane !== 'none' && splitWide;
   const folderId = params.get('folder') ?? undefined;
   const selectedId = params.get('msg') ?? undefined;
 
