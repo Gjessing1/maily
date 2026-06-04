@@ -111,22 +111,24 @@ function tryInlineMarkdown(): boolean {
 
 /** Block-level Markdown markers, keyed by the text typed before the triggering Space. */
 function applyBlockMarkdown(marker: string): boolean {
+  // formatBlock's tag arg must be angle-bracketed to work in every engine (Firefox
+  // ignores the bare 'H1' form Chrome tolerates) — pass '<h1>' so #/##/### all apply.
   switch (marker) {
     case '#':
-      exec('formatBlock', 'H1');
+      exec('formatBlock', '<h1>');
       return true;
     case '##':
-      exec('formatBlock', 'H2');
+      exec('formatBlock', '<h2>');
       return true;
     case '###':
-      exec('formatBlock', 'H3');
+      exec('formatBlock', '<h3>');
       return true;
     case '-':
     case '*':
       exec('insertUnorderedList');
       return true;
     case '>':
-      exec('formatBlock', 'BLOCKQUOTE');
+      exec('formatBlock', '<blockquote>');
       return true;
     default:
       if (/^\d+\.$/.test(marker)) {
