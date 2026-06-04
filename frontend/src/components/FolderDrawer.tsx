@@ -1,4 +1,4 @@
-import { useState, type ComponentType, type SVGProps } from 'react';
+import { useRef, useState, type ComponentType, type SVGProps } from 'react';
 import { Link } from 'react-router-dom';
 import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
@@ -156,18 +156,27 @@ function AccountFolders({
   );
 }
 
+/** Past this fraction of the drawer width (on release) the open/close gesture commits. */
+const SWIPE_COMMIT_FRACTION = 0.3;
+
 export function FolderDrawer({
   open,
+  onOpen,
   onClose,
   accounts,
   selectedFolderId,
   onSelect,
+  swipeToOpen = false,
 }: {
   open: boolean;
+  /** Request opening the drawer (edge-swipe gesture). */
+  onOpen?: () => void;
   onClose: () => void;
   accounts: AccountDto[];
   selectedFolderId: string | undefined;
   onSelect: (f: FolderDto) => void;
+  /** Enable the left-edge swipe-to-open affordance (mobile only). */
+  swipeToOpen?: boolean;
 }) {
   const { logout } = useAuth();
   const theme = usePrefs().theme;
@@ -184,15 +193,98 @@ export function FolderDrawer({
       return next;
     });
 
+  // ── Swipe gestures (mobile) ─────────────────────────────────────────────────
+  // `drag` is the live finger offset in px while a gesture is in flight (null =
+  // settled, so the CSS class transition drives the snap). We follow the finger
+  // and commit on release past SWIPE_COMMIT_FRACTION of the measured width.
+  const asideRef = useRef<HTMLElement>(null);
+  const startX = useRef(0);
+  const startY = useRef(0);
+  // Axis lock so a vertical scroll inside the drawer isn't mistaken for a close-swipe.
+  const axis = useRef<'none' | 'h' | 'v'>('none');
+  const dragRef = useRef(0); // mirrors `drag` for the touchend decision (avoids stale state)
+  const [drag, setDrag] = useState<number | null>(null);
+  const width = () => asideRef.current?.offsetWidth ?? 288;
+
+  const setDragBoth = (px: number) => {
+    dragRef.current = px;
+    setDrag(px);
+  };
+
+  function gestureStart(e: React.TouchEvent) {
+    startX.current = e.touches[0]!.clientX;
+    startY.current = e.touches[0]!.clientY;
+    axis.current = 'none';
+    setDragBoth(0);
+  }
+
+  /** Resolve the gesture axis once movement is unambiguous; returns the horizontal delta. */
+  function resolveAxis(e: React.TouchEvent): number {
+    const dx = e.touches[0]!.clientX - startX.current;
+    const dy = e.touches[0]!.clientY - startY.current;
+    if (axis.current === 'none' && Math.abs(dx) + Math.abs(dy) > 8) {
+      axis.current = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    }
+    return dx;
+  }
+
+  // Opening drag: starts in the left-edge catcher, travels right (0…width).
+  function onEdgeMove(e: React.TouchEvent) {
+    const dx = resolveAxis(e);
+    if (axis.current !== 'h') return;
+    setDragBoth(Math.max(0, Math.min(dx, width())));
+  }
+  function onEdgeEnd() {
+    if (dragRef.current > width() * SWIPE_COMMIT_FRACTION) onOpen?.();
+    setDrag(null);
+  }
+
+  // Closing drag: starts on the open drawer, travels left (-width…0).
+  function onDrawerMove(e: React.TouchEvent) {
+    const dx = resolveAxis(e);
+    if (axis.current !== 'h') return;
+    setDragBoth(Math.max(-width(), Math.min(dx, 0)));
+  }
+  function onDrawerEnd() {
+    if (dragRef.current < -width() * SWIPE_COMMIT_FRACTION) onClose();
+    setDrag(null);
+  }
+
+  // While dragging, follow the finger with an inline transform (no transition);
+  // otherwise let the translate class + transition snap to the open/closed rest state.
+  const dragging = drag !== null;
+  const dragStyle = dragging
+    ? {
+        transform: open ? `translateX(${drag}px)` : `translateX(calc(-100% + ${drag}px))`,
+        transition: 'none' as const,
+      }
+    : undefined;
+
   return (
     <>
+      {/* Left-edge catcher: invisible strip that starts the open gesture. Sits clear
+          of the bottom nav bar, and only while the drawer is closed. */}
+      {swipeToOpen && !open && (
+        <div
+          onTouchStart={gestureStart}
+          onTouchMove={onEdgeMove}
+          onTouchEnd={onEdgeEnd}
+          className="fixed bottom-24 left-0 top-0 z-20 w-5"
+          aria-hidden
+        />
+      )}
       <div
         onClick={onClose}
         className={`fixed inset-0 z-20 bg-black/50 transition-opacity ${
-          open ? 'opacity-100' : 'pointer-events-none opacity-0'
+          open || dragging ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       />
       <aside
+        ref={asideRef}
+        onTouchStart={open ? gestureStart : undefined}
+        onTouchMove={open ? onDrawerMove : undefined}
+        onTouchEnd={open ? onDrawerEnd : undefined}
+        style={dragStyle}
         className={`safe-top safe-bottom fixed inset-y-0 left-0 z-30 flex w-72 max-w-[80%] flex-col overflow-y-auto border-r border-border bg-surface no-scrollbar transition-transform duration-200 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}

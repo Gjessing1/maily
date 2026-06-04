@@ -356,10 +356,12 @@ export function Home() {
 
       <FolderDrawer
         open={drawerOpen}
+        onOpen={() => setDrawerOpen(true)}
         onClose={() => setDrawerOpen(false)}
         accounts={accounts ?? []}
         selectedFolderId={folderId}
         onSelect={(f) => setParams({ folder: f.id })}
+        swipeToOpen={!isWide}
       />
 
       {menu &&
