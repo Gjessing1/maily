@@ -138,6 +138,30 @@ export function getAttachment(id: string): AttachmentRow | undefined {
   return db.select().from(attachments).where(eq(attachments.id, id)).get();
 }
 
+/**
+ * Every archived message (id + on-disk `.eml` path), oldest first — the input set for
+ * the offline rebuild (ROADMAP §3.7.E). Un-swept history (null `source_path`) is
+ * skipped: its parsed row is its only copy, so there is nothing to rebuild from.
+ */
+export function messagesWithSource(): { id: string; sourcePath: string }[] {
+  return db
+    .select({ id: messages.id, sourcePath: messages.sourcePath })
+    .from(messages)
+    .where(isNotNull(messages.sourcePath))
+    .orderBy(messages.receivedAt)
+    .all()
+    .filter((r): r is { id: string; sourcePath: string } => r.sourcePath !== null);
+}
+
+/** The owning account of a message — used to build its partitioned on-disk path (§3.7.E). */
+export function accountIdForMessage(messageId: string): string | undefined {
+  return db
+    .select({ accountId: messages.accountId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()?.accountId;
+}
+
 export function markAttachmentDownloaded(id: string, storagePath: string, sizeBytes: number): void {
   db.update(attachments)
     .set({ storagePath, sizeBytes, downloadedAt: new Date() })

@@ -5,13 +5,17 @@
  * path (forwarding re-attaches an existing message's files).
  */
 import { createWriteStream, existsSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import type { AttachmentRow } from '../db/queries.js';
-import { markAttachmentDownloaded, uidLocationForMessage } from '../db/queries.js';
+import {
+  accountIdForMessage,
+  markAttachmentDownloaded,
+  uidLocationForMessage,
+} from '../db/queries.js';
 import { sourcePathForMessage } from '../imap/store.js';
 import { extractPartFromSource } from '../imap/source-extract.js';
 import { withTransientConnection } from '../imap/connection.js';
@@ -29,6 +33,22 @@ const INLINE_EMBED_CAP_BYTES = 500 * 1024;
 const log = createLogger('attachments');
 
 /**
+ * Where a freshly-materialised attachment's bytes get written (ROADMAP §3.7.E).
+ * New files are partitioned `<attachmentsDir>/{account_id}/{message_uuid}/{att.id}`
+ * so a message's attachments sit under the same `{account}/{message}` sub-path as its
+ * source `.eml` (`storage/source.ts`) and orphan-GC can drop a whole message directory.
+ * Existing flat files keep working via their stored `storage_path` (resolver step 1),
+ * so this is applied to new files only — no bulk move on deploy. Falls back to the flat
+ * layout only if the owning account can't be resolved (a dangling attachment row).
+ */
+function materialisePathFor(att: AttachmentRow): string {
+  const accountId = accountIdForMessage(att.messageId);
+  return accountId
+    ? join(env.attachmentsDir, accountId, att.messageId, att.id)
+    : join(env.attachmentsDir, att.id);
+}
+
+/**
  * The single attachment-byte resolver (ROADMAP §3.7.E). Returns the on-disk path of
  * an attachment's bytes, materialising them on demand, by trying in order:
  *   1. **Materialised** — already downloaded and present on disk.
@@ -44,7 +64,7 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   // 1. Already on disk.
   if (att.storagePath && existsSync(att.storagePath)) return att.storagePath;
 
-  const path = join(env.attachmentsDir, att.id);
+  const path = materialisePathFor(att);
 
   // 2. Carve the part out of the cached raw `.eml`, if the message is archived.
   const sourcePath = sourcePathForMessage(att.messageId);
@@ -75,6 +95,7 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   const engine = loc ? getEngine(loc.accountId) : undefined;
   if (!loc || !engine || !att.imapPartId) return null;
 
+  await mkdir(dirname(path), { recursive: true });
   await withTransientConnection(engine.accountConfig, async (client) => {
     const lock = await client.getMailboxLock(loc.folderPath);
     try {

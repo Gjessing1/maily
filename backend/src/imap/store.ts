@@ -17,6 +17,7 @@ import type { FolderRole } from '@maily/shared';
 import { db } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
 import type { MessageFlags, ParsedMessage } from './types.js';
+import type { RebuiltContent } from './source-parse.js';
 
 export interface UpsertResult {
   id: string;
@@ -276,6 +277,33 @@ export function sourcePathForMessage(messageId: string): string | null {
 /** Mark a message as archived: record the on-disk path of its raw `.eml` (ROADMAP §3.7.E). */
 export function setMessageSourcePath(messageId: string, sourcePath: string): void {
   db.update(messages).set({ sourcePath }).where(eq(messages.id, messageId)).run();
+}
+
+/**
+ * Rewrite a message's derived **content** columns from its canonical `.eml` (ROADMAP
+ * §3.7.E rebuild). Touches ONLY fields derivable from RFC822; mailbox-state columns
+ * (flags, `deleted_at`, `received_at`, identity/thread keys) and `message_folders`
+ * are left untouched — they aren't in the source. The FTS index follows automatically
+ * via the messages-table UPDATE trigger (migration 0003), so this is all a full
+ * search-index rebuild needs.
+ */
+export function updateMessageContent(messageId: string, c: RebuiltContent): void {
+  db.update(messages)
+    .set({
+      subject: c.subject,
+      fromName: c.fromName,
+      fromAddress: c.fromAddress,
+      toAddresses: c.to.length ? JSON.stringify(c.to) : null,
+      ccAddresses: c.cc.length ? JSON.stringify(c.cc) : null,
+      inReplyTo: c.inReplyTo,
+      references: c.references,
+      sentAt: c.sentAt,
+      snippet: c.snippet,
+      bodyText: c.bodyText,
+      bodyHtml: c.bodyHtml,
+    })
+    .where(eq(messages.id, messageId))
+    .run();
 }
 
 /** Look up the internal message id owning a given UID in a folder (for flag/expunge events). */
