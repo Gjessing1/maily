@@ -6,6 +6,7 @@
  * a (possibly slow) transient connection. The next folder resync reconciles on failure.
  */
 import type { FastifyInstance } from 'fastify';
+import type { AccountEngine } from '../../imap/engine.js';
 import { emitSignal } from '../../events.js';
 import {
   folderByRole,
@@ -16,6 +17,31 @@ import {
 import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
 import { getEngine } from '../../imap/registry.js';
+
+/**
+ * MOVE a message to a destination folder on the IMAP server over a transient
+ * connection (never the IDLE one), then converge the local mapping onto the
+ * destination so the message stays fetchable. uidMap (source→dest UID) is present
+ * only when the server supports MOVE/COPYUID; null otherwise. Shared by delete
+ * (→ Trash) and archive — the two only differ in the destination folder.
+ */
+async function moveToFolderOnServer(
+  engine: AccountEngine,
+  messageId: string,
+  loc: { folderPath: string; uid: number },
+  dest: { id: string; path: string },
+): Promise<void> {
+  const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
+    const lock = await client.getMailboxLock(loc.folderPath);
+    try {
+      const res = await client.messageMove(String(loc.uid), dest.path, { uid: true });
+      return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
+    } finally {
+      lock.release();
+    }
+  });
+  relinkMessageToFolder(messageId, dest.id, newUid);
+}
 
 export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string }; Body: { seen?: boolean; flagged?: boolean } }>(
@@ -93,25 +119,11 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
         `no trash folder for account ${m.accountId}; message ${m.id} tombstoned locally`,
       );
     } else if (loc && engine && loc.folderPath !== trash.path) {
-      void (async () => {
-        try {
-          const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
-            const lock = await client.getMailboxLock(loc.folderPath);
-            try {
-              const res = await client.messageMove(String(loc.uid), trash.path, { uid: true });
-              // uidMap (source→dest UID) is present when the server supports MOVE/COPYUID.
-              return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
-            } finally {
-              lock.release();
-            }
-          });
-          // Converge the local mapping onto Trash so the message stays fetchable; the
-          // tombstone is preserved (Trash re-sights never clear it — see store.ts).
-          relinkMessageToFolder(m.id, trash.id, newUid);
-        } catch (err) {
-          app.log.warn(`trash move failed for ${m.id}: ${(err as Error).message}`);
-        }
-      })();
+      // The tombstone is preserved across the move (Trash re-sights never clear it —
+      // see store.ts), so converging the mapping onto Trash keeps the row fetchable.
+      void moveToFolderOnServer(engine, m.id, loc, trash).catch((err: Error) =>
+        app.log.warn(`trash move failed for ${m.id}: ${err.message}`),
+      );
     }
 
     return { ok: true };
@@ -139,22 +151,9 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     // under load; the next inbox resync reconciles if the move fails.
     const engine = getEngine(m.accountId);
     if (engine) {
-      void (async () => {
-        try {
-          const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
-            const lock = await client.getMailboxLock(loc.folderPath);
-            try {
-              const res = await client.messageMove(String(loc.uid), archive.path, { uid: true });
-              return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
-            } finally {
-              lock.release();
-            }
-          });
-          relinkMessageToFolder(m.id, archive.id, newUid);
-        } catch (err) {
-          app.log.warn(`archive move failed for ${m.id}: ${(err as Error).message}`);
-        }
-      })();
+      void moveToFolderOnServer(engine, m.id, loc, archive).catch((err: Error) =>
+        app.log.warn(`archive move failed for ${m.id}: ${err.message}`),
+      );
     }
 
     return { ok: true };

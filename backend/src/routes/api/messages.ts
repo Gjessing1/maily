@@ -10,6 +10,7 @@ import {
   getMessage,
   listArchived,
   listMessages,
+  type MessageRow,
 } from '../../db/queries.js';
 import { embedInlineImages } from '../../storage/attachments.js';
 import { toMessageDetailDto, toMessageDto } from '../../http/dto.js';
@@ -17,16 +18,27 @@ import { searchMessages } from '../../search/search.js';
 
 const MAX_PAGE = 200;
 
+/** Parse the shared list pagination query: a capped `limit` (default 50) + `before` cursor (ms). */
+function pageParams(query: { limit?: string; before?: string }): {
+  limit: number;
+  before?: number;
+} {
+  return {
+    limit: Math.min(Number(query.limit ?? 50) || 50, MAX_PAGE),
+    before: query.before ? Number(query.before) : undefined,
+  };
+}
+
+/** Shape a row list to MessageDto, attaching each message's folder ids + attachments. */
+const toListDtos = (rows: MessageRow[]) =>
+  rows.map((m) => toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)));
+
 export async function messageRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { folderId: string }; Querystring: { limit?: string; before?: string } }>(
     '/api/folders/:folderId/messages',
     async (req) => {
-      const limit = Math.min(Number(req.query.limit ?? 50) || 50, MAX_PAGE);
-      const before = req.query.before ? Number(req.query.before) : undefined;
-      const rows = listMessages(req.params.folderId, limit, before);
-      return rows.map((m) =>
-        toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)),
-      );
+      const { limit, before } = pageParams(req.query);
+      return toListDtos(listMessages(req.params.folderId, limit, before));
     },
   );
 
@@ -35,12 +47,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { accountId: string }; Querystring: { limit?: string; before?: string } }>(
     '/api/accounts/:accountId/archived',
     async (req) => {
-      const limit = Math.min(Number(req.query.limit ?? 50) || 50, MAX_PAGE);
-      const before = req.query.before ? Number(req.query.before) : undefined;
-      const rows = listArchived(req.params.accountId, limit, before);
-      return rows.map((m) =>
-        toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)),
-      );
+      const { limit, before } = pageParams(req.query);
+      return toListDtos(listArchived(req.params.accountId, limit, before));
     },
   );
 
@@ -66,11 +74,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const q = (req.query.q ?? '').trim();
       if (!q) return [];
-      const limit = Math.min(Number(req.query.limit ?? 50) || 50, MAX_PAGE);
-      const rows = await searchMessages(q, { limit, accountId: req.query.accountId });
-      return rows.map((m) =>
-        toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)),
-      );
+      const { limit } = pageParams(req.query);
+      return toListDtos(await searchMessages(q, { limit, accountId: req.query.accountId }));
     },
   );
 }
