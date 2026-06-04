@@ -19,10 +19,10 @@ import { parentPort } from 'node:worker_threads';
 import type { AccountConfig } from '../config/accounts.js';
 import { loadAccountConfigs } from '../config/accounts.js';
 import { createLogger } from '../logger.js';
-import { createClient, detectCapabilities } from '../imap/connection.js';
+import { createClient } from '../imap/connection.js';
 import { budgetRemaining, canDownloadSource } from '../imap/budget.js';
 import { getFolderById, syncFolders } from '../imap/folders.js';
-import { sweepFolderSource, type SyncContext } from '../imap/sync.js';
+import { sweepFolderSource, syncContext } from '../imap/sync.js';
 import type { MainToWorker, SweepJob, WorkerToMain } from './protocol.js';
 
 const log = createLogger('worker');
@@ -58,8 +58,7 @@ async function runSweep(job: SweepJob): Promise<void> {
   const client = createClient(config);
   try {
     await client.connect();
-    const caps = detectCapabilities(client);
-    const ctx: SyncContext = { client, accountId: job.accountId, caps, log: accountLog };
+    const ctx = syncContext(client, job.accountId, accountLog);
     const folders = await syncFolders(client, job.accountId);
     for (const folder of folders) {
       if (!canDownloadSource()) break;

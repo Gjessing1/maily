@@ -7,10 +7,10 @@
 import { listFolders, type MessageRow } from '../db/queries.js';
 import { searchLocal } from './local.js';
 import { createLogger } from '../logger.js';
-import { detectCapabilities, withTransientConnection } from '../imap/connection.js';
+import { withTransientConnection } from '../imap/connection.js';
 import type { FolderRow } from '../imap/folders.js';
 import { getEngine } from '../imap/registry.js';
-import { fetchAndStore, type SyncContext } from '../imap/sync.js';
+import { fetchAndStore, syncContext } from '../imap/sync.js';
 
 const log = createLogger('search');
 
@@ -47,12 +47,7 @@ export async function searchMessages(query: string, opts: SearchOptions): Promis
     await withTransientConnection(engine.accountConfig, async (client) => {
       const lock = await client.getMailboxLock(folder.path);
       try {
-        const ctx: SyncContext = {
-          client,
-          accountId,
-          caps: detectCapabilities(client),
-          log,
-        };
+        const ctx = syncContext(client, accountId, log);
         // IMAP TEXT search covers headers + body; ingest the most recent matches.
         const found = (await client.search({ text: query }, { uid: true })) || [];
         const uids = found.slice(-FALLBACK_MAX);

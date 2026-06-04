@@ -20,7 +20,7 @@ import { canDownloadSource } from './budget.js';
 import { getFolderById, syncFolders } from './folders.js';
 import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
-import { type SyncContext } from './sync.js';
+import { syncContext, type SyncContext } from './sync.js';
 import { enqueueSweep } from '../worker/host.js';
 
 const INITIAL_BACKOFF_MS = 2_000;
@@ -98,7 +98,8 @@ export class AccountEngine {
   }
 
   private ctx(client: ImapFlow): SyncContext {
-    return { client, accountId: this.account!.id, caps: this.caps, log: this.log };
+    // Persistent INBOX connection: reuse the caps detected on connect.
+    return syncContext(client, this.account!.id, this.log, this.caps);
   }
 
   private async connect(): Promise<void> {
@@ -213,8 +214,8 @@ export class AccountEngine {
     const client = createClient(this.config);
     try {
       await client.connect();
-      const caps = detectCapabilities(client);
-      const ctx: SyncContext = { client, accountId: this.account.id, caps, log: this.log };
+      // Transient cron connection: detect caps fresh (factory default).
+      const ctx = syncContext(client, this.account.id, this.log);
       const folders = await syncFolders(client, this.account.id);
       for (const folder of folders) {
         if (folder.role === 'inbox') continue;

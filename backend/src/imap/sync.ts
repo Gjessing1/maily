@@ -10,9 +10,9 @@
 import { randomUUID } from 'node:crypto';
 import type { FetchQueryObject, ImapFlow } from 'imapflow';
 import type { Logger } from '../logger.js';
-import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type { CapturedMessage, FetchMessage } from './message-shape.js';
+import { type Capabilities, detectCapabilities } from './connection.js';
 import { env } from '../env.js';
 import { canDownloadSource, recordDownloadedBytes } from './budget.js';
 import { deriveBodyFromSource } from './source-parse.js';
@@ -43,6 +43,22 @@ export interface SyncContext {
   log: Logger;
 }
 
+/**
+ * Build a SyncContext for a connected client. `caps` defaults to detecting the live
+ * connection's capabilities — the right thing for a transient connection (cron,
+ * worker sweep, search fallback). The persistent INBOX engine passes the caps it
+ * already detected on connect to avoid re-probing. The single constructor keeps the
+ * context's shape in one place instead of being hand-assembled at each call site.
+ */
+export function syncContext(
+  client: ImapFlow,
+  accountId: string,
+  log: Logger,
+  caps: Capabilities = detectCapabilities(client),
+): SyncContext {
+  return { client, accountId, caps, log };
+}
+
 /** The FETCH query shape we use everywhere — header-and-structure only, no source. */
 const FETCH_QUERY: FetchQueryObject = {
   uid: true,
@@ -54,6 +70,26 @@ const FETCH_QUERY: FetchQueryObject = {
   threadId: true,
   headers: ['references'],
 };
+
+/**
+ * Drain an entire FETCH response into `CapturedMessage`s BEFORE returning, so the
+ * caller is free to issue further IMAP commands (body/source downloads).
+ *
+ * THE DEADLOCK RULE (was an ordering comment repeated at each call site): imapflow
+ * runs commands serially over one connection. Issuing a `download()` — or any
+ * command — while a `fetch()` async-iterator is still mid-stream deadlocks: the new
+ * command queues behind the fetch, and the fetch can't drain because we're awaiting
+ * the queued command. Every fetch-then-download path MUST fully consume the fetch
+ * first. Routing those paths through this helper makes the rule an explicit,
+ * enforced contract rather than a convention.
+ */
+export async function drainFetch(ctx: SyncContext, uids: number[]): Promise<CapturedMessage[]> {
+  const captured: CapturedMessage[] = [];
+  for await (const msg of ctx.client.fetch(uids, FETCH_QUERY, { uid: true })) {
+    captured.push(capture(msg as Exclude<FetchMessage, false>));
+  }
+  return captured;
+}
 
 async function streamToString(
   stream: NodeJS.ReadableStream,
@@ -198,10 +234,7 @@ export async function fetchAndStore(
     const batch = uids.slice(i, i + FETCH_BATCH);
 
     // Phase 1: drain the fetch fully (no other IMAP command may run mid-stream).
-    const captured: CapturedMessage[] = [];
-    for await (const msg of ctx.client.fetch(batch, FETCH_QUERY, { uid: true })) {
-      captured.push(capture(msg as Exclude<FetchMessage, false>));
-    }
+    const captured = await drainFetch(ctx, batch);
 
     // Phase 2: connection is free now — persist. Dedup FIRST using identity from
     // the envelope (gm_msgid / message_id, already in hand), and only acquire the
@@ -378,10 +411,7 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
 
       // Drain the fetch fully before any download (imapflow serial-command deadlock rule).
       const byUid = new Map<number, CapturedMessage>();
-      for await (const msg of ctx.client.fetch(batch, FETCH_QUERY, { uid: true })) {
-        const captured = capture(msg as Exclude<FetchMessage, false>);
-        byUid.set(captured.uid, captured);
-      }
+      for (const msg of await drainFetch(ctx, batch)) byUid.set(msg.uid, msg);
 
       // `lowestDone` tracks the lowest UID we've fully handled this batch; the watermark
       // only advances to it, so a mid-batch budget stop never skips unprocessed mail.
