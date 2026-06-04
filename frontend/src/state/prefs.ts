@@ -61,6 +61,11 @@ export interface Prefs {
   signatureEnabled: boolean;
   /** Folder/label ids the user has hidden from the drawer (e.g. Gmail's "Important"). */
   hiddenFolderIds: string[];
+  /**
+   * Sender domains whose remote images load automatically even when blocking is on
+   * (e.g. "github.com"). Lowercased host part of the From address. Empty = trust none.
+   */
+  trustedImageDomains: string[];
 }
 
 const DEFAULTS: Prefs = {
@@ -78,6 +83,7 @@ const DEFAULTS: Prefs = {
   signature: '',
   signatureEnabled: false,
   hiddenFolderIds: [],
+  trustedImageDomains: [],
 };
 
 const KEY = 'maily.prefs';

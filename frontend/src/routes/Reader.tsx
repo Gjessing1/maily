@@ -5,6 +5,7 @@ import { patchCachedFlags, removeCachedMessage } from '../db/cache';
 import { requestDelete } from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
+import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
@@ -55,7 +56,7 @@ export function ReaderView({
   const navigate = useNavigate();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
-  const { blockRemoteImages, markReadSeconds } = usePrefs();
+  const { blockRemoteImages, markReadSeconds, trustedImageDomains } = usePrefs();
   const [flagged, setFlagged] = useState(false);
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
@@ -199,10 +200,15 @@ export function ReaderView({
 
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
-  const allowImages = !blockRemoteImages || showImages;
+  // A trusted sender domain bypasses blocking automatically; otherwise the per-message
+  // "Show images" override applies.
+  const senderTrusted = isImageDomainTrusted(detail?.fromAddress, trustedImageDomains);
+  const trustDomain = senderDomain(detail?.fromAddress);
+  const allowImages = !blockRemoteImages || showImages || senderTrusted;
   const imagesBlocked =
     blockRemoteImages &&
     !showImages &&
+    !senderTrusted &&
     Boolean(detail?.bodyHtml && hasRemoteImages(detail.bodyHtml));
 
   // Embedded split pane with nothing selected yet → invitation placeholder.
@@ -356,14 +362,24 @@ export function ReaderView({
 
             <div className="border-t border-border">
               {imagesBlocked && (
-                <div className="flex items-center justify-between gap-3 bg-surface px-4 py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-surface px-4 py-2 text-sm">
                   <span className="text-muted">Remote images blocked for privacy.</span>
-                  <button
-                    onClick={() => setShowImages(true)}
-                    className="shrink-0 font-medium text-accent active:opacity-70"
-                  >
-                    Show images
-                  </button>
+                  <div className="flex shrink-0 items-center gap-4">
+                    {trustDomain && (
+                      <button
+                        onClick={() => trustImageDomain(trustDomain)}
+                        className="font-medium text-accent active:opacity-70"
+                      >
+                        Always trust {trustDomain}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowImages(true)}
+                      className="font-medium text-accent active:opacity-70"
+                    >
+                      Show images
+                    </button>
+                  </div>
                 </div>
               )}
               {detail.bodyHtml ? (

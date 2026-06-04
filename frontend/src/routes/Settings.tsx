@@ -7,8 +7,9 @@ import { useAuth } from '../state/auth';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
+import { untrustImageDomain } from '../state/trustedImages';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { BackIcon } from '../ui/icons';
+import { BackIcon, CloseIcon } from '../ui/icons';
 
 /** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
 function windowLabel(days: number): string {
@@ -117,6 +118,32 @@ function Switch({ on }: { on: boolean }) {
         className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
       />
     </span>
+  );
+}
+
+/** Removable chips for sender domains whose remote images load automatically.
+ * Only rendered when the list is non-empty; entries are added from the reader's
+ * "Always trust …" action on the blocked-images bar. */
+function TrustedImageDomains() {
+  const domains = usePrefs().trustedImageDomains;
+  if (domains.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3">
+      <span className="text-[15px]">Trusted image senders</span>
+      <div className="flex flex-wrap gap-1.5">
+        {domains.map((d) => (
+          <button
+            key={d}
+            onClick={() => untrustImageDomain(d)}
+            className="flex items-center gap-1.5 rounded-full bg-surface-2 py-1.5 pl-3 pr-2 text-sm text-fg active:bg-surface-3"
+            aria-label={`Stop trusting ${d}`}
+          >
+            <span className="truncate">{d}</span>
+            <CloseIcon className="size-4 shrink-0 text-faint" />
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -271,9 +298,10 @@ export function Settings() {
           <div className="border-y border-border">
             <ToggleRow
               label="Block remote images"
-              hint="Hide tracking pixels until you tap “Show images” on a message."
+              hint="Hide tracking pixels until you tap “Show images” on a message. Trusted senders load automatically."
               prefKey="blockRemoteImages"
             />
+            <TrustedImageDomains />
             <ToggleRow
               label="Unread at top"
               hint="Float unread messages above read ones in lists."
