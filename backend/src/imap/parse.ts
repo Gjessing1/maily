@@ -106,7 +106,7 @@ export function flagsFromSet(flags: Set<string> | undefined): MessageFlags {
 }
 
 /** Very light HTML→text for snippet/fallback use (not a full sanitizer). */
-export function htmlToText(html: string): string {
+function htmlToText(html: string): string {
   return html
     .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')

@@ -4,7 +4,7 @@
  * §4), these are user-provided files we hold briefly on disk until the message is
  * sent, then delete. Bytes are streamed to disk on upload, never buffered.
  */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '../env.js';
@@ -54,9 +54,4 @@ export async function sweepStaleUploads(): Promise<void> {
   } catch (err) {
     log.warn('upload sweep failed:', (err as Error).message);
   }
-}
-
-/** A readable stream of a staged upload's bytes (caller pipes / consumes). */
-export function readUpload(path: string): NodeJS.ReadableStream {
-  return createReadStream(path);
 }

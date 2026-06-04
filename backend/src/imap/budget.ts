@@ -81,8 +81,3 @@ export function recordDownloadedBytes(bytes: number): void {
     writeState({ day: state.day, spent: state.spent + bytes });
   });
 }
-
-/** Bytes spent so far today — for observability / logging. */
-export function budgetSpent(): number {
-  return readState().spent;
-}

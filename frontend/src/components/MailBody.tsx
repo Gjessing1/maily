@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTheme } from '../state/theme';
+import { useTheme, type ResolvedTheme } from '../state/theme';
 
 /** True if the HTML references a remote (http/https) image or CSS background url(). */
 export function hasRemoteImages(html: string): boolean {
@@ -14,25 +14,31 @@ export function hasRemoteImages(html: string): boolean {
  * 'about:srcdoc'" warning for every script it refuses to run. Stripping them up
  * front keeps that out of the console and is harmless defence in depth.
  */
-function stripScripts(html: string): string {
+export function stripScripts(html: string): string {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/<script\b[^>]*\/>/gi, '');
 }
 
 /**
- * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
- * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
- * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
- * `allowImages` is false, blocks remote image/media loads (tracking pixels) while
- * still permitting inline `data:` images (e.g. embedded CID art). Height is measured
- * from the same-origin srcdoc document and the iframe grows to fit (no inner scrollbars).
+ * The Content-Security-Policy meta value used inside the message iframe. `default-src
+ * 'none'` blocks scripts/fetch/frames outright (defence in depth on top of the
+ * sandbox); inline styles are allowed so sender CSS still renders. Remote images/media
+ * are gated by `allowImages` — `data:` is ALWAYS permitted (inline CID art), so when
+ * images are blocked only network loads (tracking pixels) are stopped.
  */
-export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
-  const ref = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
-  const theme = useTheme();
+export function messageCsp(allowImages: boolean): string {
+  const remote = allowImages ? 'data: https: http:' : 'data:';
+  return `default-src 'none'; img-src ${remote}; media-src ${remote}; style-src 'unsafe-inline'; font-src data: https: http:;`;
+}
 
+/**
+ * Build the sandboxed-iframe `srcdoc` for a piece of sender HTML: a hardening CSP
+ * meta, theme-matched base colours (the sandbox blocks app CSS from leaking in), and
+ * the script-stripped body. Pure so the sanitisation contract is unit-testable
+ * without rendering the iframe.
+ */
+export function buildMailSrcDoc(html: string, allowImages: boolean, theme: ResolvedTheme): string {
   // The iframe is sandboxed (no app CSS leaks in), so its base colours are inlined
   // here per theme rather than via tokens. Emails carrying their own palette still
   // win; this only styles the surrounding page + unstyled/plaintext-ish bodies.
@@ -40,15 +46,8 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
   const pageFg = theme === 'light' ? '#18181f' : '#f4f4f6';
   const linkFg = theme === 'light' ? '#4a48d0' : '#8b8aff';
 
-  // default-src 'none' blocks scripts/fetch/frames outright (defence in depth on top
-  // of the sandbox); inline styles are allowed so sender CSS still renders. Remote
-  // images are gated by allowImages — data: is always permitted for inline art.
-  const imgSrc = allowImages ? 'data: https: http:' : 'data:';
-  const mediaSrc = allowImages ? 'data: https: http:' : 'data:';
-  const csp = `default-src 'none'; img-src ${imgSrc}; media-src ${mediaSrc}; style-src 'unsafe-inline'; font-src data: https: http:;`;
-
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${csp}">
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${messageCsp(allowImages)}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>
@@ -64,6 +63,22 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
      inline max-width on the table out-specifies this element rule and wins. */
   table { max-width:100%; }
 </style></head><body>${stripScripts(html)}</body></html>`;
+}
+
+/**
+ * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
+ * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
+ * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
+ * `allowImages` is false, blocks remote image/media loads (tracking pixels) while
+ * still permitting inline `data:` images (e.g. embedded CID art). Height is measured
+ * from the same-origin srcdoc document and the iframe grows to fit (no inner scrollbars).
+ */
+export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(200);
+  const theme = useTheme();
+
+  const srcDoc = buildMailSrcDoc(html, allowImages, theme);
 
   useEffect(() => {
     const iframe = ref.current;

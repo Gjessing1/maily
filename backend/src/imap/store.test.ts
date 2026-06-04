@@ -411,3 +411,182 @@ test('relinkMessageToFolder replaces ALL mappings with the single destination', 
     .all();
   assert.deepEqual(links, [{ folderId: folder('trash'), uid: 3 }]);
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5b — broaden direct store coverage beyond the Phase-1 net:
+// attachment metadata, the source-path round-trip, the rebuild content rewrite
+// (state preserved), and the UID-mapping read/clear helpers.
+// ---------------------------------------------------------------------------
+
+test('upsert persists attachment metadata rows alongside the inserted message', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const parsed = makeParsed({
+    messageId: '<att@example.com>',
+    attachments: [
+      {
+        filename: 'invoice.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 12_345,
+        imapPartId: '2',
+        partOrdinal: 1,
+        contentId: null,
+        isInline: false,
+      },
+      {
+        filename: null,
+        mimeType: 'image/png',
+        sizeBytes: 64,
+        imapPartId: '3',
+        partOrdinal: 2,
+        contentId: '<logo@cid>',
+        isInline: true,
+      },
+    ],
+  });
+
+  const r = store.upsertMessage(accountId, folder('inbox'), 1, parsed, 'inbox');
+  const rows = rawDb
+    .select({
+      filename: schema.attachments.filename,
+      contentId: schema.attachments.contentId,
+      isInline: schema.attachments.isInline,
+      partOrdinal: schema.attachments.partOrdinal,
+    })
+    .from(schema.attachments)
+    .where(eq(schema.attachments.messageId, r.id))
+    .all();
+
+  assert.equal(rows.length, 2);
+  const pdf = rows.find((a) => a.filename === 'invoice.pdf');
+  assert.equal(pdf?.isInline, false);
+  const inline = rows.find((a) => a.contentId === '<logo@cid>');
+  assert.equal(inline?.isInline, true);
+  assert.equal(inline?.partOrdinal, 2);
+});
+
+test('setMessageSourcePath / sourcePathForMessage round-trip (null until set)', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const r = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    1,
+    makeParsed({ messageId: '<src@example.com>' }),
+    'inbox',
+  );
+
+  assert.equal(store.sourcePathForMessage(r.id), null, 'body-only row has no source yet');
+
+  const path = `/srv/${r.id}/source.eml`;
+  store.setMessageSourcePath(r.id, path);
+  assert.equal(store.sourcePathForMessage(r.id), path);
+});
+
+test('updateMessageContent rewrites derived columns but leaves flags + folder mapping intact', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const r = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    7,
+    makeParsed({
+      messageId: '<rebuild@example.com>',
+      subject: 'OLD subject',
+      bodyText: 'OLD body',
+      flags: { seen: true, flagged: true, answered: false, draft: false },
+    }),
+    'inbox',
+  );
+
+  store.updateMessageContent(r.id, {
+    subject: 'NEW subject',
+    fromName: 'Rebuilt Sender',
+    fromAddress: 'rebuilt@example.com',
+    to: [{ name: 'Bob', address: 'bob@example.com' }],
+    cc: [],
+    inReplyTo: null,
+    references: null,
+    sentAt: new Date('2025-01-02T03:04:05Z'),
+    bodyText: 'NEW body',
+    bodyHtml: '<p>NEW</p>',
+    snippet: 'NEW snippet',
+  });
+
+  const row = rawDb
+    .select({
+      subject: schema.messages.subject,
+      bodyText: schema.messages.bodyText,
+      bodyHtml: schema.messages.bodyHtml,
+      toAddresses: schema.messages.toAddresses,
+      seen: schema.messages.seen,
+      flagged: schema.messages.flagged,
+    })
+    .from(schema.messages)
+    .where(eq(schema.messages.id, r.id))
+    .get();
+
+  assert.equal(row?.subject, 'NEW subject', 'content column rewritten');
+  assert.equal(row?.bodyText, 'NEW body');
+  assert.equal(row?.bodyHtml, '<p>NEW</p>');
+  assert.equal(row?.toAddresses, JSON.stringify([{ name: 'Bob', address: 'bob@example.com' }]));
+  assert.equal(row?.seen, true, 'mailbox state (flags) untouched by a content rebuild');
+  assert.equal(row?.flagged, true);
+
+  // Folder mapping (UID 7 in inbox) is not derived from RFC822, so it survives.
+  assert.equal(store.messageIdForUid(folder('inbox'), 7), r.id);
+});
+
+test('knownUids / messageIdForUid reflect the folder mappings; clearFolderUids drops them all', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const a = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    11,
+    makeParsed({ messageId: '<a@example.com>' }),
+    'inbox',
+  );
+  store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    22,
+    makeParsed({ messageId: '<b@example.com>' }),
+    'inbox',
+  );
+
+  assert.deepEqual(
+    store.knownUids(folder('inbox')).sort((x, y) => x - y),
+    [11, 22],
+  );
+  assert.equal(store.messageIdForUid(folder('inbox'), 11), a.id);
+  assert.equal(store.messageIdForUid(folder('inbox'), 999), undefined, 'unknown UID → undefined');
+
+  store.clearFolderUids(folder('inbox'));
+  assert.deepEqual(store.knownUids(folder('inbox')), [], 'all UID mappings cleared');
+  // The message rows themselves survive a UID-mapping clear (UIDVALIDITY rebuild).
+  assert.ok(
+    rawDb.select().from(schema.messages).where(eq(schema.messages.id, a.id)).get(),
+    'clearing UID mappings does not delete the message row',
+  );
+});
+
+test('updateMessageFlags writes the four IMAP flags onto the row', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const r = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    1,
+    makeParsed({ messageId: '<flags@example.com>' }),
+    'inbox',
+  );
+
+  store.updateMessageFlags(r.id, { seen: true, flagged: true, answered: true, draft: false });
+  const row = rawDb
+    .select({
+      seen: schema.messages.seen,
+      flagged: schema.messages.flagged,
+      answered: schema.messages.answered,
+      draft: schema.messages.draft,
+    })
+    .from(schema.messages)
+    .where(eq(schema.messages.id, r.id))
+    .get();
+  assert.deepEqual(row, { seen: true, flagged: true, answered: true, draft: false });
+});
