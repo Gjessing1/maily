@@ -192,7 +192,9 @@ test('GET /api/folders/:folderId/messages returns message DTOs, newest first, li
 test('GET /api/messages/:id returns the detail DTO; unknown id is 404', async () => {
   const accountId = seedAccount();
   const folderId = seedFolder(accountId, 'inbox');
-  const id = seedMessage(accountId, folderId, 'inbox', { cc: [{ name: null, address: 'c@x.com' }] });
+  const id = seedMessage(accountId, folderId, 'inbox', {
+    cc: [{ name: null, address: 'c@x.com' }],
+  });
 
   const res = await get(`/api/messages/${id}`);
   assert.equal(res.statusCode, 200);

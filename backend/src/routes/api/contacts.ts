@@ -8,7 +8,10 @@ import { getCardByKey, listCards, searchContacts } from '../../contacts/store.js
 import { CardDavError, createCard, deleteCard, updateCard } from '../../contacts/carddav.js';
 
 /** Clean a create/update payload into a name + a deduped list of trimmed emails. */
-function normalizeCard(body: ContactCardInput | undefined): { name: string | null; emails: string[] } {
+function normalizeCard(body: ContactCardInput | undefined): {
+  name: string | null;
+  emails: string[];
+} {
   const name = body?.name?.trim() || null;
   const seen = new Set<string>();
   const emails: string[] = [];
