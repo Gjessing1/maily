@@ -94,7 +94,9 @@ type FetchMessage = Awaited<ReturnType<ImapFlow['fetchOne']>>;
  * can't finish because we're awaiting the download) until the socket times out.
  * So we snapshot the plain fields here, let the iterator complete, then download.
  */
-interface CapturedMessage {
+// Exported for the characterization net (sync.test.ts): the field snapshot + the pure
+// envelope→ParsedMessage transform below are testable without a live IMAP connection.
+export interface CapturedMessage {
   uid: number;
   envelope: Exclude<FetchMessage, false>['envelope'];
   bodyStructure: Exclude<FetchMessage, false>['bodyStructure'];
@@ -124,7 +126,7 @@ function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
  * `part_ordinal` is identical on the live and bulk paths; only the text bodies vary
  * by source (downloaded parts on bulk, parsed from the `.eml` on live).
  */
-function buildParsedMessage(
+export function buildParsedMessage(
   ctx: SyncContext,
   msg: CapturedMessage,
   body: { bodyText: string | null; bodyHtml: string | null },
