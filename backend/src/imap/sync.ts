@@ -12,13 +12,14 @@ import type { FetchQueryObject, ImapFlow } from 'imapflow';
 import type { Logger } from '../logger.js';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
-import type { ParsedMessage } from './types.js';
+import type { CapturedMessage, FetchMessage } from './message-shape.js';
 import { env } from '../env.js';
 import { canDownloadSource, recordDownloadedBytes } from './budget.js';
 import { deriveBodyFromSource } from './source-parse.js';
 import { discardSource, sourcePathFor, writeSourceStream } from '../storage/source.js';
 import { updateFolderSyncState } from './folders.js';
-import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
+import { extractStructure, flagsFromSet } from './parse.js';
+import { buildParsedMessage, capture } from './message-shape.js';
 import {
   findExistingId,
   messageIdForUid,
@@ -82,92 +83,6 @@ async function downloadTextPart(
     ctx.log.warn(`failed to download part ${part} of uid ${uid}:`, (err as Error).message);
     return null;
   }
-}
-
-type FetchMessage = Awaited<ReturnType<ImapFlow['fetchOne']>>;
-
-/**
- * The subset of a fetched message we keep in memory. We MUST fully drain the
- * `fetch()` iterator before issuing any `download()` calls: imapflow runs IMAP
- * commands serially, so a `download()` invoked while a `fetch()` response is
- * still streaming deadlocks (the download queues behind the fetch, the fetch
- * can't finish because we're awaiting the download) until the socket times out.
- * So we snapshot the plain fields here, let the iterator complete, then download.
- */
-// Exported for the characterization net (sync.test.ts): the field snapshot + the pure
-// envelope→ParsedMessage transform below are testable without a live IMAP connection.
-export interface CapturedMessage {
-  uid: number;
-  envelope: Exclude<FetchMessage, false>['envelope'];
-  bodyStructure: Exclude<FetchMessage, false>['bodyStructure'];
-  internalDate: Exclude<FetchMessage, false>['internalDate'];
-  flags: Set<string> | undefined;
-  headers: Buffer | undefined;
-  emailId: string | undefined;
-  threadId: string | undefined;
-}
-
-function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
-  return {
-    uid: msg.uid,
-    envelope: msg.envelope,
-    bodyStructure: msg.bodyStructure,
-    internalDate: msg.internalDate,
-    flags: msg.flags,
-    headers: msg.headers,
-    emailId: msg.emailId,
-    threadId: msg.threadId,
-  };
-}
-
-/**
- * Assemble a ParsedMessage from a captured message + a supplied body. Attachment
- * metadata is always derived from the IMAP BODYSTRUCTURE (`extractStructure`) so
- * `part_ordinal` is identical on the live and bulk paths; only the text bodies vary
- * by source (downloaded parts on bulk, parsed from the `.eml` on live).
- */
-export function buildParsedMessage(
-  ctx: SyncContext,
-  msg: CapturedMessage,
-  body: { bodyText: string | null; bodyHtml: string | null },
-  sourcePath: string | null,
-): ParsedMessage {
-  const structure = extractStructure(msg.bodyStructure);
-  const envelope = msg.envelope;
-  const from = envelope?.from?.[0];
-  const mapAddrs = (
-    list: NonNullable<typeof envelope>['to'] | undefined,
-  ): { name: string | null; address: string }[] =>
-    (list ?? [])
-      .filter((a): a is typeof a & { address: string } => Boolean(a.address))
-      .map((a) => ({ name: a.name || null, address: a.address }));
-  const internalDate =
-    msg.internalDate instanceof Date
-      ? msg.internalDate
-      : msg.internalDate
-        ? new Date(msg.internalDate)
-        : null;
-
-  return {
-    messageId: envelope?.messageId ?? null,
-    gmMsgId: ctx.caps.gmail ? (msg.emailId ?? null) : null,
-    providerThreadId: ctx.caps.gmail ? (msg.threadId ?? null) : null,
-    inReplyTo: envelope?.inReplyTo ?? null,
-    references: extractHeaderValue(msg.headers, 'references'),
-    subject: envelope?.subject ?? null,
-    fromName: from?.name ?? null,
-    fromAddress: from?.address ?? null,
-    to: mapAddrs(envelope?.to),
-    cc: mapAddrs(envelope?.cc),
-    snippet: makeSnippet(body.bodyText, body.bodyHtml),
-    bodyText: body.bodyText,
-    bodyHtml: body.bodyHtml,
-    sourcePath,
-    sentAt: envelope?.date ?? null,
-    receivedAt: internalDate,
-    flags: flagsFromSet(msg.flags),
-    attachments: structure.attachments,
-  };
 }
 
 /** Bulk/body-only body acquisition: download just the text/plain + text/html parts. */
@@ -307,7 +222,7 @@ export async function fetchAndStore(
       // to body-only when the byte budget is spent or the source fetch fails.
       const cap = mode === 'live' ? await captureFullSource(ctx, msg) : null;
       const body = cap ? cap.body : await downloadBodyParts(ctx, msg);
-      const parsed = buildParsedMessage(ctx, msg, body, cap?.sourcePath ?? null);
+      const parsed = buildParsedMessage(ctx.caps, msg, body, cap?.sourcePath ?? null);
       const result = upsertMessage(
         ctx.accountId,
         folder.id,
@@ -511,7 +426,7 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
         }
         const cap = await captureFullSource(ctx, msg);
         if (cap) {
-          const parsed = buildParsedMessage(ctx, msg, cap.body, cap.sourcePath);
+          const parsed = buildParsedMessage(ctx.caps, msg, cap.body, cap.sourcePath);
           const result = upsertMessage(ctx.accountId, folder.id, uid, parsed, folder.role, {
             id: cap.id,
           });

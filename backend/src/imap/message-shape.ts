@@ -1,0 +1,101 @@
+/**
+ * Pure message-shaping: turn a fetched IMAP message into the in-memory snapshot we
+ * keep (`CapturedMessage`) and then into the provider-agnostic `ParsedMessage` the
+ * store persists (`buildParsedMessage`).
+ *
+ * This is the deterministic parse-shape layer, deliberately split out of `sync.ts`'s
+ * fetch/download/sweep I/O orchestration: it needs no live IMAP connection, so it is
+ * unit-testable on its own (see `sync.test.ts`) and the I/O paths read more cleanly
+ * without the pure transform interleaved.
+ */
+import type { ImapFlow } from 'imapflow';
+import type { Capabilities } from './connection.js';
+import type { ParsedMessage } from './types.js';
+import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
+
+export type FetchMessage = Awaited<ReturnType<ImapFlow['fetchOne']>>;
+
+/**
+ * The subset of a fetched message we keep in memory. We MUST fully drain the
+ * `fetch()` iterator before issuing any `download()` calls: imapflow runs IMAP
+ * commands serially, so a `download()` invoked while a `fetch()` response is
+ * still streaming deadlocks (the download queues behind the fetch, the fetch
+ * can't finish because we're awaiting the download) until the socket times out.
+ * So we snapshot the plain fields here, let the iterator complete, then download.
+ */
+export interface CapturedMessage {
+  uid: number;
+  envelope: Exclude<FetchMessage, false>['envelope'];
+  bodyStructure: Exclude<FetchMessage, false>['bodyStructure'];
+  internalDate: Exclude<FetchMessage, false>['internalDate'];
+  flags: Set<string> | undefined;
+  headers: Buffer | undefined;
+  emailId: string | undefined;
+  threadId: string | undefined;
+}
+
+export function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
+  return {
+    uid: msg.uid,
+    envelope: msg.envelope,
+    bodyStructure: msg.bodyStructure,
+    internalDate: msg.internalDate,
+    flags: msg.flags,
+    headers: msg.headers,
+    emailId: msg.emailId,
+    threadId: msg.threadId,
+  };
+}
+
+/**
+ * Assemble a ParsedMessage from a captured message + a supplied body. Attachment
+ * metadata is always derived from the IMAP BODYSTRUCTURE (`extractStructure`) so
+ * `part_ordinal` is identical on the live and bulk paths; only the text bodies vary
+ * by source (downloaded parts on bulk, parsed from the `.eml` on live).
+ *
+ * Provider-agnostic save one branch: `gm_msgid`/`providerThreadId` are populated only
+ * on Gmail (`caps.gmail`), so this reads `caps` rather than the full sync context.
+ */
+export function buildParsedMessage(
+  caps: Capabilities,
+  msg: CapturedMessage,
+  body: { bodyText: string | null; bodyHtml: string | null },
+  sourcePath: string | null,
+): ParsedMessage {
+  const structure = extractStructure(msg.bodyStructure);
+  const envelope = msg.envelope;
+  const from = envelope?.from?.[0];
+  const mapAddrs = (
+    list: NonNullable<typeof envelope>['to'] | undefined,
+  ): { name: string | null; address: string }[] =>
+    (list ?? [])
+      .filter((a): a is typeof a & { address: string } => Boolean(a.address))
+      .map((a) => ({ name: a.name || null, address: a.address }));
+  const internalDate =
+    msg.internalDate instanceof Date
+      ? msg.internalDate
+      : msg.internalDate
+        ? new Date(msg.internalDate)
+        : null;
+
+  return {
+    messageId: envelope?.messageId ?? null,
+    gmMsgId: caps.gmail ? (msg.emailId ?? null) : null,
+    providerThreadId: caps.gmail ? (msg.threadId ?? null) : null,
+    inReplyTo: envelope?.inReplyTo ?? null,
+    references: extractHeaderValue(msg.headers, 'references'),
+    subject: envelope?.subject ?? null,
+    fromName: from?.name ?? null,
+    fromAddress: from?.address ?? null,
+    to: mapAddrs(envelope?.to),
+    cc: mapAddrs(envelope?.cc),
+    snippet: makeSnippet(body.bodyText, body.bodyHtml),
+    bodyText: body.bodyText,
+    bodyHtml: body.bodyHtml,
+    sourcePath,
+    sentAt: envelope?.date ?? null,
+    receivedAt: internalDate,
+    flags: flagsFromSet(msg.flags),
+    attachments: structure.attachments,
+  };
+}

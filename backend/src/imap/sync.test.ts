@@ -14,12 +14,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Capabilities } from './connection.js';
-import { buildParsedMessage, type CapturedMessage, type SyncContext } from './sync.js';
+import { buildParsedMessage, type CapturedMessage } from './message-shape.js';
 
-/** A SyncContext carrying only what buildParsedMessage reads (caps.gmail); rest is unused. */
-function ctxWith(gmail: boolean): SyncContext {
-  const caps: Capabilities = { qresync: false, condstore: false, gmail };
-  return { caps } as unknown as SyncContext;
+/** The capabilities buildParsedMessage reads (only `gmail` matters here). */
+function capsWith(gmail: boolean): Capabilities {
+  return { qresync: false, condstore: false, gmail };
 }
 
 /** Build a CapturedMessage; envelope/bodyStructure are cast — only their read fields matter. */
@@ -51,7 +50,7 @@ function captured(overrides: Partial<CapturedMessage> = {}): CapturedMessage {
 const body = { bodyText: 'plain body', bodyHtml: '<p>html</p>' };
 
 test('non-Gmail: gm_msgid and providerThreadId are NULL even when the fetch carried them', () => {
-  const parsed = buildParsedMessage(ctxWith(false), captured(), body, null);
+  const parsed = buildParsedMessage(capsWith(false), captured(), body, null);
   assert.equal(parsed.gmMsgId, null);
   assert.equal(parsed.providerThreadId, null);
   assert.equal(parsed.messageId, '<m1@example.com>');
@@ -59,7 +58,7 @@ test('non-Gmail: gm_msgid and providerThreadId are NULL even when the fetch carr
 });
 
 test('Gmail: emailId → gm_msgid and threadId → providerThreadId are carried through', () => {
-  const parsed = buildParsedMessage(ctxWith(true), captured(), body, null);
+  const parsed = buildParsedMessage(capsWith(true), captured(), body, null);
   assert.equal(parsed.gmMsgId, 'gm-msg-1');
   assert.equal(parsed.providerThreadId, 'gm-thr-1');
 });
@@ -76,7 +75,7 @@ test('envelope addresses: name-less entries carry null, address-less entries are
       cc: [],
     } as unknown as CapturedMessage['envelope'],
   });
-  const parsed = buildParsedMessage(ctxWith(false), msg, body, null);
+  const parsed = buildParsedMessage(capsWith(false), msg, body, null);
   assert.deepEqual(parsed.to, [
     { name: 'Bob', address: 'bob@example.com' },
     { name: null, address: 'carol@example.com' },
@@ -87,7 +86,7 @@ test('envelope addresses: name-less entries carry null, address-less entries are
 });
 
 test('References header is read from the raw header bytes; sentAt/receivedAt map across', () => {
-  const parsed = buildParsedMessage(ctxWith(false), captured(), body, null);
+  const parsed = buildParsedMessage(capsWith(false), captured(), body, null);
   assert.equal(parsed.references, '<root@example.com> <parent@example.com>');
   assert.equal(parsed.sentAt?.toISOString(), '2025-06-01T12:00:00.000Z');
   assert.equal(parsed.receivedAt?.toISOString(), '2025-06-01T12:00:05.000Z');
@@ -96,7 +95,7 @@ test('References header is read from the raw header bytes; sentAt/receivedAt map
 
 test('a string internalDate is coerced to a Date (imapflow can hand back either)', () => {
   const parsed = buildParsedMessage(
-    ctxWith(false),
+    capsWith(false),
     captured({ internalDate: '2025-06-01T12:00:05Z' as unknown as Date }),
     body,
     null,
@@ -107,7 +106,7 @@ test('a string internalDate is coerced to a Date (imapflow can hand back either)
 
 test('missing envelope/flags degrade to nulls and false flags, not a throw', () => {
   const parsed = buildParsedMessage(
-    ctxWith(false),
+    capsWith(false),
     captured({ envelope: undefined, flags: undefined, headers: undefined }),
     { bodyText: null, bodyHtml: null },
     null,
@@ -121,6 +120,6 @@ test('missing envelope/flags degrade to nulls and false flags, not a throw', () 
 });
 
 test('sourcePath passes through unchanged (live capture supplies it, bulk passes null)', () => {
-  const parsed = buildParsedMessage(ctxWith(false), captured(), body, '/src/a/b/source.eml');
+  const parsed = buildParsedMessage(capsWith(false), captured(), body, '/src/a/b/source.eml');
   assert.equal(parsed.sourcePath, '/src/a/b/source.eml');
 });
