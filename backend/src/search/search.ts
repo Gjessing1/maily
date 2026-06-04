@@ -4,7 +4,8 @@
  * window. Fallback hits are ingested into the cache (so they gain an internal
  * UUID and become first-class, deep-linkable) and then returned from local.
  */
-import { listFolders, searchLocal, type MessageRow } from '../db/queries.js';
+import { listFolders, type MessageRow } from '../db/queries.js';
+import { searchLocal } from './local.js';
 import { createLogger } from '../logger.js';
 import { detectCapabilities, withTransientConnection } from '../imap/connection.js';
 import type { FolderRow } from '../imap/folders.js';
