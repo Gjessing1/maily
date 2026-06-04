@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
-import { db } from '../db/client.js';
+import { db, withWriteRetry } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
 import type { MessageFlags, ParsedMessage } from './types.js';
 import type { RebuiltContent } from './source-parse.js';
@@ -231,7 +231,9 @@ export function upsertMessage(
 
 /** Soft-delete: set the tombstone timestamp. Row + metadata survive (ARCHITECTURE §13). */
 export function markMessageDeleted(messageId: string): void {
-  db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, messageId)).run();
+  withWriteRetry('markMessageDeleted', () =>
+    db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, messageId)).run(),
+  );
 }
 
 /**
@@ -246,10 +248,12 @@ export function relinkMessageToFolder(
   folderId: string,
   uid: number | null,
 ): void {
-  db.transaction(() => {
-    db.delete(messageFolders).where(eq(messageFolders.messageId, messageId)).run();
-    db.insert(messageFolders).values({ messageId, folderId, uid }).run();
-  });
+  withWriteRetry('relinkMessageToFolder', () =>
+    db.transaction(() => {
+      db.delete(messageFolders).where(eq(messageFolders.messageId, messageId)).run();
+      db.insert(messageFolders).values({ messageId, folderId, uid }).run();
+    }),
+  );
 }
 
 /** Update just the IMAP flags for a message (resync / IDLE flag events). */
@@ -257,7 +261,9 @@ export function updateMessageFlags(
   messageId: string,
   flags: { seen: boolean; flagged: boolean; answered: boolean; draft: boolean },
 ): void {
-  db.update(messages).set(flags).where(eq(messages.id, messageId)).run();
+  withWriteRetry('updateMessageFlags', () =>
+    db.update(messages).set(flags).where(eq(messages.id, messageId)).run(),
+  );
 }
 
 /**
