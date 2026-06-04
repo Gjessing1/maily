@@ -30,6 +30,16 @@ const defaultRoot = resolve(here, '../../public');
  * correct across builds without a brittle hard-coded digest. `frame-src 'self'` keeps
  * the reading pane's srcdoc iframe working (it inherits this origin under
  * allow-same-origin).
+ *
+ * **srcdoc inherits this CSP.** An `about:srcdoc` document (the reading-pane iframe)
+ * inherits its embedder's policy *on top of* its own `<meta>` CSP, and the browser
+ * enforces the intersection. So this policy is also the **ceiling** for email content:
+ * remote `img`/`media`/`font` sources must be permitted here or the iframe's permissive
+ * `img-src ... https: http:` is overruled and remote images silently fail to load. The
+ * actual per-message gating (tracking-pixel blocking via `allowImages`) still happens in
+ * the iframe's own stricter `<meta>` CSP — this just stops the shell from clamping it to
+ * `'self' data: blob:`. The shell itself never references remote media, so widening these
+ * here costs the shell nothing.
  */
 function buildAppShellCsp(html: string): string {
   const hashes = new Set<string>();
@@ -46,8 +56,11 @@ function buildAppShellCsp(html: string): string {
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
+    // img/media/font widened to remote schemes so the inherited srcdoc iframe can load
+    // email images (see the ceiling note above); the shell loads none of these remotely.
+    "img-src 'self' data: blob: https: http:",
+    "media-src 'self' data: https: http:",
+    "font-src 'self' data: https: http:",
     "connect-src 'self'",
     "frame-src 'self'",
     "worker-src 'self'",
