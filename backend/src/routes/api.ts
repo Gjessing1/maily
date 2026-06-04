@@ -169,39 +169,45 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
       const seen = req.body.seen ?? m.seen;
       const flagged = req.body.flagged ?? m.flagged;
       updateMessageFlags(m.id, { seen, flagged, answered: m.answered, draft: m.draft });
+      emitSignal({ type: 'mail:flags', accountId: m.accountId, messageId: m.id, seen, flagged });
 
       // Propagate to the IMAP server over a transient connection (don't disturb IDLE).
+      // Fire-and-forget: the local DB + signal above already reflect the change, so we
+      // must NOT block the HTTP response on this transient connection — under a heavy
+      // background sweep it can be slow, and a client-side timeout would bounce the
+      // optimistic UI update back. The next folder resync reconciles if it fails.
       const loc = uidLocationForMessage(m.id);
       const engine = loc ? getEngine(loc.accountId) : undefined;
       if (loc && engine) {
-        try {
-          await withTransientConnection(engine.accountConfig, async (client) => {
-            const lock = await client.getMailboxLock(loc.folderPath);
-            try {
-              const uid = String(loc.uid);
-              if (req.body.seen !== undefined) {
-                const op = seen ? client.messageFlagsAdd : client.messageFlagsRemove;
-                await op.call(client, uid, ['\\Seen'], { uid: true });
+        void (async () => {
+          try {
+            await withTransientConnection(engine.accountConfig, async (client) => {
+              const lock = await client.getMailboxLock(loc.folderPath);
+              try {
+                const uid = String(loc.uid);
+                if (req.body.seen !== undefined) {
+                  const op = seen ? client.messageFlagsAdd : client.messageFlagsRemove;
+                  await op.call(client, uid, ['\\Seen'], { uid: true });
+                }
+                if (req.body.flagged !== undefined) {
+                  const op = flagged ? client.messageFlagsAdd : client.messageFlagsRemove;
+                  await op.call(client, uid, ['\\Flagged'], { uid: true });
+                }
+              } finally {
+                lock.release();
               }
-              if (req.body.flagged !== undefined) {
-                const op = flagged ? client.messageFlagsAdd : client.messageFlagsRemove;
-                await op.call(client, uid, ['\\Flagged'], { uid: true });
-              }
-            } finally {
-              lock.release();
-            }
-          });
-        } catch (err) {
-          app.log.warn(`flag propagation failed: ${(err as Error).message}`);
-        }
+            });
+          } catch (err) {
+            app.log.warn(`flag propagation failed: ${(err as Error).message}`);
+          }
 
-        // A star/unstar changes membership of a flag-derived folder (Gmail's
-        // [Gmail]/Starred). Kick an immediate non-INBOX reconcile so it shows in
-        // that folder right away instead of after the next cron pass.
-        if (req.body.flagged !== undefined) engine.reconcileFoldersNow();
+          // A star/unstar changes membership of a flag-derived folder (Gmail's
+          // [Gmail]/Starred). Kick an immediate non-INBOX reconcile so it shows in
+          // that folder right away instead of after the next cron pass.
+          if (req.body.flagged !== undefined) engine.reconcileFoldersNow();
+        })();
       }
 
-      emitSignal({ type: 'mail:flags', accountId: m.accountId, messageId: m.id, seen, flagged });
       return { ok: true, seen, flagged };
     },
   );
@@ -221,28 +227,33 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
     const trash = folderByRole(m.accountId, 'trash');
     const loc = uidLocationForMessage(m.id);
     const engine = getEngine(m.accountId);
+    // Out-of-band, fire-and-forget: the tombstone + signal above already hide the
+    // message, so the HTTP response must not block on the transient-connection MOVE
+    // (slow under a heavy sweep → client timeout → the row flickers back).
     if (!trash) {
       app.log.warn(
         `no trash folder for account ${m.accountId}; message ${m.id} tombstoned locally`,
       );
     } else if (loc && engine && loc.folderPath !== trash.path) {
-      try {
-        const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
-          const lock = await client.getMailboxLock(loc.folderPath);
-          try {
-            const res = await client.messageMove(String(loc.uid), trash.path, { uid: true });
-            // uidMap (source→dest UID) is present when the server supports MOVE/COPYUID.
-            return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
-          } finally {
-            lock.release();
-          }
-        });
-        // Converge the local mapping onto Trash so the message stays fetchable; the
-        // tombstone is preserved (Trash re-sights never clear it — see store.ts).
-        relinkMessageToFolder(m.id, trash.id, newUid);
-      } catch (err) {
-        app.log.warn(`trash move failed for ${m.id}: ${(err as Error).message}`);
-      }
+      void (async () => {
+        try {
+          const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
+            const lock = await client.getMailboxLock(loc.folderPath);
+            try {
+              const res = await client.messageMove(String(loc.uid), trash.path, { uid: true });
+              // uidMap (source→dest UID) is present when the server supports MOVE/COPYUID.
+              return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
+            } finally {
+              lock.release();
+            }
+          });
+          // Converge the local mapping onto Trash so the message stays fetchable; the
+          // tombstone is preserved (Trash re-sights never clear it — see store.ts).
+          relinkMessageToFolder(m.id, trash.id, newUid);
+        } catch (err) {
+          app.log.warn(`trash move failed for ${m.id}: ${(err as Error).message}`);
+        }
+      })();
     }
 
     return { ok: true };
@@ -265,22 +276,27 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
 
     emitSignal({ type: 'mail:archived', accountId: m.accountId, messageId: m.id });
 
+    // Out-of-band, fire-and-forget (same rationale as flags/delete): don't block the
+    // response on the transient-connection MOVE so the optimistic UI stays snappy
+    // under load; the next inbox resync reconciles if the move fails.
     const engine = getEngine(m.accountId);
     if (engine) {
-      try {
-        const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
-          const lock = await client.getMailboxLock(loc.folderPath);
-          try {
-            const res = await client.messageMove(String(loc.uid), archive.path, { uid: true });
-            return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
-          } finally {
-            lock.release();
-          }
-        });
-        relinkMessageToFolder(m.id, archive.id, newUid);
-      } catch (err) {
-        app.log.warn(`archive move failed for ${m.id}: ${(err as Error).message}`);
-      }
+      void (async () => {
+        try {
+          const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
+            const lock = await client.getMailboxLock(loc.folderPath);
+            try {
+              const res = await client.messageMove(String(loc.uid), archive.path, { uid: true });
+              return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
+            } finally {
+              lock.release();
+            }
+          });
+          relinkMessageToFolder(m.id, archive.id, newUid);
+        } catch (err) {
+          app.log.warn(`archive move failed for ${m.id}: ${(err as Error).message}`);
+        }
+      })();
     }
 
     return { ok: true };
