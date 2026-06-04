@@ -13,7 +13,7 @@ env:
   IMAGE: ghcr.io/gjessing1/maily-backend
 
 jobs:
-  # Quality gate: formatting, lint and types must pass before we build/push an image.
+  # Quality gate: formatting, lint, types and unit tests must pass before we build/push an image.
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +37,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Test
+        run: npm test
 
   build-and-push:
     needs: verify

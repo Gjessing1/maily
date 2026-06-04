@@ -12,6 +12,8 @@ import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import type { AttachmentRow } from '../db/queries.js';
 import { markAttachmentDownloaded, uidLocationForMessage } from '../db/queries.js';
+import { sourcePathForMessage } from '../imap/store.js';
+import { extractPartFromSource } from '../imap/source-extract.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
 
@@ -24,19 +26,55 @@ import { getEngine } from '../imap/registry.js';
  */
 const INLINE_EMBED_CAP_BYTES = 500 * 1024;
 
+const log = createLogger('attachments');
+
 /**
- * Ensure an attachment's bytes exist on local disk, fetching them from IMAP over a
- * transient connection if not yet downloaded. Returns the on-disk path, or null if
- * the bytes can't be obtained (no IMAP location / part id / live engine).
+ * The single attachment-byte resolver (ROADMAP §3.7.E). Returns the on-disk path of
+ * an attachment's bytes, materialising them on demand, by trying in order:
+ *   1. **Materialised** — already downloaded and present on disk.
+ *   2. **Local source** — the owning message's raw `.eml` is archived
+ *      (`source_path` set); stream the single MIME part out of it with zero network.
+ *   3. **IMAP fallback** — not yet archived; fetch the part over a transient
+ *      connection by its BODYSTRUCTURE part id.
+ * Returns null if no path can serve the bytes. Once a message is archived, step 2
+ * resolves with no IMAP at all, so an archived message stays fetchable even after
+ * every `(folder, uid)` mapping is gone — `uidLocationForMessage` only gates step 3.
  */
 export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string | null> {
+  // 1. Already on disk.
   if (att.storagePath && existsSync(att.storagePath)) return att.storagePath;
 
+  const path = join(env.attachmentsDir, att.id);
+
+  // 2. Carve the part out of the cached raw `.eml`, if the message is archived.
+  const sourcePath = sourcePathForMessage(att.messageId);
+  if (sourcePath && existsSync(sourcePath)) {
+    const part = await extractPartFromSource(
+      sourcePath,
+      { contentId: att.contentId, partOrdinal: att.partOrdinal },
+      path,
+    );
+    if (part) {
+      // The (filename, mime_type) tuple is a post-match guard, not the key — a
+      // mismatch means the shared classifier drifted between the two walks. Size is
+      // deliberately excluded: the stored `size_bytes` is BODYSTRUCTURE's *encoded*
+      // octet count, not comparable to the decoded bytes we just wrote.
+      if ((att.filename ?? null) !== part.filename || (att.mimeType ?? null) !== part.mimeType) {
+        log.warn(
+          `local-source part mismatch for ${att.id}: ` +
+            `db=(${att.filename}, ${att.mimeType}) eml=(${part.filename}, ${part.mimeType})`,
+        );
+      }
+      markAttachmentDownloaded(att.id, path, part.sizeBytes);
+      return path;
+    }
+  }
+
+  // 3. Fetch from IMAP — the message isn't archived (or the part didn't resolve).
   const loc = uidLocationForMessage(att.messageId);
   const engine = loc ? getEngine(loc.accountId) : undefined;
   if (!loc || !engine || !att.imapPartId) return null;
 
-  const path = join(env.attachmentsDir, att.id);
   await withTransientConnection(engine.accountConfig, async (client) => {
     const lock = await client.getMailboxLock(loc.folderPath);
     try {
@@ -49,8 +87,6 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   markAttachmentDownloaded(att.id, path, statSync(path).size);
   return path;
 }
-
-const log = createLogger('attachments');
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
