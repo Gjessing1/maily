@@ -58,7 +58,11 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
     overflow-wrap:anywhere; word-break:break-word; }
   img { max-width:100%; height:auto; }
   a { color:${linkFg}; }
-  table { max-width:100% !important; }
+  /* Contain tables that declare no width of their own, but DON'T override an
+     email's explicit (usually narrower) max-width — forcing 100% with !important
+     stretches centered-card layouts like GitHub's notifications full-width. An
+     inline max-width on the table out-specifies this element rule and wins. */
+  table { max-width:100%; }
 </style></head><body>${stripScripts(html)}</body></html>`;
 
   useEffect(() => {
