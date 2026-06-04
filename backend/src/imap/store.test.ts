@@ -22,18 +22,20 @@ import { join } from 'node:path';
 import test, { after, before } from 'node:test';
 import { eq } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
+import type * as StoreNS from './store.js';
+import type * as SchemaNS from '../db/schema.js';
+import type * as DbClientNS from '../db/client.js';
 import type { ParsedMessage } from './types.js';
 
 // Must be set before the db client (transitively, env.ts) is imported.
 const tmpRoot = mkdtempSync(join(tmpdir(), 'maily-store-test-'));
 process.env.MAILY_DATA_DIR = tmpRoot;
 
-// Resolved in before() via dynamic import so the env var above wins.
-type StoreModule = typeof import('./store.js');
-type SchemaModule = typeof import('../db/schema.js');
-let store: StoreModule;
-let schema: SchemaModule;
-let rawDb: (typeof import('../db/client.js'))['db'];
+// Resolved in before() via dynamic import so the env var above wins. The `import type`
+// namespace imports above are erased at runtime, so they don't disturb that ordering.
+let store: typeof StoreNS;
+let schema: typeof SchemaNS;
+let rawDb: (typeof DbClientNS)['db'];
 
 before(async () => {
   const client = await import('../db/client.js');
