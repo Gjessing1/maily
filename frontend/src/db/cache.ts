@@ -95,6 +95,7 @@ export async function cacheBody(detail: MessageDetailDto): Promise<void> {
     subject: detail.subject,
     fromName: detail.fromName,
     fromAddress: detail.fromAddress,
+    to: detail.to,
     snippet: detail.snippet,
     sentAt: detail.sentAt,
     receivedAt: detail.receivedAt,

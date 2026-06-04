@@ -35,6 +35,7 @@ export function MessageRow({
   onEnterSelect,
   onToggleSelect,
   onContextMenu: onContextMenuOpen,
+  showRecipient = false,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -58,9 +59,20 @@ export function MessageRow({
   onToggleSelect?: (id: string) => void;
   /** Right-click (desktop) opens the action context menu at the cursor. */
   onContextMenu?: (id: string, x: number, y: number) => void;
+  /** Outgoing folders (Sent): show the To recipient instead of the From sender. */
+  showRecipient?: boolean;
 }) {
-  const name = senderName(message.fromName, message.fromAddress);
-  const hue = avatarHue(message.fromAddress ?? name);
+  // In outgoing folders the sender is always the account owner, so the useful
+  // identity is the recipient. Fall back to the sender when there are no parsed
+  // recipients (older pre-migration mail, or a draft with no To yet).
+  const recipients = showRecipient ? (message.to ?? []) : [];
+  const recipient = recipients[0];
+  const extraRecipients = recipients.length - 1;
+  const partyName = recipient ? recipient.name : message.fromName;
+  const partyAddress = recipient ? recipient.address : message.fromAddress;
+  const baseName = senderName(partyName, partyAddress);
+  const name = extraRecipients > 0 ? `${baseName} +${extraRecipients}` : baseName;
+  const hue = avatarHue(partyAddress ?? baseName);
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
   // Resolve each configured direction down to "is it actually firable here".
@@ -213,7 +225,7 @@ export function MessageRow({
               style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
             >
               <span className="transition-opacity group-hover/avatar:opacity-0">
-                {initials(message.fromName, message.fromAddress)}
+                {initials(partyName, partyAddress)}
               </span>
               {/* Hover (desktop) reveals a checkbox affordance over the avatar. */}
               <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/25 opacity-0 transition-opacity group-hover/avatar:opacity-100">

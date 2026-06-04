@@ -79,6 +79,8 @@ export function Home() {
   );
   // The Archived view is synthetic (no cached folder row), so name it explicitly.
   const folderName = isArchivedView(folderId) ? 'Archive' : (folder?.name ?? 'Inbox');
+  // Sent shows the account owner as sender on every row, so surface the recipient instead.
+  const showRecipient = folder?.role === 'sent';
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
 
@@ -269,6 +271,7 @@ export function Home() {
                   onEnterSelect={enterSelect}
                   onToggleSelect={toggleSelect}
                   onContextMenu={openMenu}
+                  showRecipient={showRecipient}
                 />
               </Fragment>
             ))}

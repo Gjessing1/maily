@@ -67,6 +67,7 @@ export function toMessageDto(
     // the message's own display name only for addresses we don't have a card for.
     fromName: contactNameFor(m.fromAddress) ?? m.fromName,
     fromAddress: m.fromAddress,
+    to: parseAddresses(m.toAddresses),
     snippet: m.snippet,
     sentAt: iso(m.sentAt),
     receivedAt: iso(m.receivedAt),

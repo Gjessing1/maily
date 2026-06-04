@@ -50,6 +50,8 @@ export interface MessageDto {
   subject: string | null;
   fromName: string | null;
   fromAddress: string | null;
+  /** Primary To recipients — drives recipient display in outgoing folders (Sent). */
+  to: EmailAddress[];
   snippet: string | null;
   sentAt: string | null;
   receivedAt: string | null;
