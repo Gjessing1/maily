@@ -10,6 +10,7 @@ import {
   getMessage,
   listArchived,
   listMessages,
+  listUnifiedInbox,
   type MessageRow,
 } from '../../db/queries.js';
 import { embedInlineImages } from '../../storage/attachments.js';
@@ -41,6 +42,12 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return toListDtos(listMessages(req.params.folderId, limit, before));
     },
   );
+
+  // Virtual "Unified Inbox": every account's inbox merged into one stream.
+  app.get<{ Querystring: { limit?: string; before?: string } }>('/api/inbox', async (req) => {
+    const { limit, before } = pageParams(req.query);
+    return toListDtos(listUnifiedInbox(limit, before));
+  });
 
   // Virtual "Archived" view for an account: archive-role folder minus inbox/sent/
   // trash/junk/drafts. Surfaces archived mail on Gmail, where "archive" == All Mail.

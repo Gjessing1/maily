@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
@@ -10,7 +10,9 @@ import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
 import { isArchivedView } from '../state/archived';
+import { isUnifiedView, UNIFIED_INBOX_ID } from '../state/unified';
 import { usePrefs } from '../state/prefs';
+import { avatarHue } from '../ui/format';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
 import {
@@ -70,21 +72,49 @@ export function Home() {
   }, [params, setParams]);
   const firstFolders = useFolders(accounts?.[0]?.id);
 
-  // Resolve a default folder (first account's inbox) once folders arrive.
+  // Resolve a default landing view once accounts/folders arrive: the merged Unified
+  // Inbox when there's more than one account, else the sole account's inbox.
   useEffect(() => {
-    if (folderId || !firstFolders?.length) return;
+    if (folderId) return;
+    if ((accounts?.length ?? 0) > 1) {
+      setParams({ folder: UNIFIED_INBOX_ID }, { replace: true });
+      return;
+    }
+    if (!firstFolders?.length) return;
     const inbox = firstFolders.find((f) => f.role === 'inbox') ?? firstFolders[0]!;
     setParams({ folder: inbox.id }, { replace: true });
-  }, [folderId, firstFolders, setParams]);
+  }, [folderId, accounts, firstFolders, setParams]);
 
   const folder = useLiveQuery(
     () => (folderId && !isArchivedView(folderId) ? cache.folders.get(folderId) : undefined),
     [folderId],
   );
-  // The Archived view is synthetic (no cached folder row), so name it explicitly.
-  const folderName = isArchivedView(folderId) ? 'Archive' : (folder?.name ?? 'Inbox');
+  // Synthetic views (Archived, Unified Inbox) have no cached folder row — name them explicitly.
+  const unifiedView = isUnifiedView(folderId);
+  const folderName = unifiedView
+    ? 'All inboxes'
+    : isArchivedView(folderId)
+      ? 'Archive'
+      : (folder?.name ?? 'Inbox');
   // Sent shows the account owner as sender on every row, so surface the recipient instead.
   const showRecipient = folder?.role === 'sent';
+
+  // In the merged inbox, tag each row with its source account so it's clear where mail
+  // came from. Keyed by accountId → a coloured label pill.
+  const accountById = useMemo(() => new Map((accounts ?? []).map((a) => [a.id, a])), [accounts]);
+  const accountTagFor = useCallback(
+    (accountId: string) => {
+      if (!unifiedView) return undefined;
+      const a = accountById.get(accountId);
+      if (!a) return undefined;
+      // Prefer a user-set display name; else the email domain, which cleanly tells
+      // providers apart (gmail.com vs mailbox.org). Colour is keyed off the address
+      // so two accounts always differ even if their labels happen to match.
+      const label = a.displayName || a.email.split('@')[1] || a.email;
+      return { label, hue: avatarHue(a.email) };
+    },
+    [unifiedView, accountById],
+  );
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
 
@@ -276,6 +306,7 @@ export function Home() {
                   onToggleSelect={toggleSelect}
                   onContextMenu={openMenu}
                   showRecipient={showRecipient}
+                  accountTag={accountTagFor(m.accountId)}
                 />
               </Fragment>
             ))}

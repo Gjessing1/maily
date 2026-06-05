@@ -189,6 +189,34 @@ test('GET /api/folders/:folderId/messages returns message DTOs, newest first, li
   assert.equal(limited.json()[0].id, newer);
 });
 
+test('GET /api/inbox merges every account inbox, newest first, excluding non-inbox mail', async () => {
+  const accA = seedAccount();
+  const accB = seedAccount();
+  const inboxA = seedFolder(accA, 'inbox');
+  const inboxB = seedFolder(accB, 'inbox');
+  const sentB = seedFolder(accB, 'sent');
+
+  const older = seedMessage(accA, inboxA, 'inbox', {
+    subject: 'older inbox A',
+    receivedAt: new Date('2025-03-01T00:00:00Z'),
+  });
+  const newer = seedMessage(accB, inboxB, 'inbox', {
+    subject: 'newer inbox B',
+    receivedAt: new Date('2025-04-01T00:00:00Z'),
+  });
+  const sent = seedMessage(accB, sentB, 'sent', {
+    subject: 'sent — not an inbox',
+    receivedAt: new Date('2025-05-01T00:00:00Z'),
+  });
+
+  const res = await get('/api/inbox');
+  assert.equal(res.statusCode, 200);
+  const ids = res.json().map((m: { id: string }) => m.id);
+  assert.ok(ids.includes(newer) && ids.includes(older), 'both accounts present');
+  assert.ok(!ids.includes(sent), 'non-inbox mail excluded');
+  assert.ok(ids.indexOf(newer) < ids.indexOf(older), 'newest first across accounts');
+});
+
 test('GET /api/messages/:id returns the detail DTO; unknown id is 404', async () => {
   const accountId = seedAccount();
   const folderId = seedFolder(accountId, 'inbox');

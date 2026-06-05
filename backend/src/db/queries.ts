@@ -81,6 +81,29 @@ export function listMessages(folderId: string, limit: number, beforeMs?: number)
     .all();
 }
 
+/**
+ * Virtual "Unified Inbox": every account's inbox-role folder merged into one
+ * newest-first stream. Same keyset pagination as `listMessages`; tombstones hidden
+ * (§13). A message lives in exactly one account's inbox so no de-dup is needed.
+ */
+export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[] {
+  return db
+    .select(getTableColumns(messages))
+    .from(messages)
+    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
+    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
+    .where(
+      and(
+        eq(folders.role, 'inbox'),
+        isNull(messages.deletedAt),
+        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.receivedAt))
+    .limit(limit)
+    .all();
+}
+
 /** Roles whose presence disqualifies a message from the virtual "Archived" view. */
 const NON_ARCHIVE_ROLES = ['inbox', 'sent', 'trash', 'junk', 'drafts'] as const;
 

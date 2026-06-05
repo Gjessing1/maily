@@ -113,6 +113,15 @@ export const api = {
     return request<MessageDto[]>(`/api/folders/${folderId}/messages${suffix}`);
   },
 
+  /** Virtual "Unified Inbox": every account's inbox merged newest-first. */
+  unifiedInbox: (opts: { limit?: number; before?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.before) qs.set('before', String(opts.before));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<MessageDto[]>(`/api/inbox${suffix}`);
+  },
+
   /** Virtual "Archived" view for an account (archive folder minus inbox/sent/…). */
   archived: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
     const qs = new URLSearchParams();

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
 import { archivedFolder } from '../state/archived';
+import { UNIFIED_INBOX_ID, unifiedFolder } from '../state/unified';
 import { useAuth } from '../state/auth';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
 import {
@@ -293,6 +294,27 @@ export function FolderDrawer({
           <h2 className="text-lg font-semibold tracking-tight">maily</h2>
         </div>
         <div className="flex-1">
+          {/* Cross-account merged inbox; only meaningful with more than one account. */}
+          {accounts.length > 1 && (
+            <ul className="mb-2">
+              <li>
+                <button
+                  onClick={() => {
+                    onSelect(unifiedFolder);
+                    onClose();
+                  }}
+                  className={`flex w-full items-center gap-3 py-2.5 pl-4 pr-4 text-left text-[15px] transition ${
+                    selectedFolderId === UNIFIED_INBOX_ID
+                      ? 'bg-accent-soft text-accent'
+                      : 'text-fg active:bg-surface-2'
+                  }`}
+                >
+                  <InboxIcon className="size-5 shrink-0 opacity-70" />
+                  <span className="truncate">All inboxes</span>
+                </button>
+              </li>
+            </ul>
+          )}
           {accounts.map((a) => (
             <AccountFolders
               key={a.id}

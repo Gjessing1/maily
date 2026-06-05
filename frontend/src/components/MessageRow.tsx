@@ -36,6 +36,7 @@ export function MessageRow({
   onToggleSelect,
   onContextMenu: onContextMenuOpen,
   showRecipient = false,
+  accountTag,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -61,6 +62,8 @@ export function MessageRow({
   onContextMenu?: (id: string, x: number, y: number) => void;
   /** Outgoing folders (Sent): show the To recipient instead of the From sender. */
   showRecipient?: boolean;
+  /** Unified-inbox source-account badge (coloured label pill); omitted elsewhere. */
+  accountTag?: { label: string; hue: number };
 }) {
   // In outgoing folders the sender is always the account owner, so the useful
   // identity is the recipient. Fall back to the sender when there are no parsed
@@ -242,8 +245,19 @@ export function MessageRow({
               >
                 {name}
               </span>
-              <span className="ml-auto shrink-0 text-xs text-faint">
-                {shortDate(message.receivedAt ?? message.sentAt)}
+              <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                {accountTag && (
+                  <span
+                    className="max-w-[28vw] truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+                    style={{ backgroundColor: `hsl(${accountTag.hue} 45% 42%)` }}
+                    title={accountTag.label}
+                  >
+                    {accountTag.label}
+                  </span>
+                )}
+                <span className="text-xs text-faint">
+                  {shortDate(message.receivedAt ?? message.sentAt)}
+                </span>
               </span>
             </div>
 

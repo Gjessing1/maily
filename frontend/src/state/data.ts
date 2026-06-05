@@ -18,6 +18,7 @@ import {
   type CachedMessage,
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
+import { isUnifiedView } from './unified';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
@@ -70,11 +71,21 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   // and, offline, filters the cached archive-folder rows by the same role subtraction.
   const archived = isArchivedView(folderId);
   const accountId = archived ? archivedAccountId(folderId) : undefined;
+  // The virtual "Unified Inbox" merges every account's inbox; offline it unions the
+  // cached messages of all inbox-role folders.
+  const unified = isUnifiedView(folderId);
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
     let rows: CachedMessage[];
-    if (archived && accountId) {
+    if (unified) {
+      const inboxIds = (await cache.folders.toArray())
+        .filter((f) => f.role === 'inbox')
+        .map((f) => f.id);
+      rows = inboxIds.length
+        ? await cache.messages.where('folderIds').anyOf(inboxIds).toArray()
+        : [];
+    } else if (archived && accountId) {
       const folders = await cache.folders.where('accountId').equals(accountId).toArray();
       const archiveId = folders.find((f) => f.role === 'archive')?.id;
       if (!archiveId) return [];
@@ -91,15 +102,17 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
       return receivedMs(b) - receivedMs(a);
     });
-  }, [folderId, archived, accountId, unreadAtTop]);
+  }, [folderId, archived, accountId, unified, unreadAtTop]);
 
-  // One page fetch for either the real folder or the archived view.
+  // One page fetch for the unified inbox, an archived view, or a real folder.
   const fetchPage = useCallback(
     (before?: number) =>
-      archived && accountId
-        ? api.archived(accountId, { limit: PAGE, before })
-        : api.messages(folderId!, { limit: PAGE, before }),
-    [archived, accountId, folderId, PAGE],
+      unified
+        ? api.unifiedInbox({ limit: PAGE, before })
+        : archived && accountId
+          ? api.archived(accountId, { limit: PAGE, before })
+          : api.messages(folderId!, { limit: PAGE, before }),
+    [unified, archived, accountId, folderId, PAGE],
   );
 
   const refresh = useCallback(() => {
