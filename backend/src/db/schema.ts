@@ -173,6 +173,14 @@ export const contacts = sqliteTable(
     href: text('href'),
     /** Card's getetag — sent as If-Match on update to detect concurrent edits. */
     etag: text('etag'),
+    /**
+     * CardDAV collection (address book) the card belongs to — its href. Multi-address-book
+     * support (ROADMAP §C, contacts Phase 1). Null for pre-sync/legacy rows; repopulated
+     * on the next sync (the table is a rebuildable cache).
+     */
+    addressbookHref: text('addressbook_href'),
+    /** The book's display name captured at sync time (labelling without a live PROPFIND). */
+    addressbookName: text('addressbook_name'),
     createdAt: now(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
   },

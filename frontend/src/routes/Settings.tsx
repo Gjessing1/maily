@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AccountDto, AccountSyncStatusDto, ServerConfigDto } from '@maily/shared';
+import type {
+  AccountDto,
+  AccountSyncStatusDto,
+  AddressbookSettingsDto,
+  ServerConfigDto,
+} from '@maily/shared';
 import { api } from '../api/client';
 import { useAccounts, useFolders } from '../state/data';
 import { useAuth } from '../state/auth';
@@ -177,6 +182,100 @@ function AccountLabels({ account }: { account: AccountDto }) {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Address books (ROADMAP §C, contacts Phase 1). Lists the books discovered on the
+ * CardDAV server with an active toggle (which are synced/in use) and a default picker
+ * (where new contacts are created). Stored server-side, so this manages its own state
+ * rather than the client-owned prefs; saving re-syncs the contacts cache.
+ */
+function AddressBooks() {
+  const [state, setState] = useState<AddressbookSettingsDto | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .addressbooks()
+      .then((s) => alive && setState(s))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!state) return <p className="px-4 py-3 text-sm text-faint">Loading…</p>;
+  if (state.books.length === 0) {
+    return (
+      <p className="px-4 py-3 text-sm text-faint">
+        No address books found. Configure CardDAV on the server to manage contacts.
+      </p>
+    );
+  }
+
+  // Persist + re-sync; optimistic, reverting on failure.
+  const apply = async (active: string[], def: string | null) => {
+    const prev = state;
+    setBusy(true);
+    setState({ ...state, active, default: def });
+    try {
+      setState(await api.setAddressbooks(active, def));
+    } catch {
+      setState(prev);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = (href: string) => {
+    const active = state.active.includes(href)
+      ? state.active.filter((h) => h !== href)
+      : [...state.active, href];
+    const def =
+      state.default && active.includes(state.default) ? state.default : (active[0] ?? null);
+    void apply(active, def);
+  };
+
+  const setDefault = (href: string) => {
+    const active = state.active.includes(href) ? state.active : [...state.active, href];
+    void apply(active, href);
+  };
+
+  return (
+    <>
+      {state.books.map((b) => {
+        const on = state.active.includes(b.href);
+        const isDefault = state.default === b.href;
+        return (
+          <div key={b.href} className="flex items-center justify-between gap-3 px-4 py-3">
+            <button
+              onClick={() => toggle(b.href)}
+              disabled={busy}
+              role="switch"
+              aria-checked={on}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-50"
+            >
+              <Switch on={on} />
+              <span className="min-w-0 truncate text-[15px]">{b.displayName}</span>
+            </button>
+            {on && (
+              <button
+                onClick={() => setDefault(b.href)}
+                disabled={busy || isDefault}
+                aria-pressed={isDefault}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${
+                  isDefault ? 'bg-accent text-white' : 'bg-surface-2 text-faint active:bg-surface-3'
+                }`}
+              >
+                {isDefault ? 'Default' : 'Set default'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -441,6 +540,19 @@ export function Settings() {
               />
             </div>
           </div>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Address books
+          </p>
+          <div className="border-y border-border">
+            <AddressBooks />
+          </div>
+          <p className="px-4 pt-2 text-xs text-faint">
+            Turn a book on to sync its contacts and show them in the picker. New contacts are saved
+            to the default book.
+          </p>
         </section>
 
         <section className="mt-6">

@@ -6,6 +6,7 @@
 import type {
   AccountDto,
   AccountSyncStatusDto,
+  AddressbookSettingsDto,
   ContactCardDto,
   ContactCardInput,
   ContactDto,
@@ -183,6 +184,16 @@ export const api = {
     qs.set('limit', String(limit));
     return request<ContactDto[]>(`/api/contacts?${qs}`);
   },
+
+  /** Discovered address books + active/default selection. */
+  addressbooks: () => request<AddressbookSettingsDto>('/api/contacts/addressbooks'),
+
+  /** Set which books are active + the default create target; returns the new state. */
+  setAddressbooks: (active: string[] | null, def: string | null) =>
+    request<AddressbookSettingsDto>('/api/contacts/addressbooks', {
+      method: 'PUT',
+      body: JSON.stringify({ active, default: def }),
+    }),
 
   /** Whole-card management (CardDAV write-back) for the Contacts manager. */
   contactCards: () => request<ContactCardDto[]>('/api/contacts/cards'),

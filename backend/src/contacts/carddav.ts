@@ -17,6 +17,8 @@ import { createLogger } from '../logger.js';
 import { env } from '../env.js';
 import { replaceContacts, type ParsedContact } from './store.js';
 import { buildVCard, extractCards, parseVCard } from './vcard.js';
+import { discoverAddressbooks } from './discover.js';
+import { effectiveActive, effectiveDefault, getDiscovered, setDiscovered } from './addressbooks.js';
 
 const log = createLogger('carddav');
 
@@ -53,6 +55,18 @@ function collectionUrl(cfg: NonNullable<ReturnType<typeof env.carddav>>): string
   return cfg.url.endsWith('/') ? cfg.url : `${cfg.url}/`;
 }
 
+/** Absolute, slash-terminated URL of the book a new card should be created in. */
+function targetCollection(
+  cfg: NonNullable<ReturnType<typeof env.carddav>>,
+  addressbookHref: string | null,
+): string {
+  const active = effectiveActive();
+  const chosen =
+    addressbookHref && active.includes(addressbookHref) ? addressbookHref : effectiveDefault();
+  const abs = chosen ? resolveHref(cfg, chosen) : collectionUrl(cfg);
+  return abs.endsWith('/') ? abs : `${abs}/`;
+}
+
 /** Require CardDAV to be configured, or throw a 503 the route turns into a response. */
 function requireConfig(): NonNullable<ReturnType<typeof env.carddav>> {
   const cfg = env.carddav();
@@ -60,11 +74,18 @@ function requireConfig(): NonNullable<ReturnType<typeof env.carddav>> {
   return cfg;
 }
 
-/** Create a new card. Generates the UID + a `<uid>.vcf` resource. Returns the UID. */
-export async function createCard(name: string | null, emails: string[]): Promise<string> {
+/**
+ * Create a new card in the chosen address book (or the configured default).
+ * Generates the UID + a `<uid>.vcf` resource. Returns the UID.
+ */
+export async function createCard(
+  addressbookHref: string | null,
+  name: string | null,
+  emails: string[],
+): Promise<string> {
   const cfg = requireConfig();
   const uid = randomUUID();
-  const url = new URL(`${uid}.vcf`, collectionUrl(cfg)).toString();
+  const url = new URL(`${uid}.vcf`, targetCollection(cfg, addressbookHref)).toString();
   const res = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -116,14 +137,14 @@ export async function deleteCard(href: string): Promise<void> {
   await syncContacts();
 }
 
-/** Fetch + parse every card, then replace the local contacts cache. */
-export async function syncContacts(): Promise<void> {
-  const cfg = env.carddav();
-  if (!cfg) return;
-
+/** REPORT one book's cards, parsed + tagged with the book's identity. Empty on failure. */
+async function fetchBook(
+  cfg: NonNullable<ReturnType<typeof env.carddav>>,
+  book: { href: string; displayName: string },
+): Promise<ParsedContact[]> {
   let res: Response;
   try {
-    res = await fetch(cfg.url, {
+    res = await fetch(resolveHref(cfg, book.href), {
       method: 'REPORT',
       headers: {
         Authorization: authHeader(cfg),
@@ -133,24 +154,57 @@ export async function syncContacts(): Promise<void> {
       body: REPORT_BODY,
     });
   } catch (err) {
-    log.warn('CardDAV request failed:', (err as Error).message);
-    return;
+    log.warn(`CardDAV REPORT ${book.href} failed:`, (err as Error).message);
+    return [];
   }
-
   if (!res.ok) {
-    log.warn(`CardDAV REPORT returned ${res.status} ${res.statusText}`);
-    return;
+    log.warn(`CardDAV REPORT ${book.href} returned ${res.status} ${res.statusText}`);
+    return [];
   }
-
-  const xml = await res.text();
-  const cards = extractCards(xml);
-  // Attach each card's href/etag to its parsed address rows so edits/deletes can
-  // address the exact resource later.
-  const parsed: ParsedContact[] = cards.flatMap((c) =>
-    parseVCard(c.vcard).map((p) => ({ ...p, href: c.href, etag: c.etag })),
+  const cards = extractCards(await res.text());
+  // Attach each card's href/etag + the owning book so edits/deletes can address the
+  // exact resource and the manager can filter/group by book.
+  return cards.flatMap((c) =>
+    parseVCard(c.vcard).map((p) => ({
+      ...p,
+      href: c.href,
+      etag: c.etag,
+      addressbookHref: book.href,
+      addressbookName: book.displayName,
+    })),
   );
+}
+
+/** Ensure the discovered address-book set is populated (lazy, for the settings API). */
+export async function ensureDiscovered(): Promise<void> {
+  const cfg = env.carddav();
+  if (!cfg || getDiscovered().length > 0) return;
+  setDiscovered(await discoverAddressbooks(cfg));
+}
+
+/**
+ * Discover the address books, then fetch + parse every card from the **active** ones
+ * and replace the local contacts cache. The cache therefore mirrors exactly the
+ * books in use, so toggling a book active/inactive (then re-syncing) adds/removes its
+ * contacts with no per-query filtering.
+ */
+export async function syncContacts(): Promise<void> {
+  const cfg = env.carddav();
+  if (!cfg) return;
+
+  const books = await discoverAddressbooks(cfg);
+  setDiscovered(books);
+
+  const active = new Set(effectiveActive());
+  const activeBooks = books.filter((b) => active.has(b.href));
+
+  const parsed: ParsedContact[] = [];
+  for (const book of activeBooks) parsed.push(...(await fetchBook(cfg, book)));
+
   const count = replaceContacts(parsed);
-  log.info(`synced ${count} contact address(es) from ${cards.length} card(s)`);
+  log.info(
+    `synced ${count} contact address(es) from ${activeBooks.length}/${books.length} book(s)`,
+  );
 }
 
 /** Start the contacts sync loop: once on boot, then on the configured interval. */

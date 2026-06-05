@@ -148,12 +148,33 @@ export interface ContactCardDto {
   name: string | null;
   /** All email addresses on the card, in card order. */
   emails: string[];
+  /** Href of the address book this card lives in (null for pre-sync/legacy rows). */
+  addressbook: string | null;
 }
 
 /** Create/update payload for a contact card (UID assigned server-side on create). */
 export interface ContactCardInput {
   name: string | null;
   emails: string[];
+  /** Target address book href on create; omitted/null uses the configured default. */
+  addressbook?: string | null;
+}
+
+/** One discovered CardDAV address book (collection). */
+export interface AddressbookDto {
+  /** Collection href — the stable id used to target/filter a book. */
+  href: string;
+  /** Human-readable book name (CardDAV displayname, or the last path segment). */
+  displayName: string;
+}
+
+/** Discovered books + which are active (synced/in use) and the default create target. */
+export interface AddressbookSettingsDto {
+  books: AddressbookDto[];
+  /** Hrefs of the books currently synced into the contacts cache. */
+  active: string[];
+  /** Href of the book new contacts are created in, or null when none. */
+  default: string | null;
 }
 
 /** Per-folder cached sync state for the Settings → Sync view. */

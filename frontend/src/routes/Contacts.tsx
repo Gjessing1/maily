@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ContactCardDto } from '@maily/shared';
+import type { AddressbookDto, ContactCardDto } from '@maily/shared';
 import { api } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -19,20 +19,28 @@ interface Draft {
   card: ContactCardDto | null;
   name: string;
   emails: string[];
+  /** Target address book for a new card (ignored when editing an existing one). */
+  addressbook: string | null;
 }
 
-function newDraft(card: ContactCardDto | null): Draft {
+function newDraft(card: ContactCardDto | null, addressbook: string | null): Draft {
   return {
     card,
     name: card?.name ?? '',
     // Always leave one empty field to type into when none exist.
     emails: card && card.emails.length > 0 ? [...card.emails] : [''],
+    addressbook: card?.addressbook ?? addressbook,
   };
 }
 
 export function Contacts() {
   const navigate = useNavigate();
   const [cards, setCards] = useState<ContactCardDto[] | null>(null);
+  const [books, setBooks] = useState<AddressbookDto[]>([]);
+  const [activeBooks, setActiveBooks] = useState<string[]>([]);
+  const [defaultBook, setDefaultBook] = useState<string | null>(null);
+  // Selected book filter: null = "All".
+  const [filter, setFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
 
@@ -44,6 +52,26 @@ export function Contacts() {
   }, []);
 
   useEffect(load, [load]);
+
+  // Address books drive the filter chips + the create target.
+  useEffect(() => {
+    api
+      .addressbooks()
+      .then((s) => {
+        setBooks(s.books);
+        setActiveBooks(s.active);
+        setDefaultBook(s.default);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // Only books that are active *and* hold at least one cached card are worth a chip.
+  const filterBooks = books.filter((b) => activeBooks.includes(b.href));
+  const showFilter = filterBooks.length > 1;
+  const visible = cards && filter ? cards.filter((c) => c.addressbook === filter) : cards;
+  // New cards land in the filtered book if one is picked, else the configured default.
+  const createTarget = filter ?? defaultBook;
+  const bookName = (href: string | null) => books.find((b) => b.href === href)?.displayName ?? null;
 
   return (
     <div className="flex h-full flex-col">
@@ -57,13 +85,27 @@ export function Contacts() {
         </button>
         <h1 className="flex-1 text-lg font-semibold">Contacts</h1>
         <button
-          onClick={() => setDraft(newDraft(null))}
+          onClick={() => setDraft(newDraft(null, createTarget))}
           className="rounded-full p-2 text-accent active:bg-surface-2"
           aria-label="Add contact"
         >
           <PlusIcon />
         </button>
       </header>
+
+      {showFilter && (
+        <div className="flex gap-1.5 overflow-x-auto border-b border-border px-3 py-2 no-scrollbar">
+          <FilterChip label="All" active={filter === null} onClick={() => setFilter(null)} />
+          {filterBooks.map((b) => (
+            <FilterChip
+              key={b.href}
+              label={b.displayName}
+              active={filter === b.href}
+              onClick={() => setFilter(b.href)}
+            />
+          ))}
+        </div>
+      )}
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
         {error && <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>}
@@ -72,15 +114,15 @@ export function Contacts() {
           <div className="flex justify-center py-16">
             <Spinner />
           </div>
-        ) : cards && cards.length > 0 ? (
+        ) : visible && visible.length > 0 ? (
           <ul>
-            {cards.map((c) => {
+            {visible.map((c) => {
               const display = c.name || c.emails[0] || '(no name)';
               const hue = avatarHue(c.emails[0] ?? display);
               return (
                 <li key={c.uid}>
                   <button
-                    onClick={() => setDraft(newDraft(c))}
+                    onClick={() => setDraft(newDraft(c, createTarget))}
                     className="flex w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left active:bg-surface-2"
                   >
                     <span
@@ -105,9 +147,11 @@ export function Contacts() {
         ) : (
           !error && (
             <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
-              <p>No contacts yet.</p>
+              <p>
+                {filter ? `No contacts in ${bookName(filter) ?? 'this book'}.` : 'No contacts yet.'}
+              </p>
               <button
-                onClick={() => setDraft(newDraft(null))}
+                onClick={() => setDraft(newDraft(null, createTarget))}
                 className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
               >
                 Add a contact
@@ -165,7 +209,7 @@ function ContactEditor({
     const input = { name: name.trim() || null, emails: cleaned };
     try {
       if (draft.card) await api.updateContactCard(draft.card.uid, input);
-      else await api.createContactCard(input);
+      else await api.createContactCard({ ...input, addressbook: draft.addressbook });
       onSaved();
     } catch (e) {
       setError((e as Error).message || 'Save failed.');
@@ -287,5 +331,28 @@ function ContactEditor({
         onCancel={() => setConfirmDelete(false)}
       />
     </div>
+  );
+}
+
+/** A pill that filters the contact list to one address book (or "All"). */
+function FilterChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`shrink-0 rounded-full px-3 py-1.5 text-sm transition-colors ${
+        active ? 'bg-accent text-white' : 'bg-surface-2 text-faint active:bg-surface-3'
+      }`}
+    >
+      {label}
+    </button>
   );
 }

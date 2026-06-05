@@ -19,6 +19,9 @@ export interface ParsedContact {
   /** Card resource path + etag (same across a card's email rows). */
   href?: string | null;
   etag?: string | null;
+  /** Address book the card lives in (href + display name) — multi-book support. */
+  addressbookHref?: string | null;
+  addressbookName?: string | null;
 }
 
 /** In-memory email→display-name map, rebuilt from the DB after every sync. */
@@ -64,6 +67,8 @@ export function replaceContacts(parsed: ParsedContact[]): number {
           vcardUid: r.vcardUid,
           href: r.href ?? null,
           etag: r.etag ?? null,
+          addressbookHref: r.addressbookHref ?? null,
+          addressbookName: r.addressbookName ?? null,
         })
         .run();
     }
@@ -94,22 +99,27 @@ export function listCards(): ContactCardDto[] {
       name: contacts.name,
       vcardUid: contacts.vcardUid,
       href: contacts.href,
+      addressbookHref: contacts.addressbookHref,
     })
     .from(contacts)
     .all();
 
-  const byCard = new Map<string, { name: string | null; emails: string[] }>();
+  const byCard = new Map<
+    string,
+    { name: string | null; emails: string[]; addressbook: string | null }
+  >();
   for (const r of rows) {
     const key = r.vcardUid ?? r.href;
     if (!key) continue; // un-addressable (pre-sync) row — skip
-    const card = byCard.get(key) ?? { name: r.name, emails: [] };
+    const card = byCard.get(key) ?? { name: r.name, emails: [], addressbook: r.addressbookHref };
     if (!card.name && r.name) card.name = r.name;
+    if (!card.addressbook && r.addressbookHref) card.addressbook = r.addressbookHref;
     card.emails.push(r.email);
     byCard.set(key, card);
   }
 
   return [...byCard.entries()]
-    .map(([uid, c]) => ({ uid, name: c.name, emails: c.emails }))
+    .map(([uid, c]) => ({ uid, name: c.name, emails: c.emails, addressbook: c.addressbook }))
     .sort((a, b) => (a.name ?? a.emails[0] ?? '').localeCompare(b.name ?? b.emails[0] ?? ''));
 }
 
