@@ -8,10 +8,15 @@
  * The public contract is unchanged: `value` is the canonical comma/semicolon-separated
  * address string the composer parses on send, and everything here is derived from it —
  * no separate source of truth, so draft-restore and dirty-detection keep working.
+ *
+ * Opening rules: the picker does **not** spring open merely on focus. It opens when the
+ * user starts typing (server-side search once ≥2 chars) or when they tap the address-book
+ * button, which browses the whole addressbook (filterable client-side as you type).
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ContactDto } from '@maily/shared';
 import { api } from '../api/client';
+import { UsersIcon } from '../ui/icons';
 
 interface Props {
   value: string;
@@ -64,6 +69,9 @@ function formatRecipient(c: ContactDto): string {
 export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLabel }: Props) {
   const [focused, setFocused] = useState(false);
   const [open, setOpen] = useState(false);
+  // True when the picker was opened by the address-book button (browse the whole book)
+  // rather than by typing; keeps the list up even when the in-progress token is empty.
+  const [browse, setBrowse] = useState(false);
   const [active, setActive] = useState(0);
   const [suggestions, setSuggestions] = useState<ContactDto[]>([]);
   // The whole addressbook, lazy-loaded once the picker first opens; shown when the
@@ -128,10 +136,21 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
     };
   }, [query]);
 
-  // What the dropdown shows: search hits when typing, else the whole book — minus
-  // anything already added as a chip.
+  // What the dropdown shows: server search hits once ≥2 chars are typed; otherwise the
+  // whole book (client-filtered) but only while browsing — typing nothing outside browse
+  // mode shows nothing. Either way, drop anything already added as a chip.
   const added = new Set(chips.map((c) => addrEmail(c).toLowerCase()));
-  const source = query.length >= 2 ? suggestions : (allContacts ?? []);
+  const q = query.toLowerCase();
+  let source: ContactDto[];
+  if (query.length >= 2) {
+    source = suggestions;
+  } else if (browse) {
+    source = (allContacts ?? []).filter(
+      (c) => !q || (c.name?.toLowerCase().includes(q) ?? false) || c.email.toLowerCase().includes(q),
+    );
+  } else {
+    source = [];
+  }
   const list = source.filter((c) => !added.has(c.email.toLowerCase()));
   const activeIdx = active < list.length ? active : 0;
 
@@ -141,9 +160,24 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
     onChange(lead + tail);
   }
 
-  /** Replace the in-progress token as the user types. */
+  /** Replace the in-progress token as the user types; open the picker once typing starts. */
   function setInput(text: string) {
     emit(committed, text);
+    if (text.trim()) setOpen(true);
+    else if (!browse) setOpen(false);
+  }
+
+  /** Address-book button: toggle the full-addressbook browse picker. */
+  function toggleBrowse() {
+    if (open) {
+      setOpen(false);
+      setBrowse(false);
+    } else {
+      setBrowse(true);
+      setOpen(true);
+      setActive(0);
+    }
+    inputRef.current?.focus();
   }
 
   /** Turn the typed token into a chip (on Enter / comma / blur). */
@@ -234,14 +268,12 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
           value={inputText}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          onFocus={() => {
-            setFocused(true);
-            setOpen(true);
-          }}
+          onFocus={() => setFocused(true)}
           onBlur={() =>
             setTimeout(() => {
               setFocused(false);
               setOpen(false);
+              setBrowse(false);
             }, 120)
           }
           autoFocus={autoFocus}
@@ -255,6 +287,19 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
           placeholder={chips.length ? '' : placeholder}
           className="min-w-[10ch] flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
         />
+        <button
+          type="button"
+          // Keep the input focused so the picker doesn't blur-close as it opens.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={toggleBrowse}
+          className={`shrink-0 rounded-full p-1 active:text-fg ${
+            browse && open ? 'text-accent' : 'text-faint'
+          }`}
+          aria-label="Browse contacts"
+          aria-pressed={browse && open}
+        >
+          <UsersIcon className="size-5" />
+        </button>
       </div>
       {open && list.length > 0 && (
         <ul
