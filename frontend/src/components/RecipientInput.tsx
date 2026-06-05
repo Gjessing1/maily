@@ -146,7 +146,8 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
     source = suggestions;
   } else if (browse) {
     source = (allContacts ?? []).filter(
-      (c) => !q || (c.name?.toLowerCase().includes(q) ?? false) || c.email.toLowerCase().includes(q),
+      (c) =>
+        !q || (c.name?.toLowerCase().includes(q) ?? false) || c.email.toLowerCase().includes(q),
     );
   } else {
     source = [];
