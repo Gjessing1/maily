@@ -10,28 +10,9 @@ import { useNavigate } from 'react-router-dom';
 import type { AddressbookDto, ContactCardDto } from '@maily/shared';
 import { api } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
-import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, CloseIcon, PlusIcon, TrashIcon } from '../ui/icons';
-
-/** Editor draft. `card` null = creating a new card; otherwise editing it. */
-interface Draft {
-  card: ContactCardDto | null;
-  name: string;
-  emails: string[];
-  /** Target address book for a new card (ignored when editing an existing one). */
-  addressbook: string | null;
-}
-
-function newDraft(card: ContactCardDto | null, addressbook: string | null): Draft {
-  return {
-    card,
-    name: card?.name ?? '',
-    // Always leave one empty field to type into when none exist.
-    emails: card && card.emails.length > 0 ? [...card.emails] : [''],
-    addressbook: card?.addressbook ?? addressbook,
-  };
-}
+import { BackIcon, PlusIcon } from '../ui/icons';
 
 export function Contacts() {
   const navigate = useNavigate();
@@ -42,7 +23,8 @@ export function Contacts() {
   // Selected book filter: null = "All".
   const [filter, setFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  // When set, the create-contact editor is open (targeting this address book).
+  const [creating, setCreating] = useState<{ addressbook: string | null } | null>(null);
 
   const load = useCallback(() => {
     api
@@ -85,7 +67,7 @@ export function Contacts() {
         </button>
         <h1 className="flex-1 text-lg font-semibold">Contacts</h1>
         <button
-          onClick={() => setDraft(newDraft(null, createTarget))}
+          onClick={() => setCreating({ addressbook: createTarget })}
           className="rounded-full p-2 text-accent active:bg-surface-2"
           aria-label="Add contact"
         >
@@ -122,22 +104,28 @@ export function Contacts() {
               return (
                 <li key={c.uid}>
                   <button
-                    onClick={() => setDraft(newDraft(c, createTarget))}
+                    onClick={() => navigate(`/contacts/${encodeURIComponent(c.uid)}`)}
                     className="flex w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left active:bg-surface-2"
                   >
-                    <span
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
-                      style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
-                    >
-                      {initials(c.name, c.emails[0] ?? null)}
-                    </span>
+                    {c.photo ? (
+                      <img
+                        src={c.photo}
+                        alt=""
+                        className="size-10 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+                        style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
+                      >
+                        {initials(c.name, c.emails[0] ?? null)}
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px] text-fg">{display}</span>
-                      {c.emails.length > 0 && (
-                        <span className="block truncate text-sm text-faint">
-                          {c.emails.join(', ')}
-                        </span>
-                      )}
+                      <span className="block truncate text-sm text-faint">
+                        {c.org || c.emails.join(', ')}
+                      </span>
                     </span>
                   </button>
                 </li>
@@ -151,7 +139,7 @@ export function Contacts() {
                 {filter ? `No contacts in ${bookName(filter) ?? 'this book'}.` : 'No contacts yet.'}
               </p>
               <button
-                onClick={() => setDraft(newDraft(null, createTarget))}
+                onClick={() => setCreating({ addressbook: createTarget })}
                 className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
               >
                 Add a contact
@@ -161,175 +149,18 @@ export function Contacts() {
         )}
       </main>
 
-      {draft && (
+      {creating && (
         <ContactEditor
-          draft={draft}
-          onClose={() => setDraft(null)}
-          onSaved={() => {
-            setDraft(null);
-            load();
+          card={null}
+          addressbook={creating.addressbook}
+          onClose={() => setCreating(null)}
+          onSaved={(uid) => {
+            setCreating(null);
+            if (uid) navigate(`/contacts/${encodeURIComponent(uid)}`);
+            else load();
           }}
         />
       )}
-    </div>
-  );
-}
-
-/** Modal create/edit form for a single card. */
-function ContactEditor({
-  draft,
-  onClose,
-  onSaved,
-}: {
-  draft: Draft;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState(draft.name);
-  const [emails, setEmails] = useState<string[]>(draft.emails);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const editing = draft.card !== null;
-
-  const setEmail = (i: number, v: string) =>
-    setEmails((prev) => prev.map((e, idx) => (idx === i ? v : e)));
-  const addEmail = () => setEmails((prev) => [...prev, '']);
-  const removeEmail = (i: number) =>
-    setEmails((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
-
-  async function save() {
-    const cleaned = emails.map((e) => e.trim()).filter(Boolean);
-    if (cleaned.length === 0) {
-      setError('Add at least one email address.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const input = { name: name.trim() || null, emails: cleaned };
-    try {
-      if (draft.card) await api.updateContactCard(draft.card.uid, input);
-      else await api.createContactCard({ ...input, addressbook: draft.addressbook });
-      onSaved();
-    } catch (e) {
-      setError((e as Error).message || 'Save failed.');
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!draft.card) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.deleteContactCard(draft.card.uid);
-      onSaved();
-    } catch (e) {
-      setError((e as Error).message || 'Delete failed.');
-      setBusy(false);
-      setConfirmDelete(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
-      role="dialog"
-      aria-modal="true"
-    >
-      <button
-        type="button"
-        aria-label="Cancel"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-      />
-      <div className="safe-bottom relative w-full max-w-md rounded-t-2xl border border-border bg-bg p-5 shadow-xl sm:rounded-2xl">
-        <h2 className="text-base font-semibold text-fg">
-          {editing ? 'Edit contact' : 'New contact'}
-        </h2>
-
-        <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-faint">
-          Name
-        </label>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Full name"
-          className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-[15px] text-fg outline-none focus:border-accent"
-        />
-
-        <p className="mt-4 text-xs font-medium uppercase tracking-wide text-faint">Emails</p>
-        <div className="mt-1 flex flex-col gap-2">
-          {emails.map((e, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                value={e}
-                onChange={(ev) => setEmail(i, ev.target.value)}
-                placeholder="name@example.com"
-                type="email"
-                inputMode="email"
-                className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[15px] text-fg outline-none focus:border-accent"
-              />
-              {emails.length > 1 && (
-                <button
-                  onClick={() => removeEmail(i)}
-                  className="shrink-0 rounded-full p-2 text-faint active:bg-surface-2"
-                  aria-label="Remove email"
-                >
-                  <CloseIcon className="size-4" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={addEmail}
-          className="mt-2 flex items-center gap-1.5 text-sm text-accent active:opacity-70"
-        >
-          <PlusIcon className="size-4" /> Add email
-        </button>
-
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
-
-        <div className="mt-5 flex items-center gap-2">
-          {editing && (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              disabled={busy}
-              className="rounded-full p-2 text-danger active:bg-surface-2 disabled:opacity-50"
-              aria-label="Delete contact"
-            >
-              <TrashIcon className="size-5" />
-            </button>
-          )}
-          <div className="ml-auto flex gap-2">
-            <button
-              onClick={onClose}
-              disabled={busy}
-              className="rounded-full px-4 py-2 text-sm text-fg active:bg-surface-2 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={save}
-              disabled={busy}
-              className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {busy ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <ConfirmDialog
-        open={confirmDelete}
-        title="Delete contact?"
-        message="This removes the card from your addressbook on the server."
-        confirmLabel="Delete"
-        danger
-        onConfirm={remove}
-        onCancel={() => setConfirmDelete(false)}
-      />
     </div>
   );
 }

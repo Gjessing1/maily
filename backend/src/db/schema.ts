@@ -181,6 +181,13 @@ export const contacts = sqliteTable(
     addressbookHref: text('addressbook_href'),
     /** The book's display name captured at sync time (labelling without a live PROPFIND). */
     addressbookName: text('addressbook_name'),
+    /**
+     * The card's full raw vCard text (contacts Phase 2). Stored verbatim per email-row
+     * (same across a card's rows) so rich fields can be parsed for display and, on edit,
+     * merged back while preserving properties maily doesn't model (PHOTO, X-* extensions).
+     * Radicale stays the source of truth; this is a rebuildable cache. NULL for legacy rows.
+     */
+    rawVcard: text('raw_vcard'),
     createdAt: now(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
   },

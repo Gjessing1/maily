@@ -140,6 +140,22 @@ export interface ContactDto {
   email: string;
 }
 
+/** A labelled value (phone/website) — the optional label is Home/Work/Cell/etc. */
+export interface TypedValueDto {
+  type: string | null;
+  value: string;
+}
+
+/** A structured postal address (vCard ADR); PO-box/extended slots are not modelled. */
+export interface ContactAddressDto {
+  type: string | null;
+  street: string;
+  locality: string;
+  region: string;
+  postalCode: string;
+  country: string;
+}
+
 /** A whole CardDAV card (one vCard) as listed/edited in the Contacts manager. */
 export interface ContactCardDto {
   /** vCard UID — stable identity used to update/delete the card. */
@@ -150,14 +166,42 @@ export interface ContactCardDto {
   emails: string[];
   /** Href of the address book this card lives in (null for pre-sync/legacy rows). */
   addressbook: string | null;
+  /** Rich fields (contacts Phase 2), parsed from the card's raw vCard. */
+  nickname: string | null;
+  /** Company / organisation (first ORG component). */
+  org: string | null;
+  /** Job title / role (vCard TITLE). */
+  title: string | null;
+  phones: TypedValueDto[];
+  urls: TypedValueDto[];
+  addresses: ContactAddressDto[];
+  /** Birthday, as stored (ISO `YYYY-MM-DD` or a free-form vCard date). */
+  birthday: string | null;
+  note: string | null;
+  categories: string[];
+  /** Renderable avatar source (data: URI or external URL) parsed from PHOTO, if any. */
+  photo: string | null;
 }
 
-/** Create/update payload for a contact card (UID assigned server-side on create). */
+/**
+ * Create/update payload for a contact card (UID assigned server-side on create).
+ * The rich fields are optional so a minimal name+emails payload still works; omitted
+ * fields are treated as empty. PHOTO and unmodelled properties are preserved server-side.
+ */
 export interface ContactCardInput {
   name: string | null;
   emails: string[];
   /** Target address book href on create; omitted/null uses the configured default. */
   addressbook?: string | null;
+  nickname?: string | null;
+  org?: string | null;
+  title?: string | null;
+  phones?: TypedValueDto[];
+  urls?: TypedValueDto[];
+  addresses?: ContactAddressDto[];
+  birthday?: string | null;
+  note?: string | null;
+  categories?: string[];
 }
 
 /** One discovered CardDAV address book (collection). */

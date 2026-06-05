@@ -111,24 +111,319 @@ function escapeValue(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
 }
 
-/**
- * Build a vCard 3.0 document for a card. 3.0 is the most broadly compatible with
- * Radicale and other clients. `N` is derived best-effort from the name (last token
- * = family) since 3.0 nominally requires it; `FN` carries the canonical display name.
- */
-export function buildVCard(uid: string, name: string | null, emails: string[]): string {
-  const fn = (name ?? '').trim();
+// ── Rich fields (contacts Phase 2) ──────────────────────────────────────────────
+// We parse a card's full detail for display and round-trip edits while keeping
+// Radicale authoritative: edits rewrite only the properties maily models and leave
+// everything else (PHOTO, X-* extensions, REV, …) untouched — see `mergeVCard`.
+
+/** A value carrying an optional label, e.g. a phone or URL tagged Home/Work/Cell. */
+export interface TypedValue {
+  type: string | null;
+  value: string;
+}
+
+/** A structured postal address (vCard `ADR`); the PO-box/extended slots are unused. */
+export interface VCardAddress {
+  type: string | null;
+  street: string;
+  locality: string;
+  region: string;
+  postalCode: string;
+  country: string;
+}
+
+/** The editable subset of a card maily models — the fields a build/merge rewrites. */
+export interface EditableCard {
+  name: string | null;
+  nickname: string | null;
+  org: string | null;
+  title: string | null;
+  emails: string[];
+  phones: TypedValue[];
+  urls: TypedValue[];
+  addresses: VCardAddress[];
+  birthday: string | null;
+  note: string | null;
+  categories: string[];
+}
+
+/** A parsed card: the editable fields, plus read-only display extras (UID, photo). */
+export interface CardDetail extends EditableCard {
+  uid: string | null;
+  /** A renderable image source for the avatar (data: URI or external URL), if any. */
+  photo: string | null;
+}
+
+/** One physical vCard line, split into property, parameters, and raw value. */
+interface VLine {
+  prop: string;
+  params: Record<string, string>;
+  /** Lowercased TYPE values (e.g. `['home','voice']`), comma- or repeat-split. */
+  types: string[];
+  value: string;
+}
+
+/** Unescape `\,` `\;` `\\` but keep newlines as real line breaks (for NOTE/ADR). */
+function unescapeText(v: string): string {
+  return v
+    .replace(/\\n/gi, '\n')
+    .replace(/\\([,;\\])/g, '$1')
+    .trim();
+}
+
+/** Tokenise one unfolded line into property + params + value. */
+function parseLine(line: string): VLine | null {
+  const colon = line.indexOf(':');
+  if (colon < 0) return null;
+  const head = line.slice(0, colon);
+  const value = line.slice(colon + 1);
+  const segs = head.split(';');
+  const prop = segs[0]!.split('.').pop()!.toUpperCase();
+  const params: Record<string, string> = {};
+  const types: string[] = [];
+  for (const seg of segs.slice(1)) {
+    const eq = seg.indexOf('=');
+    if (eq < 0) {
+      // Bare param (vCard 2.1 style, e.g. `;HOME`) reads as a type.
+      types.push(seg.trim().toLowerCase());
+      continue;
+    }
+    const key = seg.slice(0, eq).toUpperCase();
+    const val = seg.slice(eq + 1);
+    params[key] = val;
+    if (key === 'TYPE') for (const t of val.split(',')) types.push(t.trim().toLowerCase());
+  }
+  return { prop, params, types, value };
+}
+
+/** First meaningful type label (skips the vCard noise types), title-cased, or null. */
+function labelType(types: string[]): string | null {
+  const skip = new Set(['internet', 'voice', 'pref', 'x-pref']);
+  const t = types.find((x) => x && !skip.has(x));
+  if (!t) return null;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/** Build a renderable image source from a PHOTO line (data: URI, URL, or base64). */
+function photoSrc(line: VLine): string | null {
+  const v = line.value.trim();
+  if (!v) return null;
+  if (/^(data:|https?:)/i.test(v)) return v;
+  // vCard 3.0 inline: `PHOTO;ENCODING=b;TYPE=JPEG:<base64>`.
+  const enc = (line.params.ENCODING ?? '').toLowerCase();
+  if (enc === 'b' || enc === 'base64') {
+    const kind = line.types.find((t) => t && t !== 'pref') ?? 'jpeg';
+    return `data:image/${kind};base64,${v.replace(/\s+/g, '')}`;
+  }
+  return null;
+}
+
+/** Parse a full vCard into the rich `CardDetail` used by the detail page + editor. */
+export function parseCardDetail(vcard: string): CardDetail {
+  const detail: CardDetail = {
+    uid: null,
+    name: null,
+    nickname: null,
+    org: null,
+    title: null,
+    emails: [],
+    phones: [],
+    urls: [],
+    addresses: [],
+    birthday: null,
+    note: null,
+    categories: [],
+    photo: null,
+  };
+  let structuredName: string | null = null;
+
+  for (const raw of unfold(vcard)) {
+    const line = parseLine(raw);
+    if (!line) continue;
+    const { prop, value, types } = line;
+    switch (prop) {
+      case 'UID':
+        detail.uid = unescapeText(value);
+        break;
+      case 'FN':
+        detail.name = unescapeText(value);
+        break;
+      case 'N':
+        if (!structuredName) {
+          const [family = '', given = ''] = value.split(';').map(unescapeText);
+          structuredName = `${given} ${family}`.trim() || null;
+        }
+        break;
+      case 'NICKNAME':
+        detail.nickname = unescapeText(value) || null;
+        break;
+      case 'ORG':
+        // ORG is `Company;Department;…`; the first component is the company.
+        detail.org = unescapeText(value.split(';')[0] ?? value) || null;
+        break;
+      case 'TITLE':
+        detail.title = unescapeText(value) || null;
+        break;
+      case 'EMAIL': {
+        const e = unescapeText(value);
+        if (e) detail.emails.push(e);
+        break;
+      }
+      case 'TEL': {
+        const v = unescapeText(value);
+        if (v) detail.phones.push({ type: labelType(types), value: v });
+        break;
+      }
+      case 'URL': {
+        const v = unescapeText(value);
+        if (v) detail.urls.push({ type: labelType(types), value: v });
+        break;
+      }
+      case 'ADR': {
+        // ADR = po-box;ext;street;locality;region;postal;country.
+        const p = value.split(';').map(unescapeText);
+        const adr: VCardAddress = {
+          type: labelType(types),
+          street: p[2] ?? '',
+          locality: p[3] ?? '',
+          region: p[4] ?? '',
+          postalCode: p[5] ?? '',
+          country: p[6] ?? '',
+        };
+        if (adr.street || adr.locality || adr.region || adr.postalCode || adr.country)
+          detail.addresses.push(adr);
+        break;
+      }
+      case 'BDAY':
+        detail.birthday = unescapeText(value) || null;
+        break;
+      case 'NOTE':
+        detail.note = unescapeText(value) || null;
+        break;
+      case 'CATEGORIES':
+        detail.categories = value.split(',').map(unescapeText).filter(Boolean);
+        break;
+      case 'PHOTO':
+        if (!detail.photo) detail.photo = photoSrc(line);
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (!detail.name) detail.name = structuredName;
+  return detail;
+}
+
+/** Property keys maily owns; a build/merge rewrites exactly these and keeps the rest. */
+const MANAGED_PROPS = new Set([
+  'FN',
+  'N',
+  'NICKNAME',
+  'ORG',
+  'TITLE',
+  'EMAIL',
+  'TEL',
+  'URL',
+  'ADR',
+  'BDAY',
+  'NOTE',
+  'CATEGORIES',
+]);
+
+/** Serialise the managed properties of an editable card to vCard lines (no UID/PHOTO). */
+function managedLines(card: EditableCard): string[] {
+  const fn = (card.name ?? '').trim();
   const parts = fn ? fn.split(/\s+/) : [];
   const family = parts.length > 1 ? parts[parts.length - 1]! : '';
   const given = parts.length > 1 ? parts.slice(0, -1).join(' ') : fn;
+  const lines: string[] = [
+    `FN:${escapeValue(fn)}`,
+    `N:${escapeValue(family)};${escapeValue(given)};;;`,
+  ];
+  if (card.nickname?.trim()) lines.push(`NICKNAME:${escapeValue(card.nickname.trim())}`);
+  if (card.org?.trim()) lines.push(`ORG:${escapeValue(card.org.trim())};`);
+  if (card.title?.trim()) lines.push(`TITLE:${escapeValue(card.title.trim())}`);
+  for (const e of card.emails) {
+    const v = e.trim();
+    if (v) lines.push(`EMAIL;TYPE=INTERNET:${escapeValue(v)}`);
+  }
+  for (const p of card.phones) {
+    const v = p.value.trim();
+    if (!v) continue;
+    const type = p.type?.trim() ? `;TYPE=${escapeValue(p.type.trim().toUpperCase())}` : '';
+    lines.push(`TEL${type}:${escapeValue(v)}`);
+  }
+  for (const u of card.urls) {
+    const v = u.value.trim();
+    if (!v) continue;
+    const type = u.type?.trim() ? `;TYPE=${escapeValue(u.type.trim().toUpperCase())}` : '';
+    lines.push(`URL${type}:${escapeValue(v)}`);
+  }
+  for (const a of card.addresses) {
+    if (!(a.street || a.locality || a.region || a.postalCode || a.country)) continue;
+    const type = a.type?.trim() ? `;TYPE=${escapeValue(a.type.trim().toUpperCase())}` : '';
+    const adr = [
+      '',
+      '',
+      escapeValue(a.street),
+      escapeValue(a.locality),
+      escapeValue(a.region),
+      escapeValue(a.postalCode),
+      escapeValue(a.country),
+    ].join(';');
+    lines.push(`ADR${type}:${adr}`);
+  }
+  if (card.birthday?.trim()) lines.push(`BDAY:${escapeValue(card.birthday.trim())}`);
+  if (card.note?.trim()) lines.push(`NOTE:${escapeValue(card.note.trim())}`);
+  const cats = card.categories.map((c) => c.trim()).filter(Boolean);
+  if (cats.length) lines.push(`CATEGORIES:${cats.map(escapeValue).join(',')}`);
+  return lines;
+}
+
+/**
+ * Build a vCard 3.0 document from scratch (card creation). 3.0 is the most broadly
+ * compatible with Radicale and other clients. `N` is derived best-effort from the name.
+ */
+export function buildVCard(uid: string, card: EditableCard): string {
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
     `UID:${escapeValue(uid)}`,
-    `FN:${escapeValue(fn)}`,
-    `N:${escapeValue(family)};${escapeValue(given)};;;`,
-    ...emails.map((e) => `EMAIL;TYPE=INTERNET:${escapeValue(e.trim())}`),
+    ...managedLines(card),
     'END:VCARD',
   ];
   return lines.join('\r\n') + '\r\n';
+}
+
+/**
+ * Round-trip an edit into an existing raw vCard: rewrite the properties maily owns
+ * (`MANAGED_PROPS`) from `card`, but keep every other line (UID, VERSION, PHOTO, REV,
+ * X-* extensions) exactly as Radicale served it — so unmodelled data isn't lost on save.
+ * Falls back to a from-scratch build when the raw is missing/garbled.
+ */
+export function mergeVCard(uid: string, raw: string | null, card: EditableCard): string {
+  if (!raw || !/BEGIN:VCARD/i.test(raw)) return buildVCard(uid, card);
+  const kept: string[] = [];
+  let inserted = false;
+  const managed = managedLines(card);
+
+  for (const physical of unfold(raw)) {
+    const line = parseLine(physical);
+    const prop = line?.prop ?? physical.split(/[;:]/)[0]!.toUpperCase();
+    if (prop === 'BEGIN' || prop === 'END') continue; // re-emitted by the wrapper
+    if (line && MANAGED_PROPS.has(prop)) {
+      // Drop the old managed line; splice the rebuilt block in at the first hit so
+      // managed props stay grouped roughly where they were.
+      if (!inserted) {
+        kept.push(...managed);
+        inserted = true;
+      }
+      continue;
+    }
+    kept.push(physical);
+  }
+  if (!inserted) kept.push(...managed);
+
+  return ['BEGIN:VCARD', ...kept, 'END:VCARD'].join('\r\n') + '\r\n';
 }

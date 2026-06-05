@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { createLogger } from '../logger.js';
 import { env } from '../env.js';
 import { replaceContacts, type ParsedContact } from './store.js';
-import { buildVCard, extractCards, parseVCard } from './vcard.js';
+import { buildVCard, extractCards, mergeVCard, parseVCard, type EditableCard } from './vcard.js';
 import { discoverAddressbooks } from './discover.js';
 import { effectiveActive, effectiveDefault, getDiscovered, setDiscovered } from './addressbooks.js';
 
@@ -80,8 +80,7 @@ function requireConfig(): NonNullable<ReturnType<typeof env.carddav>> {
  */
 export async function createCard(
   addressbookHref: string | null,
-  name: string | null,
-  emails: string[],
+  card: EditableCard,
 ): Promise<string> {
   const cfg = requireConfig();
   const uid = randomUUID();
@@ -93,20 +92,24 @@ export async function createCard(
       'Content-Type': 'text/vcard; charset=utf-8',
       'If-None-Match': '*', // refuse to clobber an existing resource
     },
-    body: buildVCard(uid, name, emails),
+    body: buildVCard(uid, card),
   });
   if (!res.ok) throw new CardDavError(`CardDAV PUT failed: ${res.status}`, 502);
   await syncContacts();
   return uid;
 }
 
-/** Update an existing card in place (same UID). `etag` guards against lost updates. */
+/**
+ * Update an existing card in place (same UID). `etag` guards against lost updates;
+ * `raw` is the card's current vCard so the edit preserves properties maily doesn't
+ * model (PHOTO, X-* extensions) rather than rebuilding the card from scratch.
+ */
 export async function updateCard(
   uid: string,
   href: string,
   etag: string | null,
-  name: string | null,
-  emails: string[],
+  raw: string | null,
+  card: EditableCard,
 ): Promise<void> {
   const cfg = requireConfig();
   const headers: Record<string, string> = {
@@ -117,7 +120,7 @@ export async function updateCard(
   const res = await fetch(resolveHref(cfg, href), {
     method: 'PUT',
     headers,
-    body: buildVCard(uid, name, emails),
+    body: mergeVCard(uid, raw, card),
   });
   if (res.status === 412) throw new CardDavError('Card changed on server; reload and retry', 409);
   if (!res.ok) throw new CardDavError(`CardDAV PUT failed: ${res.status}`, 502);
@@ -171,6 +174,7 @@ async function fetchBook(
       etag: c.etag,
       addressbookHref: book.href,
       addressbookName: book.displayName,
+      raw: c.vcard,
     })),
   );
 }

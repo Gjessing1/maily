@@ -13,6 +13,7 @@ import { Compose } from './routes/Compose';
 import { Search } from './routes/Search';
 import { Settings } from './routes/Settings';
 import { Contacts } from './routes/Contacts';
+import { ContactDetail } from './routes/ContactDetail';
 
 export function App() {
   const { authed } = useAuth();
@@ -52,6 +53,7 @@ export function App() {
         <Route path="/search" element={<Search />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/contacts" element={<Contacts />} />
+        <Route path="/contacts/:uid" element={<ContactDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <UndoSnackbar />

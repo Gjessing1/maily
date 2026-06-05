@@ -3,8 +3,8 @@
  * the source of truth — ROADMAP §3.7.D). Writes round-trip through `contacts/carddav`.
  */
 import type { FastifyInstance } from 'fastify';
-import type { ContactCardInput } from '@maily/shared';
-import { getCardByKey, listCards, searchContacts } from '../../contacts/store.js';
+import type { ContactAddressDto, ContactCardInput, TypedValueDto } from '@maily/shared';
+import { getCardByKey, getCardDetail, listCards, searchContacts } from '../../contacts/store.js';
 import {
   CardDavError,
   createCard,
@@ -13,15 +13,38 @@ import {
   syncContacts,
   updateCard,
 } from '../../contacts/carddav.js';
+import type { EditableCard } from '../../contacts/vcard.js';
 import { getAddressbookState, setAddressbookSettings } from '../../contacts/addressbooks.js';
 
-/** Clean a create/update payload into a name, deduped emails, and a target book. */
+/** Sanitise a labelled-value list (phones/urls): trim, drop empties, cap the label. */
+function cleanTyped(items: TypedValueDto[] | undefined): TypedValueDto[] {
+  return (items ?? [])
+    .map((i) => ({
+      type: i?.type?.toString().trim() || null,
+      value: String(i?.value ?? '').trim(),
+    }))
+    .filter((i) => i.value);
+}
+
+/** Sanitise the address list: trim every component, drop wholly-empty entries. */
+function cleanAddresses(items: ContactAddressDto[] | undefined): ContactAddressDto[] {
+  return (items ?? [])
+    .map((a) => ({
+      type: a?.type?.toString().trim() || null,
+      street: String(a?.street ?? '').trim(),
+      locality: String(a?.locality ?? '').trim(),
+      region: String(a?.region ?? '').trim(),
+      postalCode: String(a?.postalCode ?? '').trim(),
+      country: String(a?.country ?? '').trim(),
+    }))
+    .filter((a) => a.street || a.locality || a.region || a.postalCode || a.country);
+}
+
+/** Clean a create/update payload into the editable card + its target book. */
 function normalizeCard(body: ContactCardInput | undefined): {
-  name: string | null;
-  emails: string[];
+  card: EditableCard;
   addressbook: string | null;
 } {
-  const name = body?.name?.trim() || null;
   const addressbook = body?.addressbook ? String(body.addressbook) : null;
   const seen = new Set<string>();
   const emails: string[] = [];
@@ -33,7 +56,20 @@ function normalizeCard(body: ContactCardInput | undefined): {
       emails.push(e);
     }
   }
-  return { name, emails, addressbook };
+  const card: EditableCard = {
+    name: body?.name?.trim() || null,
+    nickname: body?.nickname?.trim() || null,
+    org: body?.org?.trim() || null,
+    title: body?.title?.trim() || null,
+    emails,
+    phones: cleanTyped(body?.phones),
+    urls: cleanTyped(body?.urls),
+    addresses: cleanAddresses(body?.addresses),
+    birthday: body?.birthday?.trim() || null,
+    note: body?.note?.trim() || null,
+    categories: (body?.categories ?? []).map((c) => String(c).trim()).filter(Boolean),
+  };
+  return { card, addressbook };
 }
 
 export async function contactRoutes(app: FastifyInstance): Promise<void> {
@@ -70,13 +106,21 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     return book ? cards.filter((c) => c.addressbook === book) : cards;
   });
 
+  // Fetch one card's rich detail by key (vCard UID, or href for UID-less cards).
+  app.get<{ Params: { key: string } }>('/api/contacts/cards/:key', async (req, reply) => {
+    const card = getCardDetail(req.params.key);
+    if (!card) return reply.code(404).send({ error: 'card not found' });
+    return card;
+  });
+
   // Create a new card in the chosen book (or the default). UID is assigned server-side.
   app.post<{ Body: ContactCardInput }>('/api/contacts/cards', async (req, reply) => {
-    const { name, emails, addressbook } = normalizeCard(req.body);
-    if (emails.length === 0) return reply.code(400).send({ error: 'at least one email required' });
+    const { card, addressbook } = normalizeCard(req.body);
+    if (card.emails.length === 0)
+      return reply.code(400).send({ error: 'at least one email required' });
     try {
-      const uid = await createCard(addressbook, name, emails);
-      return reply.code(201).send({ uid, name, emails, addressbook });
+      const uid = await createCard(addressbook, card);
+      return reply.code(201).send({ uid, ...card, addressbook });
     } catch (err) {
       const status = err instanceof CardDavError ? err.status : 502;
       return reply.code(status).send({ error: (err as Error).message });
@@ -87,14 +131,14 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.put<{ Params: { key: string }; Body: ContactCardInput }>(
     '/api/contacts/cards/:key',
     async (req, reply) => {
-      const card = getCardByKey(req.params.key);
-      if (!card?.href) return reply.code(404).send({ error: 'card not found' });
-      const { name, emails } = normalizeCard(req.body);
-      if (emails.length === 0)
+      const existing = getCardByKey(req.params.key);
+      if (!existing?.href) return reply.code(404).send({ error: 'card not found' });
+      const { card } = normalizeCard(req.body);
+      if (card.emails.length === 0)
         return reply.code(400).send({ error: 'at least one email required' });
       try {
-        await updateCard(card.uid, card.href, card.etag, name, emails);
-        return { uid: card.uid, name, emails };
+        await updateCard(existing.uid, existing.href, existing.etag, existing.raw, card);
+        return { uid: existing.uid, ...card };
       } catch (err) {
         const status = err instanceof CardDavError ? err.status : 502;
         return reply.code(status).send({ error: (err as Error).message });

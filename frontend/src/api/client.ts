@@ -207,6 +207,10 @@ export const api = {
   /** Whole-card management (CardDAV write-back) for the Contacts manager. */
   contactCards: () => request<ContactCardDto[]>('/api/contacts/cards'),
 
+  /** One card's rich detail by key (UID, or href for UID-less cards). */
+  contactCard: (key: string) =>
+    request<ContactCardDto>(`/api/contacts/cards/${encodeURIComponent(key)}`),
+
   createContactCard: (input: ContactCardInput) =>
     request<ContactCardDto>('/api/contacts/cards', {
       method: 'POST',

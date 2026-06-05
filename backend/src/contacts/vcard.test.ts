@@ -7,9 +7,34 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildVCard, extractCards, parseVCard } from './vcard.js';
+import {
+  buildVCard,
+  extractCards,
+  mergeVCard,
+  parseCardDetail,
+  parseVCard,
+  type EditableCard,
+} from './vcard.js';
 
 const CRLF = '\r\n';
+
+/** Minimal editable card with everything empty but the given overrides. */
+function editable(over: Partial<EditableCard> = {}): EditableCard {
+  return {
+    name: null,
+    nickname: null,
+    org: null,
+    title: null,
+    emails: [],
+    phones: [],
+    urls: [],
+    addresses: [],
+    birthday: null,
+    note: null,
+    categories: [],
+    ...over,
+  };
+}
 
 test('parseVCard prefers FN, collects EMAILs, captures UID', () => {
   const vcard = [
@@ -94,7 +119,10 @@ test('extractCards pulls href/etag/vcard per response and decodes entities', () 
 });
 
 test('buildVCard emits a 3.0 card with derived N and round-trips through parseVCard', () => {
-  const vcard = buildVCard('uid-9', 'Alice Mary Example', ['alice@example.com']);
+  const vcard = buildVCard(
+    'uid-9',
+    editable({ name: 'Alice Mary Example', emails: ['alice@example.com'] }),
+  );
   assert.match(vcard, /VERSION:3\.0/);
   assert.match(vcard, /UID:uid-9/);
   assert.match(vcard, /FN:Alice Mary Example/);
@@ -108,6 +136,104 @@ test('buildVCard emits a 3.0 card with derived N and round-trips through parseVC
 });
 
 test('buildVCard escapes commas and semicolons in the display name', () => {
-  const vcard = buildVCard('uid-1', 'Doe, John; Jr', ['john@example.com']);
+  const vcard = buildVCard(
+    'uid-1',
+    editable({ name: 'Doe, John; Jr', emails: ['john@example.com'] }),
+  );
   assert.match(vcard, /FN:Doe\\, John\\; Jr/);
+});
+
+test('buildVCard emits rich fields and they round-trip through parseCardDetail', () => {
+  const vcard = buildVCard(
+    'uid-rich',
+    editable({
+      name: 'Rich Contact',
+      emails: ['rich@example.com'],
+      nickname: 'Richie',
+      org: 'Acme Inc',
+      title: 'Engineer',
+      phones: [{ type: 'Cell', value: '+47 123 45 678' }],
+      urls: [{ type: 'Home', value: 'https://example.com' }],
+      addresses: [
+        {
+          type: 'Home',
+          street: '1 Main St',
+          locality: 'Oslo',
+          region: '',
+          postalCode: '0001',
+          country: 'Norway',
+        },
+      ],
+      birthday: '1990-04-01',
+      note: 'a note',
+      categories: ['Family', 'VIP'],
+    }),
+  );
+  const d = parseCardDetail(vcard);
+  assert.equal(d.name, 'Rich Contact');
+  assert.equal(d.nickname, 'Richie');
+  assert.equal(d.org, 'Acme Inc');
+  assert.equal(d.title, 'Engineer');
+  assert.deepEqual(d.emails, ['rich@example.com']);
+  assert.deepEqual(d.phones, [{ type: 'Cell', value: '+47 123 45 678' }]);
+  assert.deepEqual(d.urls, [{ type: 'Home', value: 'https://example.com' }]);
+  assert.equal(d.addresses.length, 1);
+  assert.equal(d.addresses[0]!.locality, 'Oslo');
+  assert.equal(d.addresses[0]!.country, 'Norway');
+  assert.equal(d.birthday, '1990-04-01');
+  assert.equal(d.note, 'a note');
+  assert.deepEqual(d.categories, ['Family', 'VIP']);
+});
+
+test('parseCardDetail builds a data URI from an inline base64 PHOTO', () => {
+  const vcard = [
+    'BEGIN:VCARD',
+    'FN:Pic',
+    'EMAIL:pic@example.com',
+    'PHOTO;ENCODING=b;TYPE=JPEG:/9j/4AAQSkZJRg==',
+    'END:VCARD',
+  ].join(CRLF);
+  const d = parseCardDetail(vcard);
+  assert.equal(d.photo, 'data:image/jpeg;base64,/9j/4AAQSkZJRg==');
+});
+
+test('mergeVCard rewrites managed fields but preserves PHOTO and X-* extensions', () => {
+  const original = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'UID:keep-uid',
+    'FN:Old Name',
+    'N:Name;Old;;;',
+    'EMAIL:old@example.com',
+    'PHOTO;ENCODING=b;TYPE=JPEG:AAAA',
+    'X-CUSTOM-FIELD:custom value',
+    'REV:20200101T000000Z',
+    'END:VCARD',
+  ].join(CRLF);
+
+  const merged = mergeVCard(
+    'keep-uid',
+    original,
+    editable({ name: 'New Name', emails: ['new@example.com'] }),
+  );
+
+  // Managed fields updated.
+  assert.match(merged, /FN:New Name/);
+  assert.match(merged, /EMAIL[^:]*:new@example.com/);
+  assert.doesNotMatch(merged, /old@example.com/);
+  assert.doesNotMatch(merged, /FN:Old Name/);
+  // Unmodelled properties preserved verbatim.
+  assert.match(merged, /UID:keep-uid/);
+  assert.match(merged, /PHOTO;ENCODING=b;TYPE=JPEG:AAAA/);
+  assert.match(merged, /X-CUSTOM-FIELD:custom value/);
+  assert.match(merged, /REV:20200101T000000Z/);
+});
+
+test('mergeVCard falls back to a from-scratch build when raw is missing', () => {
+  const merged = mergeVCard('fresh', null, editable({ name: 'Fresh', emails: ['f@example.com'] }));
+  assert.match(merged, /BEGIN:VCARD/);
+  assert.match(merged, /UID:fresh/);
+  assert.match(merged, /FN:Fresh/);
+  const [row] = parseVCard(merged);
+  assert.equal(row!.email, 'f@example.com');
 });
