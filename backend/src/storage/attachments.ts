@@ -30,6 +30,17 @@ import { getEngine } from '../imap/registry.js';
  */
 const INLINE_EMBED_CAP_BYTES = 500 * 1024;
 
+/**
+ * Aggregate guards across one message body (ROADMAP §3.7 hardening). The per-image
+ * cap above bounds a single image, but a newsletter with dozens of small inline
+ * pixels/logos could still bloat the srcdoc and lag the reader. Cap the *cumulative*
+ * embedded bytes and the *count* of embeds per body; images past either limit fall
+ * back to the authenticated attachments/blob path (the caller flips their isInline
+ * hint). base64 inflates ~4/3, so the on-wire srcdoc is larger than this budget.
+ */
+const INLINE_EMBED_TOTAL_BUDGET_BYTES = 5 * 1024 * 1024;
+const INLINE_EMBED_MAX_COUNT = 20;
+
 const log = createLogger('attachments');
 
 /**
@@ -119,8 +130,9 @@ function escapeRegExp(s: string): string {
  * can neither send the JWT (header-auth attachment route 401s) nor read the
  * parent's blob URLs (ROADMAP §3.7.A). Bytes are resolved through the shared
  * resolver (`ensureAttachmentOnDisk`), so this transparently picks up the local
- * `.eml` source path once §3.7.E lands. Images over `INLINE_EMBED_CAP_BYTES` are
- * left as-is and surface through the attachments panel instead.
+ * `.eml` source path once §3.7.E lands. Images over `INLINE_EMBED_CAP_BYTES`, or past
+ * the per-body cumulative budget / max-count cap, are left as-is and surface through
+ * the attachments panel instead.
  */
 export async function embedInlineImages(
   html: string | null,
@@ -135,7 +147,11 @@ export async function embedInlineImages(
   if (candidates.length === 0) return { html, embeddedIds };
 
   let out = html;
+  let embeddedBytes = 0;
   for (const att of candidates) {
+    // Count cap: once enough images are inlined, leave the rest for the attachments
+    // panel rather than growing the srcdoc unboundedly.
+    if (embeddedIds.size >= INLINE_EMBED_MAX_COUNT) break;
     // Skip oversized inline images by declared size before fetching any bytes;
     // they fall back to the attachments panel (handled by the caller).
     if (att.sizeBytes !== null && att.sizeBytes > INLINE_EMBED_CAP_BYTES) continue;
@@ -144,10 +160,14 @@ export async function embedInlineImages(
       if (!path) continue;
       const bytes = await readFile(path);
       if (bytes.byteLength > INLINE_EMBED_CAP_BYTES) continue;
+      // Cumulative budget: skip an image that would push the body over the total
+      // budget (a later, smaller one may still fit) — it falls back to the panel.
+      if (embeddedBytes + bytes.byteLength > INLINE_EMBED_TOTAL_BUDGET_BYTES) continue;
       const mime = att.mimeType ?? 'application/octet-stream';
       const dataUri = `data:${mime};base64,${bytes.toString('base64')}`;
       // CID scheme is case-insensitive; the id itself is matched exactly.
       out = out.replace(new RegExp(`cid:${escapeRegExp(att.contentId!)}`, 'gi'), dataUri);
+      embeddedBytes += bytes.byteLength;
       embeddedIds.add(att.id);
     } catch (err) {
       log.warn(`inline embed failed for ${att.id}: ${(err as Error).message}`);
