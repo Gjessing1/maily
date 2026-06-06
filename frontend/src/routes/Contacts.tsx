@@ -12,7 +12,31 @@ import { api } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, PlusIcon } from '../ui/icons';
+import { BackIcon, CloseIcon, PlusIcon, SearchIcon } from '../ui/icons';
+
+/**
+ * Whole-card match: every whitespace-separated term must appear somewhere in the
+ * card's searchable text — name/nickname, company/title, emails, phones, websites,
+ * notes, and categories (ROADMAP §C global contact search).
+ */
+function matchesQuery(c: ContactCardDto, q: string): boolean {
+  if (!q) return true;
+  const hay = [
+    c.name,
+    c.nickname,
+    c.org,
+    c.title,
+    c.note,
+    ...c.emails,
+    ...c.phones.map((p) => p.value),
+    ...c.urls.map((u) => u.value),
+    ...c.categories,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return q.split(/\s+/).every((t) => hay.includes(t));
+}
 
 export function Contacts() {
   const navigate = useNavigate();
@@ -22,6 +46,8 @@ export function Contacts() {
   const [defaultBook, setDefaultBook] = useState<string | null>(null);
   // Selected book filter: null = "All".
   const [filter, setFilter] = useState<string | null>(null);
+  // Free-text search across all card fields (names, emails, phones, notes, company).
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   // When set, the create-contact editor is open (targeting this address book).
   const [creating, setCreating] = useState<{ addressbook: string | null } | null>(null);
@@ -50,7 +76,10 @@ export function Contacts() {
   // Only books that are active *and* hold at least one cached card are worth a chip.
   const filterBooks = books.filter((b) => activeBooks.includes(b.href));
   const showFilter = filterBooks.length > 1;
-  const visible = cards && filter ? cards.filter((c) => c.addressbook === filter) : cards;
+  const q = query.trim().toLowerCase();
+  const visible = cards
+    ? cards.filter((c) => (!filter || c.addressbook === filter) && matchesQuery(c, q))
+    : cards;
   // New cards land in the filtered book if one is picked, else the configured default.
   const createTarget = filter ?? defaultBook;
   const bookName = (href: string | null) => books.find((b) => b.href === href)?.displayName ?? null;
@@ -74,6 +103,28 @@ export function Contacts() {
           <PlusIcon />
         </button>
       </header>
+
+      <div className="border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
+          <SearchIcon className="size-4 shrink-0 text-faint" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search contacts"
+            className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
+            aria-label="Search contacts"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              className="shrink-0 text-faint active:text-fg"
+              aria-label="Clear search"
+            >
+              <CloseIcon className="size-4" />
+            </button>
+          )}
+        </div>
+      </div>
 
       {showFilter && (
         <div className="flex gap-1.5 overflow-x-auto border-b border-border px-3 py-2 no-scrollbar">
@@ -135,15 +186,23 @@ export function Contacts() {
         ) : (
           !error && (
             <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
-              <p>
-                {filter ? `No contacts in ${bookName(filter) ?? 'this book'}.` : 'No contacts yet.'}
-              </p>
-              <button
-                onClick={() => setCreating({ addressbook: createTarget })}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
-              >
-                Add a contact
-              </button>
+              {q ? (
+                <p>No contacts match “{query.trim()}”.</p>
+              ) : (
+                <>
+                  <p>
+                    {filter
+                      ? `No contacts in ${bookName(filter) ?? 'this book'}.`
+                      : 'No contacts yet.'}
+                  </p>
+                  <button
+                    onClick={() => setCreating({ addressbook: createTarget })}
+                    className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
+                  >
+                    Add a contact
+                  </button>
+                </>
+              )}
             </div>
           )
         )}
