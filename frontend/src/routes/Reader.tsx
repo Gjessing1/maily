@@ -9,6 +9,7 @@ import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/t
 import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
+import { ContactEditor } from '../components/ContactEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import {
@@ -62,6 +63,8 @@ export function ReaderView({
   const [showImages, setShowImages] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Quick-create-from-reply: when set, the contact editor is open seeded with the sender.
+  const [addSender, setAddSender] = useState<{ name: string | null; email: string } | null>(null);
   const autoMarkedId = useRef<string | null>(null);
 
   // Reflect server flag state once the detail loads; reset the per-message image
@@ -138,6 +141,28 @@ export function ReaderView({
   function reply() {
     if (!detail) return;
     navigate('/compose', { state: { ...buildReply(detail), fresh: true } });
+  }
+
+  /**
+   * Tap the sender avatar (Gmail-style): open the sender's existing contact card if we
+   * have one, else quick-create a contact seeded with their name + address.
+   */
+  async function openSender() {
+    const email = detail?.fromAddress;
+    if (!email) return;
+    try {
+      const cards = await api.contactCards();
+      const existing = cards.find((c) =>
+        c.emails.some((e) => e.toLowerCase() === email.toLowerCase()),
+      );
+      if (existing) {
+        navigate(`/contacts/${encodeURIComponent(existing.uid)}`);
+        return;
+      }
+    } catch {
+      // Couldn't load the book — fall through to the create form.
+    }
+    setAddSender({ name: detail?.fromName ?? null, email });
   }
 
   function replyAll() {
@@ -320,31 +345,35 @@ export function ReaderView({
               <h1 className="text-xl font-semibold leading-snug">
                 {detail.subject || '(no subject)'}
               </h1>
-              <button
-                onClick={() => setDetailsOpen((o) => !o)}
-                aria-expanded={detailsOpen}
-                className="mt-3 flex w-full items-center gap-3 text-left"
-              >
-                <div
-                  className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+              <div className="mt-3 flex w-full items-center gap-3">
+                <button
+                  onClick={openSender}
+                  className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white transition active:scale-95"
                   style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
+                  aria-label="View or add sender as contact"
                 >
                   {initials(detail.fromName, detail.fromAddress)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">
-                    {senderName(detail.fromName, detail.fromAddress)}
-                  </p>
-                  <p className="truncate text-xs text-faint">
-                    {detail.to.length ? `to ${joinAddrs(detail.to)}` : ''}
-                    {detail.to.length ? ' · ' : ''}
-                    {fullDate(detail.sentAt ?? detail.receivedAt)}
-                  </p>
-                </div>
-                <ChevronDownIcon
-                  className={`size-4 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
-                />
-              </button>
+                </button>
+                <button
+                  onClick={() => setDetailsOpen((o) => !o)}
+                  aria-expanded={detailsOpen}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">
+                      {senderName(detail.fromName, detail.fromAddress)}
+                    </p>
+                    <p className="truncate text-xs text-faint">
+                      {detail.to.length ? `to ${joinAddrs(detail.to)}` : ''}
+                      {detail.to.length ? ' · ' : ''}
+                      {fullDate(detail.sentAt ?? detail.receivedAt)}
+                    </p>
+                  </div>
+                  <ChevronDownIcon
+                    className={`size-4 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              </div>
 
               {detailsOpen && (
                 <dl className="mt-3 space-y-1.5 rounded-lg bg-surface px-3 py-2.5 text-xs">
@@ -415,6 +444,19 @@ export function ReaderView({
         }}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      {addSender && (
+        <ContactEditor
+          card={null}
+          initialEmail={addSender.email}
+          initialName={addSender.name ?? undefined}
+          onClose={() => setAddSender(null)}
+          onSaved={(uid) => {
+            setAddSender(null);
+            if (uid) navigate(`/contacts/${encodeURIComponent(uid)}`);
+          }}
+        />
+      )}
     </div>
   );
 }
