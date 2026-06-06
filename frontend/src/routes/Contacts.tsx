@@ -5,14 +5,21 @@
  * re-syncs the local cache (Radicale stays authoritative), so the list reflects the
  * server after every change.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AddressbookDto, ContactCardDto } from '@maily/shared';
-import { api } from '../api/client';
+import { api, downloadContactsVcf } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, CloseIcon, PlusIcon, SearchIcon } from '../ui/icons';
+import {
+  BackIcon,
+  CloseIcon,
+  DownloadIcon,
+  PlusIcon,
+  SearchIcon,
+  UploadIcon,
+} from '../ui/icons';
 
 /**
  * Whole-card match: every whitespace-separated term must appear somewhere in the
@@ -51,6 +58,11 @@ export function Contacts() {
   const [error, setError] = useState<string | null>(null);
   // When set, the create-contact editor is open (targeting this address book).
   const [creating, setCreating] = useState<{ addressbook: string | null } | null>(null);
+  // Transient banner for import/export outcome; null = hidden.
+  const [notice, setNotice] = useState<string | null>(null);
+  // True while an import/export round-trip is in flight (disables the buttons).
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     api
@@ -84,6 +96,44 @@ export function Contacts() {
   const createTarget = filter ?? defaultBook;
   const bookName = (href: string | null) => books.find((b) => b.href === href)?.displayName ?? null;
 
+  // Export the current view (the picked book, or every book under "All").
+  const onExport = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await downloadContactsVcf(filter);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Read the chosen `.vcf` and import it into the create-target book.
+  const onImportPick = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // reset so re-picking the same file fires onChange again
+    if (!file) return;
+    setBusy(true);
+    setNotice(null);
+    file
+      .text()
+      .then((text) => api.importContacts(text, createTarget))
+      .then((r) => {
+        const imported = `Imported ${r.imported} contact${r.imported === 1 ? '' : 's'}`;
+        setNotice(
+          r.imported === 0
+            ? 'No contacts imported.'
+            : r.skipped
+              ? `${imported}, skipped ${r.skipped}.`
+              : `${imported}.`,
+        );
+        load();
+      })
+      .catch((err) => setError((err as Error).message))
+      .finally(() => setBusy(false));
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
@@ -95,6 +145,31 @@ export function Contacts() {
           <BackIcon />
         </button>
         <h1 className="flex-1 text-lg font-semibold">Contacts</h1>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".vcf,text/vcard,text/x-vcard"
+          onChange={onImportPick}
+          className="hidden"
+        />
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={busy}
+          className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
+          aria-label="Import contacts from vCard"
+          title="Import vCard"
+        >
+          <UploadIcon />
+        </button>
+        <button
+          onClick={onExport}
+          disabled={busy || !cards || cards.length === 0}
+          className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
+          aria-label="Export contacts to vCard"
+          title="Export vCard"
+        >
+          <DownloadIcon />
+        </button>
         <button
           onClick={() => setCreating({ addressbook: createTarget })}
           className="rounded-full p-2 text-accent active:bg-surface-2"
@@ -103,6 +178,19 @@ export function Contacts() {
           <PlusIcon />
         </button>
       </header>
+
+      {notice && (
+        <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-sm text-fg">
+          <span className="flex-1">{notice}</span>
+          <button
+            onClick={() => setNotice(null)}
+            className="shrink-0 text-faint active:text-fg"
+            aria-label="Dismiss"
+          >
+            <CloseIcon className="size-4" />
+          </button>
+        </div>
+      )}
 
       <div className="border-b border-border px-3 py-2">
         <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">

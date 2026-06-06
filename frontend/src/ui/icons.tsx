@@ -42,6 +42,20 @@ export const PlusIcon = (p: IconProps) => (
   </Base>
 );
 
+export const DownloadIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3v12M7 10l5 5 5-5" />
+    <path d="M5 21h14" />
+  </Base>
+);
+
+export const UploadIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 15V3M7 8l5-5 5 5" />
+    <path d="M5 21h14" />
+  </Base>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Base {...p}>
     <circle cx="11" cy="11" r="7" />

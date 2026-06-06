@@ -315,6 +315,29 @@ export function parseCardDetail(vcard: string): CardDetail {
   return detail;
 }
 
+/** Split a `.vcf` file (one or many cards) into individual vCard documents. */
+export function splitVCards(text: string): string[] {
+  // Match each BEGIN:VCARD…END:VCARD block (case-insensitive, across folds).
+  return (text.match(/BEGIN:VCARD[\s\S]*?END:VCARD/gi) ?? []).map((c) => c.trim());
+}
+
+/** Narrow a parsed `CardDetail` to the editable subset (drops UID + PHOTO). */
+export function toEditableCard(d: CardDetail): EditableCard {
+  return {
+    name: d.name,
+    nickname: d.nickname,
+    org: d.org,
+    title: d.title,
+    emails: d.emails,
+    phones: d.phones,
+    urls: d.urls,
+    addresses: d.addresses,
+    birthday: d.birthday,
+    note: d.note,
+    categories: d.categories,
+  };
+}
+
 /** Property keys maily owns; a build/merge rewrites exactly these and keeps the rest. */
 const MANAGED_PROPS = new Set([
   'FN',

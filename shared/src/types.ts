@@ -204,6 +204,14 @@ export interface ContactCardInput {
   categories?: string[];
 }
 
+/** Outcome of a vCard import: how many cards were created vs. skipped. */
+export interface ContactImportResult {
+  /** Cards successfully PUT to the address book. */
+  imported: number;
+  /** Cards skipped (no email / unparseable / write failed). */
+  skipped: number;
+}
+
 /** One discovered CardDAV address book (collection). */
 export interface AddressbookDto {
   /** Collection href — the stable id used to target/filter a book. */

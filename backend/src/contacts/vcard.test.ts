@@ -13,6 +13,8 @@ import {
   mergeVCard,
   parseCardDetail,
   parseVCard,
+  splitVCards,
+  toEditableCard,
   type EditableCard,
 } from './vcard.js';
 
@@ -236,4 +238,47 @@ test('mergeVCard falls back to a from-scratch build when raw is missing', () => 
   assert.match(merged, /FN:Fresh/);
   const [row] = parseVCard(merged);
   assert.equal(row!.email, 'f@example.com');
+});
+
+test('splitVCards separates a multi-card .vcf into individual documents', () => {
+  const file = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:Alice',
+    'EMAIL:alice@example.com',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:Bob',
+    'EMAIL:bob@example.com',
+    'END:VCARD',
+  ].join(CRLF);
+  const cards = splitVCards(file);
+  assert.equal(cards.length, 2);
+  assert.match(cards[0]!, /FN:Alice/);
+  assert.match(cards[1]!, /FN:Bob/);
+});
+
+test('splitVCards returns nothing for a file with no card', () => {
+  assert.deepEqual(splitVCards('not a vcard at all'), []);
+});
+
+test('toEditableCard narrows a parsed detail to the editable subset (drops uid/photo)', () => {
+  const vcard = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'UID:drop-me',
+    'FN:Carol Smith',
+    'EMAIL;TYPE=INTERNET:carol@example.com',
+    'TEL;TYPE=CELL:+123',
+    'PHOTO;ENCODING=b;TYPE=JPEG:AAAA',
+    'END:VCARD',
+  ].join(CRLF);
+  const editableCard = toEditableCard(parseCardDetail(vcard));
+  assert.equal(editableCard.name, 'Carol Smith');
+  assert.deepEqual(editableCard.emails, ['carol@example.com']);
+  assert.equal(editableCard.phones[0]!.value, '+123');
+  // The narrowed shape carries no uid/photo keys (those are read-only display extras).
+  assert.equal('uid' in editableCard, false);
+  assert.equal('photo' in editableCard, false);
 });

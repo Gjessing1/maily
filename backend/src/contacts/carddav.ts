@@ -75,16 +75,16 @@ function requireConfig(): NonNullable<ReturnType<typeof env.carddav>> {
 }
 
 /**
- * Create a new card in the chosen address book (or the configured default).
- * Generates the UID + a `<uid>.vcf` resource. Returns the UID.
+ * PUT a brand-new `<uid>.vcf` into the resolved collection (no cache re-sync — the
+ * caller decides when to sync, so bulk imports sync once rather than per card).
  */
-export async function createCard(
-  addressbookHref: string | null,
+async function putNewCard(
+  cfg: NonNullable<ReturnType<typeof env.carddav>>,
+  collection: string,
   card: EditableCard,
 ): Promise<string> {
-  const cfg = requireConfig();
   const uid = randomUUID();
-  const url = new URL(`${uid}.vcf`, targetCollection(cfg, addressbookHref)).toString();
+  const url = new URL(`${uid}.vcf`, collection).toString();
   const res = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -95,8 +95,52 @@ export async function createCard(
     body: buildVCard(uid, card),
   });
   if (!res.ok) throw new CardDavError(`CardDAV PUT failed: ${res.status}`, 502);
+  return uid;
+}
+
+/**
+ * Create a new card in the chosen address book (or the configured default).
+ * Generates the UID + a `<uid>.vcf` resource. Returns the UID.
+ */
+export async function createCard(
+  addressbookHref: string | null,
+  card: EditableCard,
+): Promise<string> {
+  const cfg = requireConfig();
+  const uid = await putNewCard(cfg, targetCollection(cfg, addressbookHref), card);
   await syncContacts();
   return uid;
+}
+
+/**
+ * Bulk-create cards from an import. Each card is PUT as a fresh resource (new UID),
+ * so importing the same file twice duplicates rather than clobbers — dedup/merge is
+ * a later concern. A single failed write is counted and skipped, not fatal. Syncs the
+ * cache once at the end. Returns how many cards were written vs. skipped.
+ */
+export async function importCards(
+  addressbookHref: string | null,
+  cards: EditableCard[],
+): Promise<{ imported: number; skipped: number }> {
+  const cfg = requireConfig();
+  const collection = targetCollection(cfg, addressbookHref);
+  let imported = 0;
+  let skipped = 0;
+  for (const card of cards) {
+    if (card.emails.length === 0) {
+      skipped++; // a card with no address is useless to a mail client
+      continue;
+    }
+    try {
+      await putNewCard(cfg, collection, card);
+      imported++;
+    } catch (err) {
+      log.warn('import: card PUT failed:', (err as Error).message);
+      skipped++;
+    }
+  }
+  if (imported > 0) await syncContacts();
+  return { imported, skipped };
 }
 
 /**

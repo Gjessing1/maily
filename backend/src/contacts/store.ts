@@ -10,7 +10,7 @@ import { sql } from 'drizzle-orm';
 import type { ContactCardDto, ContactDto } from '@maily/shared';
 import { db, sqlite } from '../db/client.js';
 import { contacts } from '../db/schema.js';
-import { parseCardDetail } from './vcard.js';
+import { buildVCard, parseCardDetail } from './vcard.js';
 
 /** A parsed contact ready to persist (one row per email). */
 export interface ParsedContact {
@@ -162,6 +162,56 @@ export function listCards(): ContactCardDto[] {
   return [...byCard.entries()]
     .map(([uid, c]) => toCardDto(uid, c.raw, c))
     .sort((a, b) => (a.name ?? a.emails[0] ?? '').localeCompare(b.name ?? b.emails[0] ?? ''));
+}
+
+/**
+ * Concatenated raw vCards for export, optionally scoped to one address book. Each
+ * card's original vCard is emitted verbatim (preserving PHOTO and unmodelled props);
+ * legacy cards with no stored raw are rebuilt from their name + emails.
+ */
+export function listRawCards(addressbook?: string | null): string {
+  const rows = db
+    .select({
+      email: contacts.email,
+      name: contacts.name,
+      vcardUid: contacts.vcardUid,
+      href: contacts.href,
+      addressbookHref: contacts.addressbookHref,
+      rawVcard: contacts.rawVcard,
+    })
+    .from(contacts)
+    .all();
+
+  const byCard = new Map<string, { name: string | null; emails: string[]; raw: string | null }>();
+  for (const r of rows) {
+    if (addressbook && r.addressbookHref !== addressbook) continue;
+    const key = r.vcardUid ?? r.href;
+    if (!key) continue; // un-addressable (pre-sync) row — skip
+    const card = byCard.get(key) ?? { name: r.name, emails: [], raw: null };
+    if (!card.name && r.name) card.name = r.name;
+    if (!card.raw && r.rawVcard) card.raw = r.rawVcard;
+    card.emails.push(r.email);
+    byCard.set(key, card);
+  }
+
+  const docs = [...byCard.entries()].map(([key, c]) =>
+    c.raw
+      ? c.raw.trim()
+      : buildVCard(key, {
+          name: c.name,
+          nickname: null,
+          org: null,
+          title: null,
+          emails: c.emails,
+          phones: [],
+          urls: [],
+          addresses: [],
+          birthday: null,
+          note: null,
+          categories: [],
+        }).trim(),
+  );
+  return docs.length ? docs.join('\r\n') + '\r\n' : '';
 }
 
 /** A single card's rich DTO by key, or null when not cached. */

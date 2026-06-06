@@ -4,16 +4,28 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { ContactAddressDto, ContactCardInput, TypedValueDto } from '@maily/shared';
-import { getCardByKey, getCardDetail, listCards, searchContacts } from '../../contacts/store.js';
+import {
+  getCardByKey,
+  getCardDetail,
+  listCards,
+  listRawCards,
+  searchContacts,
+} from '../../contacts/store.js';
 import {
   CardDavError,
   createCard,
   deleteCard,
   ensureDiscovered,
+  importCards,
   syncContacts,
   updateCard,
 } from '../../contacts/carddav.js';
-import type { EditableCard } from '../../contacts/vcard.js';
+import {
+  parseCardDetail,
+  splitVCards,
+  toEditableCard,
+  type EditableCard,
+} from '../../contacts/vcard.js';
 import { getAddressbookState, setAddressbookSettings } from '../../contacts/addressbooks.js';
 
 /** Sanitise a labelled-value list (phones/urls): trim, drop empties, cap the label. */
@@ -105,6 +117,39 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     const cards = listCards();
     return book ? cards.filter((c) => c.addressbook === book) : cards;
   });
+
+  // Export the cached cards as a single `.vcf` download (optionally one book).
+  // Static path, so Fastify routes it ahead of `/cards/:key`.
+  app.get<{ Querystring: { addressbook?: string } }>(
+    '/api/contacts/cards/export',
+    async (req, reply) => {
+      const vcf = listRawCards(req.query.addressbook || null);
+      const stamp = new Date().toISOString().slice(0, 10);
+      return reply
+        .header('Content-Type', 'text/vcard; charset=utf-8')
+        .header('Content-Disposition', `attachment; filename="contacts-${stamp}.vcf"`)
+        .send(vcf);
+    },
+  );
+
+  // Import a `.vcf` file (one or many cards) into the chosen book (or the default).
+  app.post<{ Body: { addressbook?: string | null; vcard?: string } }>(
+    '/api/contacts/cards/import',
+    async (req, reply) => {
+      const text = typeof req.body?.vcard === 'string' ? req.body.vcard : '';
+      const blocks = splitVCards(text);
+      if (blocks.length === 0)
+        return reply.code(400).send({ error: 'no vCard found in the uploaded file' });
+      const addressbook = req.body?.addressbook ? String(req.body.addressbook) : null;
+      const cards: EditableCard[] = blocks.map((b) => toEditableCard(parseCardDetail(b)));
+      try {
+        return await importCards(addressbook, cards);
+      } catch (err) {
+        const status = err instanceof CardDavError ? err.status : 502;
+        return reply.code(status).send({ error: (err as Error).message });
+      }
+    },
+  );
 
   // Fetch one card's rich detail by key (vCard UID, or href for UID-less cards).
   app.get<{ Params: { key: string } }>('/api/contacts/cards/:key', async (req, reply) => {

@@ -10,6 +10,7 @@ import type {
   ContactCardDto,
   ContactCardInput,
   ContactDto,
+  ContactImportResult,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -237,6 +238,13 @@ export const api = {
       method: 'DELETE',
     }),
 
+  /** Import a `.vcf` file (one or many cards) into a book (default when omitted). */
+  importContacts: (vcard: string, addressbook?: string | null) =>
+    request<ContactImportResult>('/api/contacts/cards/import', {
+      method: 'POST',
+      body: JSON.stringify({ vcard, addressbook: addressbook ?? null }),
+    }),
+
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
 
   pushSubscribe: (sub: PushSubscriptionDto) =>
@@ -268,4 +276,25 @@ export async function fetchAttachmentObjectUrl(messageId: string, attId: string)
   const res = await fetch(attachmentUrl(messageId, attId), { headers });
   if (!res.ok) throw new ApiError(res.status, 'attachment fetch failed');
   return URL.createObjectURL(await res.blob());
+}
+
+/**
+ * Download the cached contacts as a `.vcf` file (auth header → can't be a plain
+ * link). Fetches the export, then triggers a browser download via a temp anchor.
+ */
+export async function downloadContactsVcf(addressbook?: string | null): Promise<void> {
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const qs = addressbook ? `?addressbook=${encodeURIComponent(addressbook)}` : '';
+  const res = await fetch(`${API_BASE}/api/contacts/cards/export${qs}`, { headers });
+  if (!res.ok) throw new ApiError(res.status, 'contacts export failed');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `contacts-${new Date().toISOString().slice(0, 10)}.vcf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
