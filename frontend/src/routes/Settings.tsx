@@ -524,6 +524,20 @@ export function Settings() {
             Composing
           </p>
           <div className="border-y border-border">
+            {(accounts?.length ?? 0) > 1 && (
+              <SelectRow
+                label="Default account"
+                hint="Which account a fresh compose sends from. Replies keep the account their mail arrived on."
+                prefKey="defaultComposeAccountId"
+                options={[
+                  { value: '', label: 'Automatic' },
+                  ...(accounts ?? []).map((a) => ({
+                    value: a.id,
+                    label: a.displayName || a.email,
+                  })),
+                ]}
+              />
+            )}
             <ToggleRow
               label="Append signature"
               hint="Add your signature to the bottom of new messages."

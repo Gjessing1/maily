@@ -59,6 +59,12 @@ export interface Prefs {
   signature: string;
   /** Append the signature automatically when composing. */
   signatureEnabled: boolean;
+  /**
+   * Account a fresh compose defaults to sending from (account id). Empty = automatic
+   * (first account). Replies/forwards ignore this — they keep the account the source
+   * mail arrived on.
+   */
+  defaultComposeAccountId: string;
   /** Folder/label ids the user has hidden from the drawer (e.g. Gmail's "Important"). */
   hiddenFolderIds: string[];
   /**
@@ -82,6 +88,7 @@ const DEFAULTS: Prefs = {
   readingPaneMinWidth: 1024,
   signature: '',
   signatureEnabled: false,
+  defaultComposeAccountId: '',
   hiddenFolderIds: [],
   trustedImageDomains: [],
 };

@@ -4,7 +4,7 @@ import type { AttachmentRef, SaveDraftRequest, SendMessageRequest, UploadDto } f
 import { api } from '../api/client';
 import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
-import { usePrefs } from '../state/prefs';
+import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor } from '../components/RichTextEditor';
@@ -92,7 +92,12 @@ export function Compose() {
     return existing;
   });
 
-  const [accountId, setAccountId] = useState(prefill.accountId ?? '');
+  // A reply/forward carries its source account; a fresh compose falls back to the
+  // user's configured default account ('' → automatic, resolved to the first account
+  // by `fromAccount` below).
+  const [accountId, setAccountId] = useState(
+    prefill.accountId ?? getPrefs().defaultComposeAccountId,
+  );
   const [to, setTo] = useState((prefill.to ?? []).join(', '));
   const [cc, setCc] = useState((prefill.cc ?? []).join(', '));
   const [showCc, setShowCc] = useState(Boolean(prefill.cc?.length));
