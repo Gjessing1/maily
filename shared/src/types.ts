@@ -241,6 +241,12 @@ export interface AccountSyncStatusDto {
   connected: boolean;
   /** Epoch ms of the last completed resync pass, or null if none yet this run. */
   lastSyncAt: number | null;
+  /**
+   * Estimated bytes of synced content for this account: stored message bodies plus
+   * attachments actually downloaded to disk. A cheap estimate for Settings → Sync
+   * (the raw .eml archive isn't counted — it has no stored size).
+   */
+  contentBytes: number;
   folders: FolderSyncStatusDto[];
 }
 

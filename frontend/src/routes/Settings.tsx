@@ -26,6 +26,15 @@ function windowLabel(days: number): string {
   return `${days} day${days > 1 ? 's' : ''}`;
 }
 
+/** Human-readable byte size, e.g. 1536 → "1.5 KB", 0 → "0 B". */
+function humanBytes(n: number): string {
+  if (!n || n <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  const v = n / 1024 ** i;
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
 /** Compact "x min ago" for the last-sync line. */
 function timeAgo(ms: number | null): string {
   if (!ms) return 'never';
@@ -635,6 +644,7 @@ export function Settings() {
                       {acc.connected && !syncing
                         ? `Synced ${timeAgo(acc.lastSyncAt)}`
                         : `Last sync ${timeAgo(acc.lastSyncAt)}`}
+                      {` · ${humanBytes(acc.contentBytes)}`}
                     </p>
                     <ul className="mt-2 space-y-0.5">
                       {acc.folders
@@ -657,9 +667,18 @@ export function Settings() {
               })
             )}
           </div>
+          {sync && sync.length > 0 && (
+            <p className="px-4 pt-2 text-xs text-faint">
+              Total synced content:{' '}
+              <span className="font-medium text-fg">
+                {humanBytes(sync.reduce((sum, a) => sum + (a.contentBytes ?? 0), 0))}
+              </span>
+            </p>
+          )}
           <p className="px-4 pt-2 text-xs text-faint">
             Counts are messages cached locally per folder. Mail outside the cache window stays on
-            the server and is fetched on demand.
+            the server and is fetched on demand. Size is stored message bodies plus downloaded
+            attachments.
           </p>
         </section>
 

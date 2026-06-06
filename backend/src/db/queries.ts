@@ -155,6 +155,37 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
     .all();
 }
 
+/**
+ * Estimated bytes of synced content for an account: stored message body text (subject
+ * + snippet + text/html bodies) plus the bytes of attachments actually downloaded to
+ * disk — lazy attachments never fetched don't occupy space (ARCHITECTURE §4). A cheap
+ * SQL estimate for Settings → Sync; the raw `.eml` archive isn't counted (no stored
+ * size). `length(cast(… as blob))` yields byte length rather than character count.
+ */
+export function accountContentBytes(accountId: string): number {
+  const body = db
+    .select({
+      bytes: sql<number>`coalesce(sum(
+        length(cast(coalesce(${messages.subject}, '') as blob)) +
+        length(cast(coalesce(${messages.snippet}, '') as blob)) +
+        length(cast(coalesce(${messages.bodyText}, '') as blob)) +
+        length(cast(coalesce(${messages.bodyHtml}, '') as blob))
+      ), 0)`,
+    })
+    .from(messages)
+    .where(and(eq(messages.accountId, accountId), isNull(messages.deletedAt)))
+    .get();
+
+  const atts = db
+    .select({ bytes: sql<number>`coalesce(sum(${attachments.sizeBytes}), 0)` })
+    .from(attachments)
+    .innerJoin(messages, eq(messages.id, attachments.messageId))
+    .where(and(eq(messages.accountId, accountId), isNotNull(attachments.downloadedAt)))
+    .get();
+
+  return (body?.bytes ?? 0) + (atts?.bytes ?? 0);
+}
+
 export function folderIdsForMessage(messageId: string): string[] {
   return db
     .select({ folderId: messageFolders.folderId })

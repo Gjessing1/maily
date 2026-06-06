@@ -3,7 +3,12 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { AccountSyncStatusDto } from '@maily/shared';
-import { folderMessageCount, listAccounts, listFolders } from '../../db/queries.js';
+import {
+  accountContentBytes,
+  folderMessageCount,
+  listAccounts,
+  listFolders,
+} from '../../db/queries.js';
 import { allEngines } from '../../imap/registry.js';
 import { toAccountDto, toFolderDto } from '../../http/dto.js';
 
@@ -26,6 +31,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         provider: acc?.provider ?? '',
         connected,
         lastSyncAt,
+        contentBytes: accountContentBytes(engine.id),
         folders: listFolders(engine.id).map((f) => ({
           id: f.id,
           name: f.name,
