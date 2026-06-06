@@ -68,6 +68,12 @@ export interface Prefs {
   /** Folder/label ids the user has hidden from the drawer (e.g. Gmail's "Important"). */
   hiddenFolderIds: string[];
   /**
+   * Start each account's folder section collapsed in the folder menu (the inbox row
+   * stays pinned/visible). A view default — the user can still expand/collapse any
+   * account for the session.
+   */
+  collapseAccountsByDefault: boolean;
+  /**
    * Sender domains whose remote images load automatically even when blocking is on
    * (e.g. "github.com"). Lowercased host part of the From address. Empty = trust none.
    */
@@ -90,6 +96,7 @@ const DEFAULTS: Prefs = {
   signatureEnabled: false,
   defaultComposeAccountId: '',
   hiddenFolderIds: [],
+  collapseAccountsByDefault: false,
   trustedImageDomains: [],
 };
 

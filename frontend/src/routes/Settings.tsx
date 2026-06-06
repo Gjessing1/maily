@@ -424,6 +424,11 @@ export function Settings() {
         <section className="mt-6">
           <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Layout</p>
           <div className="border-y border-border">
+            <ToggleRow
+              label="Collapse mailboxes by default"
+              hint="Start each account's folders collapsed in the folder menu. The inbox stays visible; expand an account any time."
+              prefKey="collapseAccountsByDefault"
+            />
             <SelectRow
               label="Reading pane"
               hint="Where a message opens on larger screens. On phones it always opens full-screen."

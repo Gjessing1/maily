@@ -180,17 +180,18 @@ export function FolderDrawer({
   swipeToOpen?: boolean;
 }) {
   const { logout } = useAuth();
-  const theme = usePrefs().theme;
+  const { theme, collapseAccountsByDefault } = usePrefs();
   const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
-  // Which account sections are collapsed. Kept in component state (the drawer stays
-  // mounted, so it persists across open/close within a session) — a transient view
-  // preference, not worth syncing to the server.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  // Per-account collapse overrides. The baseline comes from the persisted
+  // `collapseAccountsByDefault` pref; this map only records accounts the user has
+  // explicitly flipped this session (the drawer stays mounted, so it persists across
+  // open/close) — a transient view preference, not worth syncing to the server.
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
+  const isCollapsed = (id: string) => overrides.get(id) ?? collapseAccountsByDefault;
   const toggleCollapse = (id: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(id, !(prev.get(id) ?? collapseAccountsByDefault));
       return next;
     });
 
@@ -319,7 +320,7 @@ export function FolderDrawer({
             <AccountFolders
               key={a.id}
               account={a}
-              collapsed={collapsed.has(a.id)}
+              collapsed={isCollapsed(a.id)}
               onToggleCollapse={() => toggleCollapse(a.id)}
               selectedFolderId={selectedFolderId}
               onSelect={(f) => {
