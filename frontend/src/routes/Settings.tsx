@@ -26,6 +26,26 @@ function windowLabel(days: number): string {
   return `${days} day${days > 1 ? 's' : ''}`;
 }
 
+/** iOS (iPhone/iPad) running in a browser tab — Apple blocks programmatic PWA
+ * install, and Web Push needs the app on the Home Screen first (ARCHITECTURE §10). */
+function isIos(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports as MacIntel; the touch-point count disambiguates it from a Mac.
+  return (
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
+/** Already launched from the Home Screen (installed PWA) — no install hint needed. */
+function isStandalone(): boolean {
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}
+
 /** Human-readable byte size, e.g. 1536 → "1.5 KB", 0 → "0 B". */
 function humanBytes(n: number): string {
   if (!n || n <= 0) return '0 B';
@@ -298,6 +318,9 @@ export function Settings() {
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
   const [config, setConfig] = useState<ServerConfigDto | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  // Show the manual "Add to Home Screen" guidance on iOS Safari (not yet installed):
+  // Apple blocks programmatic install prompts and Web Push needs the installed PWA.
+  const showIosInstall = isIos() && !isStandalone();
 
   // Server config is static for the session — fetch once.
   useEffect(() => {
@@ -588,7 +611,17 @@ export function Settings() {
             Notifications
           </p>
           <div className="border-y border-border">
-            {state === 'unsupported' ? (
+            {showIosInstall && (
+              <div className="px-4 py-3">
+                <p className="text-[15px]">Install maily on your Home Screen</p>
+                <p className="mt-1 text-xs text-faint">
+                  Background notifications on iPhone/iPad need the app installed. In Safari, tap the
+                  Share button, then “Add to Home Screen”. Open maily from the new icon and enable
+                  notifications here.
+                </p>
+              </div>
+            )}
+            {showIosInstall ? null : state === 'unsupported' ? (
               <p className="px-4 py-3 text-sm text-faint">
                 Background notifications aren’t supported here. On iOS, install the app to your Home
                 Screen first.
