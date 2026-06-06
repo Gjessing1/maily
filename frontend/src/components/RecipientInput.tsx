@@ -16,7 +16,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ContactDto } from '@maily/shared';
 import { api } from '../api/client';
-import { UsersIcon } from '../ui/icons';
+import { CheckIcon, UsersIcon } from '../ui/icons';
 
 interface Props {
   value: string;
@@ -152,7 +152,10 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
   } else {
     source = [];
   }
-  const list = source.filter((c) => !added.has(c.email.toLowerCase()));
+  // Browse mode is a multi-select: already-added contacts stay in the list with a
+  // check so they can be toggled back off. Typeahead search still hides added hits
+  // (you're narrowing toward one new address, not curating a set).
+  const list = browse ? source : source.filter((c) => !added.has(c.email.toLowerCase()));
   const activeIdx = active < list.length ? active : 0;
 
   /** Rebuild the value from the committed chips plus a trailing in-progress token. */
@@ -188,9 +191,18 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
     emit([...committed, t], '');
   }
 
-  /** Add a picked contact as a chip, discarding the partial token, list stays open. */
-  function addContact(c: ContactDto) {
-    if (!added.has(c.email.toLowerCase())) emit([...committed, formatRecipient(c)], '');
+  /**
+   * Toggle a picked contact (multi-select): add it as a chip, or remove it if already
+   * present. The partial token is discarded on add; the list stays open either way.
+   */
+  function toggleContact(c: ContactDto) {
+    const email = c.email.toLowerCase();
+    if (added.has(email)) {
+      const next = chips.filter((chip) => addrEmail(chip).toLowerCase() !== email);
+      emit(next, trailingIsChip ? '' : draft);
+    } else {
+      emit([...committed, formatRecipient(c)], '');
+    }
     skipNextLookup.current = true;
     setActive(0);
     setOpen(true);
@@ -219,7 +231,7 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
     if (e.key === 'Enter' || e.key === 'Tab') {
       if (open && list[activeIdx]) {
         e.preventDefault();
-        addContact(list[activeIdx]);
+        toggleContact(list[activeIdx]);
       } else if (draft.trim()) {
         e.preventDefault();
         commitDraft();
@@ -308,26 +320,45 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
           role="listbox"
           className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg"
         >
-          {list.map((c, i) => (
-            <li key={`${c.email}-${i}`} role="option" aria-selected={i === activeIdx}>
-              <button
-                type="button"
-                // mousedown fires before the input's blur so the pick isn't lost.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  addContact(c);
-                }}
-                className={`flex w-full flex-col items-start px-3 py-2 text-left ${
-                  i === activeIdx ? 'bg-surface-2' : 'active:bg-surface-2'
-                }`}
+          {list.map((c, i) => {
+            const isAdded = added.has(c.email.toLowerCase());
+            return (
+              <li
+                key={`${c.email}-${i}`}
+                role="option"
+                aria-selected={i === activeIdx}
+                aria-checked={isAdded}
               >
-                {c.name && <span className="text-[15px] leading-tight">{c.name}</span>}
-                <span className={`text-xs ${c.name ? 'text-faint' : 'text-[15px]'}`}>
-                  {c.email}
-                </span>
-              </button>
-            </li>
-          ))}
+                <button
+                  type="button"
+                  // mousedown fires before the input's blur so the pick isn't lost.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    toggleContact(c);
+                  }}
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left ${
+                    i === activeIdx ? 'bg-surface-2' : 'active:bg-surface-2'
+                  }`}
+                >
+                  <span
+                    className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
+                      isAdded
+                        ? 'border-accent bg-accent text-white'
+                        : 'border-border text-transparent'
+                    }`}
+                  >
+                    <CheckIcon className="size-3.5" />
+                  </span>
+                  <span className="flex min-w-0 flex-col">
+                    {c.name && <span className="truncate text-[15px] leading-tight">{c.name}</span>}
+                    <span className={`truncate text-xs ${c.name ? 'text-faint' : 'text-[15px]'}`}>
+                      {c.email}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
