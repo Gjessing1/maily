@@ -98,6 +98,15 @@ describe('MessageRow swipe', () => {
     expect(onDelete).not.toHaveBeenCalled();
   });
 
+  test('tapping the trailing star fires the flag toggle with the desired state', () => {
+    const onToggleFlag = vi.fn();
+    renderRow({ message: makeMessage({ flagged: false }), onToggleFlag });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Star' }));
+
+    expect(onToggleFlag).toHaveBeenCalledWith('msg-1', true); // !flagged → star
+  });
+
   test('swiping is suppressed in selection mode', () => {
     const onToggleRead = vi.fn();
     const onDelete = vi.fn();

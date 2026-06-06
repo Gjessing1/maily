@@ -26,12 +26,14 @@ export function MessageRow({
   message,
   onDelete,
   onToggleRead,
+  onToggleFlag,
   swipeRight = 'read',
   swipeLeft = 'delete',
   to,
   selected = false,
   selectionMode = false,
   checked = false,
+  isWide = false,
   onEnterSelect,
   onToggleSelect,
   onContextMenu: onContextMenuOpen,
@@ -42,6 +44,8 @@ export function MessageRow({
   onDelete?: (id: string) => void;
   /** Toggle read/unread from the list. Receives the desired `seen`. */
   onToggleRead?: (id: string, seen: boolean) => void;
+  /** Toggle star/flag from the list. Receives the desired `flagged`. */
+  onToggleFlag?: (id: string, flagged: boolean) => void;
   /** Action committed on a right (left→right) swipe. */
   swipeRight?: SwipeAction;
   /** Action committed on a left (right→left) swipe. */
@@ -54,6 +58,8 @@ export function MessageRow({
   selectionMode?: boolean;
   /** Whether this row is currently selected (multi-select). */
   checked?: boolean;
+  /** Wide (desktop) layout: keep the read/unread toggle alongside the star. */
+  isWide?: boolean;
   /** Long-press (mobile) handler to enter multi-select mode. */
   onEnterSelect?: (id: string) => void;
   /** Toggle this row's selection (also enters selection mode from empty). */
@@ -267,7 +273,11 @@ export function MessageRow({
               >
                 {message.subject || '(no subject)'}
               </span>
-              {message.flagged && <StarIcon className="size-3.5 shrink-0 text-accent" />}
+              {/* Inline flag indicator only where there's no trailing star toggle
+                  (e.g. search results); the toggle already shows state otherwise. */}
+              {message.flagged && !onToggleFlag && (
+                <StarIcon className="size-3.5 shrink-0 text-accent" fill="currentColor" />
+              )}
               {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}
             </div>
 
@@ -277,19 +287,39 @@ export function MessageRow({
           </div>
         </Link>
 
-        {onToggleRead && !selectionMode && (
-          <button
-            type="button"
-            onClick={() => onToggleRead(message.id, !message.seen)}
-            className="flex shrink-0 items-center border-b border-border/60 px-4 text-faint transition-colors active:bg-surface-2"
-            aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
-          >
-            {message.seen ? (
-              <MailIcon className="size-5" />
-            ) : (
-              <MailOpenIcon className="size-5 text-accent" />
+        {/* Trailing action column. On mobile the read/unread toggle lives on the
+            swipe gesture, so the slot is the star toggle alone; desktop keeps the
+            read/unread icon and adds the star beside it. */}
+        {!selectionMode && (onToggleFlag || (isWide && onToggleRead)) && (
+          <div className="flex shrink-0 items-stretch">
+            {isWide && onToggleRead && (
+              <button
+                type="button"
+                onClick={() => onToggleRead(message.id, !message.seen)}
+                className="flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors active:bg-surface-2"
+                aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
+              >
+                {message.seen ? (
+                  <MailIcon className="size-5" />
+                ) : (
+                  <MailOpenIcon className="size-5 text-accent" />
+                )}
+              </button>
             )}
-          </button>
+            {onToggleFlag && (
+              <button
+                type="button"
+                onClick={() => onToggleFlag(message.id, !message.flagged)}
+                className="flex shrink-0 items-center border-b border-border/60 px-3 transition-colors active:bg-surface-2"
+                aria-label={message.flagged ? 'Unstar' : 'Star'}
+              >
+                <StarIcon
+                  className={`size-5 ${message.flagged ? 'text-accent' : 'text-faint'}`}
+                  fill={message.flagged ? 'currentColor' : 'none'}
+                />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

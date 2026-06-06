@@ -137,6 +137,12 @@ export function Home() {
     api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
   }, []);
 
+  // Optimistic star toggle: flip locally, reconcile on the server (revert on failure).
+  const handleToggleFlag = useCallback((id: string, flagged: boolean) => {
+    void patchCachedFlags(id, { flagged });
+    api.setFlags(id, { flagged }).catch(() => void patchCachedFlags(id, { flagged: !flagged }));
+  }, []);
+
   // Single archive (context menu): drop locally, move the inbox copy server-side.
   const handleArchive = useCallback((id: string) => {
     void removeCachedMessage(id);
@@ -296,6 +302,8 @@ export function Home() {
                   message={m}
                   onDelete={handleDelete}
                   onToggleRead={handleToggleRead}
+                  onToggleFlag={handleToggleFlag}
+                  isWide={isWide}
                   swipeRight={prefs.swipeRight}
                   swipeLeft={prefs.swipeLeft}
                   to={splitMode ? selectTo(m.id) : undefined}
