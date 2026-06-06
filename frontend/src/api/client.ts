@@ -122,6 +122,15 @@ export const api = {
     return request<MessageDto[]>(`/api/inbox${suffix}`);
   },
 
+  /** Virtual unified view for any mergeable role ("All sent", "All drafts", …). */
+  unified: (role: string, opts: { limit?: number; before?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.before) qs.set('before', String(opts.before));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<MessageDto[]>(`/api/unified/${role}${suffix}`);
+  },
+
   /** Virtual "Archived" view for an account (archive folder minus inbox/sent/…). */
   archived: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
     const qs = new URLSearchParams();

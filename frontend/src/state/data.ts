@@ -18,7 +18,7 @@ import {
   type CachedMessage,
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
-import { isUnifiedView } from './unified';
+import { isUnifiedView, unifiedRole } from './unified';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
@@ -71,19 +71,20 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   // and, offline, filters the cached archive-folder rows by the same role subtraction.
   const archived = isArchivedView(folderId);
   const accountId = archived ? archivedAccountId(folderId) : undefined;
-  // The virtual "Unified Inbox" merges every account's inbox; offline it unions the
-  // cached messages of all inbox-role folders.
+  // The virtual unified views ("All inboxes", "All sent", …) merge every account's
+  // folder of one role; offline they union the cached messages of those folders.
   const unified = isUnifiedView(folderId);
+  const unifiedFor = unifiedRole(folderId);
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
     let rows: CachedMessage[];
-    if (unified) {
-      const inboxIds = (await cache.folders.toArray())
-        .filter((f) => f.role === 'inbox')
+    if (unified && unifiedFor) {
+      const roleFolderIds = (await cache.folders.toArray())
+        .filter((f) => f.role === unifiedFor)
         .map((f) => f.id);
-      rows = inboxIds.length
-        ? await cache.messages.where('folderIds').anyOf(inboxIds).toArray()
+      rows = roleFolderIds.length
+        ? await cache.messages.where('folderIds').anyOf(roleFolderIds).toArray()
         : [];
     } else if (archived && accountId) {
       const folders = await cache.folders.where('accountId').equals(accountId).toArray();
@@ -102,17 +103,20 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
       return receivedMs(b) - receivedMs(a);
     });
-  }, [folderId, archived, accountId, unified, unreadAtTop]);
+  }, [folderId, archived, accountId, unified, unifiedFor, unreadAtTop]);
 
-  // One page fetch for the unified inbox, an archived view, or a real folder.
+  // One page fetch for a unified view, an archived view, or a real folder. The inbox
+  // keeps its dedicated endpoint; other roles go through the generic unified route.
   const fetchPage = useCallback(
     (before?: number) =>
-      unified
-        ? api.unifiedInbox({ limit: PAGE, before })
+      unifiedFor
+        ? unifiedFor === 'inbox'
+          ? api.unifiedInbox({ limit: PAGE, before })
+          : api.unified(unifiedFor, { limit: PAGE, before })
         : archived && accountId
           ? api.archived(accountId, { limit: PAGE, before })
           : api.messages(folderId!, { limit: PAGE, before }),
-    [unified, archived, accountId, folderId, PAGE],
+    [unifiedFor, archived, accountId, folderId, PAGE],
   );
 
   const refresh = useCallback(() => {

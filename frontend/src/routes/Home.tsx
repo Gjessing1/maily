@@ -10,7 +10,7 @@ import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
 import { isArchivedView } from '../state/archived';
-import { isUnifiedView, UNIFIED_INBOX_ID } from '../state/unified';
+import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../state/unified';
 import { usePrefs } from '../state/prefs';
 import { avatarHue } from '../ui/format';
 import { useMediaQuery } from '../ui/useMediaQuery';
@@ -89,15 +89,18 @@ export function Home() {
     () => (folderId && !isArchivedView(folderId) ? cache.folders.get(folderId) : undefined),
     [folderId],
   );
-  // Synthetic views (Archived, Unified Inbox) have no cached folder row — name them explicitly.
+  // Synthetic views (Archived, unified views) have no cached folder row — name them explicitly.
   const unifiedView = isUnifiedView(folderId);
   const folderName = unifiedView
-    ? 'All inboxes'
+    ? unifiedTitle(folderId)
     : isArchivedView(folderId)
       ? 'Archive'
       : (folder?.name ?? 'Inbox');
-  // Sent shows the account owner as sender on every row, so surface the recipient instead.
-  const showRecipient = folder?.role === 'sent';
+  // Outgoing mail shows the account owner as sender on every row, so surface the
+  // recipient instead. A real Sent folder keeps its existing behaviour; the unified
+  // "All sent"/"All drafts" views also read as outgoing.
+  const uRole = unifiedRole(folderId);
+  const showRecipient = folder?.role === 'sent' || uRole === 'sent' || uRole === 'drafts';
 
   // In the merged inbox, tag each row with its source account so it's clear where mail
   // came from. Keyed by accountId → a coloured label pill.

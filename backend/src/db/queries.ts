@@ -81,12 +81,20 @@ export function listMessages(folderId: string, limit: number, beforeMs?: number)
     .all();
 }
 
+/** Roles that have a meaningful cross-account merged view (e.g. "All inboxes"). */
+export type UnifiedRole = 'inbox' | 'drafts' | 'sent' | 'junk' | 'trash';
+
 /**
- * Virtual "Unified Inbox": every account's inbox-role folder merged into one
- * newest-first stream. Same keyset pagination as `listMessages`; tombstones hidden
- * (§13). A message lives in exactly one account's inbox so no de-dup is needed.
+ * Virtual unified view: every account's folder of a given role merged into one
+ * newest-first stream ("All inboxes", "All sent", …). Same keyset pagination as
+ * `listMessages`; tombstones hidden (§13). A message lives in exactly one account's
+ * folder per role, so no cross-account de-dup is needed.
  */
-export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[] {
+export function listUnifiedByRole(
+  role: UnifiedRole,
+  limit: number,
+  beforeMs?: number,
+): MessageRow[] {
   return db
     .select(getTableColumns(messages))
     .from(messages)
@@ -94,7 +102,7 @@ export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[]
     .innerJoin(folders, eq(folders.id, messageFolders.folderId))
     .where(
       and(
-        eq(folders.role, 'inbox'),
+        eq(folders.role, role),
         isNull(messages.deletedAt),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
       ),
@@ -102,6 +110,11 @@ export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[]
     .orderBy(desc(messages.receivedAt))
     .limit(limit)
     .all();
+}
+
+/** Back-compat alias for the unified inbox (the `/api/inbox` endpoint). */
+export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[] {
+  return listUnifiedByRole('inbox', limit, beforeMs);
 }
 
 /** Roles whose presence disqualifies a message from the virtual "Archived" view. */

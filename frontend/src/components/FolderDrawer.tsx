@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
 import { archivedFolder } from '../state/archived';
-import { UNIFIED_INBOX_ID, unifiedFolder } from '../state/unified';
+import { unifiedFolderFor } from '../state/unified';
 import { useAuth } from '../state/auth';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
 import {
@@ -157,6 +157,52 @@ function AccountFolders({
   );
 }
 
+/**
+ * Cross-account "All accounts" group: the unified inbox (pinned, always visible)
+ * plus the unified Drafts/Sent views tucked under a collapse — since the inbox is
+ * what's used day-to-day, the rest stays collapsed by default (ROADMAP §top).
+ */
+function UnifiedFolders({
+  collapsed,
+  onToggleCollapse,
+  selectedFolderId,
+  onSelect,
+}: {
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  selectedFolderId: string | undefined;
+  onSelect: (f: FolderDto) => void;
+}) {
+  const inbox = unifiedFolderFor('inbox');
+  const rest = [unifiedFolderFor('drafts'), unifiedFolderFor('sent')];
+  return (
+    <div className="mb-4">
+      <button
+        onClick={onToggleCollapse}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-1.5 px-4 py-1 text-left text-xs font-medium uppercase tracking-wide text-faint active:bg-surface-2"
+      >
+        <ChevronDownIcon
+          className={`size-3.5 shrink-0 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+        />
+        <span className="truncate">All accounts</span>
+      </button>
+      <ul>
+        <FolderRow folder={inbox} selectedFolderId={selectedFolderId} onSelect={onSelect} />
+        {!collapsed &&
+          rest.map((f) => (
+            <FolderRow
+              key={f.id}
+              folder={f}
+              selectedFolderId={selectedFolderId}
+              onSelect={onSelect}
+            />
+          ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Past this fraction of the drawer width (on release) the open/close gesture commits. */
 const SWIPE_COMMIT_FRACTION = 0.3;
 
@@ -182,18 +228,16 @@ export function FolderDrawer({
   const { logout } = useAuth();
   const { theme, collapseAccountsByDefault } = usePrefs();
   const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
-  // Per-account collapse overrides. The baseline comes from the persisted
-  // `collapseAccountsByDefault` pref; this map only records accounts the user has
-  // explicitly flipped this session (the drawer stays mounted, so it persists across
-  // open/close) — a transient view preference, not worth syncing to the server.
+  // Per-section collapse overrides. Accounts default to the persisted
+  // `collapseAccountsByDefault` pref; the unified "All accounts" group defaults
+  // collapsed (only its inbox is used day-to-day). This map records only the sections
+  // the user has explicitly flipped this session (the drawer stays mounted, so it
+  // persists across open/close) — a transient view preference, not synced.
+  const UNIFIED_KEY = '__unified__';
   const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
-  const isCollapsed = (id: string) => overrides.get(id) ?? collapseAccountsByDefault;
-  const toggleCollapse = (id: string) =>
-    setOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(id, !(prev.get(id) ?? collapseAccountsByDefault));
-      return next;
-    });
+  const isCollapsed = (id: string, fallback: boolean) => overrides.get(id) ?? fallback;
+  const toggleCollapse = (id: string, current: boolean) =>
+    setOverrides((prev) => new Map(prev).set(id, !current));
 
   // ── Swipe gestures (mobile) ─────────────────────────────────────────────────
   // `drag` is the live finger offset in px while a gesture is in flight (null =
@@ -295,33 +339,26 @@ export function FolderDrawer({
           <h2 className="text-lg font-semibold tracking-tight">maily</h2>
         </div>
         <div className="flex-1">
-          {/* Cross-account merged inbox; only meaningful with more than one account. */}
+          {/* Cross-account merged views; only meaningful with more than one account. */}
           {accounts.length > 1 && (
-            <ul className="mb-2">
-              <li>
-                <button
-                  onClick={() => {
-                    onSelect(unifiedFolder);
-                    onClose();
-                  }}
-                  className={`flex w-full items-center gap-3 py-2.5 pl-4 pr-4 text-left text-[15px] transition ${
-                    selectedFolderId === UNIFIED_INBOX_ID
-                      ? 'bg-accent-soft text-accent'
-                      : 'text-fg active:bg-surface-2'
-                  }`}
-                >
-                  <InboxIcon className="size-5 shrink-0 opacity-70" />
-                  <span className="truncate">All inboxes</span>
-                </button>
-              </li>
-            </ul>
+            <UnifiedFolders
+              collapsed={isCollapsed(UNIFIED_KEY, true)}
+              onToggleCollapse={() => toggleCollapse(UNIFIED_KEY, isCollapsed(UNIFIED_KEY, true))}
+              selectedFolderId={selectedFolderId}
+              onSelect={(f) => {
+                onSelect(f);
+                onClose();
+              }}
+            />
           )}
           {accounts.map((a) => (
             <AccountFolders
               key={a.id}
               account={a}
-              collapsed={isCollapsed(a.id)}
-              onToggleCollapse={() => toggleCollapse(a.id)}
+              collapsed={isCollapsed(a.id, collapseAccountsByDefault)}
+              onToggleCollapse={() =>
+                toggleCollapse(a.id, isCollapsed(a.id, collapseAccountsByDefault))
+              }
               selectedFolderId={selectedFolderId}
               onSelect={(f) => {
                 onSelect(f);

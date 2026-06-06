@@ -217,6 +217,37 @@ test('GET /api/inbox merges every account inbox, newest first, excluding non-inb
   assert.ok(ids.indexOf(newer) < ids.indexOf(older), 'newest first across accounts');
 });
 
+test('GET /api/unified/:role merges that role across accounts; unknown role is 404', async () => {
+  const accA = seedAccount();
+  const accB = seedAccount();
+  const sentA = seedFolder(accA, 'sent');
+  const sentB = seedFolder(accB, 'sent');
+  const inboxB = seedFolder(accB, 'inbox');
+
+  const olderSent = seedMessage(accA, sentA, 'sent', {
+    subject: 'older sent A',
+    receivedAt: new Date('2025-03-01T00:00:00Z'),
+  });
+  const newerSent = seedMessage(accB, sentB, 'sent', {
+    subject: 'newer sent B',
+    receivedAt: new Date('2025-04-01T00:00:00Z'),
+  });
+  const inbox = seedMessage(accB, inboxB, 'inbox', {
+    subject: 'inbox — not sent',
+    receivedAt: new Date('2025-05-01T00:00:00Z'),
+  });
+
+  const res = await get('/api/unified/sent');
+  assert.equal(res.statusCode, 200);
+  const ids = res.json().map((m: { id: string }) => m.id);
+  assert.ok(ids.includes(newerSent) && ids.includes(olderSent), 'both accounts present');
+  assert.ok(!ids.includes(inbox), 'other-role mail excluded');
+  assert.ok(ids.indexOf(newerSent) < ids.indexOf(olderSent), 'newest first across accounts');
+
+  const bad = await get('/api/unified/custom');
+  assert.equal(bad.statusCode, 404);
+});
+
 test('GET /api/messages/:id returns the detail DTO; unknown id is 404', async () => {
   const accountId = seedAccount();
   const folderId = seedFolder(accountId, 'inbox');

@@ -10,8 +10,10 @@ import {
   getMessage,
   listArchived,
   listMessages,
+  listUnifiedByRole,
   listUnifiedInbox,
   type MessageRow,
+  type UnifiedRole,
 } from '../../db/queries.js';
 import { embedInlineImages } from '../../storage/attachments.js';
 import { toMessageDetailDto, toMessageDto } from '../../http/dto.js';
@@ -48,6 +50,19 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     const { limit, before } = pageParams(req.query);
     return toListDtos(listUnifiedInbox(limit, before));
   });
+
+  // Generalised unified view: every account's folder of `role` merged into one
+  // stream ("All sent", "All drafts", …). Inbox keeps its dedicated `/api/inbox`.
+  const UNIFIED_ROLES: UnifiedRole[] = ['inbox', 'drafts', 'sent', 'junk', 'trash'];
+  app.get<{ Params: { role: string }; Querystring: { limit?: string; before?: string } }>(
+    '/api/unified/:role',
+    async (req, reply) => {
+      const role = req.params.role as UnifiedRole;
+      if (!UNIFIED_ROLES.includes(role)) return reply.code(404).send({ error: 'unknown role' });
+      const { limit, before } = pageParams(req.query);
+      return toListDtos(listUnifiedByRole(role, limit, before));
+    },
+  );
 
   // Virtual "Archived" view for an account: archive-role folder minus inbox/sent/
   // trash/junk/drafts. Surfaces archived mail on Gmail, where "archive" == All Mail.
