@@ -16,7 +16,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ContactDto } from '@maily/shared';
 import { api } from '../api/client';
-import { CheckIcon, UsersIcon } from '../ui/icons';
+import { ContactEditor } from './ContactEditor';
+import { CheckIcon, PlusIcon, UsersIcon } from '../ui/icons';
 
 interface Props {
   value: string;
@@ -77,6 +78,8 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
   // The whole addressbook, lazy-loaded once the picker first opens; shown when the
   // in-progress token is too short to search (so a blank field still lists contacts).
   const [allContacts, setAllContacts] = useState<ContactDto[] | null>(null);
+  // When set, the quick-create contact editor is open, seeded with this email.
+  const [creatingEmail, setCreatingEmail] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   // Suppress the search that would otherwise fire right after a pick clears the token.
@@ -157,6 +160,15 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
   // (you're narrowing toward one new address, not curating a set).
   const list = browse ? source : source.filter((c) => !added.has(c.email.toLowerCase()));
   const activeIdx = active < list.length ? active : 0;
+
+  // Offer "create contact" when the typed token is a valid address that isn't already
+  // a known contact (quick-create from compose). The bare email seeds the editor.
+  const draftEmail = addrEmail(draft).toLowerCase();
+  const showCreate =
+    isValidEmail(draft) &&
+    !added.has(draftEmail) &&
+    !list.some((c) => c.email.toLowerCase() === draftEmail) &&
+    !(allContacts ?? []).some((c) => c.email.toLowerCase() === draftEmail);
 
   /** Rebuild the value from the committed chips plus a trailing in-progress token. */
   function emit(chipTokens: string[], tail: string) {
@@ -314,7 +326,7 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
           <UsersIcon className="size-5" />
         </button>
       </div>
-      {open && list.length > 0 && (
+      {open && (list.length > 0 || showCreate) && (
         <ul
           id={listId}
           role="listbox"
@@ -359,7 +371,43 @@ export function RecipientInput({ value, onChange, placeholder, autoFocus, ariaLa
               </li>
             );
           })}
+          {showCreate && (
+            <li role="option" aria-selected={false}>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setCreatingEmail(addrEmail(draft));
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-accent active:bg-surface-2"
+              >
+                <span className="flex size-5 shrink-0 items-center justify-center">
+                  <PlusIcon className="size-4" />
+                </span>
+                <span className="min-w-0 truncate text-[15px]">
+                  Create contact “{addrEmail(draft)}”
+                </span>
+              </button>
+            </li>
+          )}
         </ul>
+      )}
+
+      {creatingEmail !== null && (
+        <ContactEditor
+          card={null}
+          initialEmail={creatingEmail}
+          onClose={() => setCreatingEmail(null)}
+          onSaved={() => {
+            setCreatingEmail(null);
+            // Keep the typed address as a recipient; refresh the cached book so the
+            // new card is recognised next time the picker opens.
+            commitDraft();
+            setAllContacts(null);
+            setOpen(false);
+            setBrowse(false);
+          }}
+        />
       )}
     </div>
   );

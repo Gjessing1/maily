@@ -26,6 +26,8 @@ interface Props {
   card: ContactCardDto | null;
   /** Target address book for a new card (ignored when editing). */
   addressbook?: string | null;
+  /** Seed the first email of a new card (quick-create from compose). Ignored when editing. */
+  initialEmail?: string;
   onClose: () => void;
   /** Called after a successful save or delete (the list/detail should refresh). */
   onSaved: (uid: string | null) => void;
@@ -40,14 +42,14 @@ const emptyAddress = (): ContactAddressDto => ({
   country: '',
 });
 
-export function ContactEditor({ card, addressbook, onClose, onSaved }: Props) {
+export function ContactEditor({ card, addressbook, initialEmail, onClose, onSaved }: Props) {
   const editing = card !== null;
   const [name, setName] = useState(card?.name ?? '');
   const [nickname, setNickname] = useState(card?.nickname ?? '');
   const [org, setOrg] = useState(card?.org ?? '');
   const [title, setTitle] = useState(card?.title ?? '');
   const [emails, setEmails] = useState<string[]>(
-    card && card.emails.length ? [...card.emails] : [''],
+    card && card.emails.length ? [...card.emails] : [initialEmail?.trim() || ''],
   );
   const [phones, setPhones] = useState<TypedValueDto[]>(card?.phones ?? []);
   const [urls, setUrls] = useState<TypedValueDto[]>(card?.urls ?? []);
