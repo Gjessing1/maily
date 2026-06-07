@@ -6,7 +6,6 @@
  * a (possibly slow) transient connection. The next folder resync reconciles on failure.
  */
 import type { FastifyInstance } from 'fastify';
-import type { AccountEngine } from '../../imap/engine.js';
 import { emitSignal } from '../../events.js';
 import {
   folderByRole,
@@ -14,34 +13,10 @@ import {
   uidLocationForMessage,
   uidLocationInFolder,
 } from '../../db/queries.js';
-import { markMessageDeleted, relinkMessageToFolder, updateMessageFlags } from '../../imap/store.js';
+import { markMessageDeleted, updateMessageFlags } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
+import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
-
-/**
- * MOVE a message to a destination folder on the IMAP server over a transient
- * connection (never the IDLE one), then converge the local mapping onto the
- * destination so the message stays fetchable. uidMap (source→dest UID) is present
- * only when the server supports MOVE/COPYUID; null otherwise. Shared by delete
- * (→ Trash) and archive — the two only differ in the destination folder.
- */
-async function moveToFolderOnServer(
-  engine: AccountEngine,
-  messageId: string,
-  loc: { folderPath: string; uid: number },
-  dest: { id: string; path: string },
-): Promise<void> {
-  const newUid = await withTransientConnection(engine.accountConfig, async (client) => {
-    const lock = await client.getMailboxLock(loc.folderPath);
-    try {
-      const res = await client.messageMove(String(loc.uid), dest.path, { uid: true });
-      return res ? (res.uidMap?.get(loc.uid) ?? null) : null;
-    } finally {
-      lock.release();
-    }
-  });
-  relinkMessageToFolder(messageId, dest.id, newUid);
-}
 
 export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string }; Body: { seen?: boolean; flagged?: boolean } }>(
@@ -121,7 +96,7 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     } else if (loc && engine && loc.folderPath !== trash.path) {
       // The tombstone is preserved across the move (Trash re-sights never clear it —
       // see store.ts), so converging the mapping onto Trash keeps the row fetchable.
-      void moveToFolderOnServer(engine, m.id, loc, trash).catch((err: Error) =>
+      void moveToFolderOnServer(engine.accountConfig, m.id, loc, trash).catch((err: Error) =>
         app.log.warn(`trash move failed for ${m.id}: ${err.message}`),
       );
     }
@@ -151,7 +126,7 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     // under load; the next inbox resync reconciles if the move fails.
     const engine = getEngine(m.accountId);
     if (engine) {
-      void moveToFolderOnServer(engine, m.id, loc, archive).catch((err: Error) =>
+      void moveToFolderOnServer(engine.accountConfig, m.id, loc, archive).catch((err: Error) =>
         app.log.warn(`archive move failed for ${m.id}: ${err.message}`),
       );
     }

@@ -317,3 +317,41 @@ export const proposals = sqliteTable(
     index('proposals_message_idx').on(t.messageId),
   ],
 );
+
+/**
+ * Cleanup trash queue (ROADMAP Phase 6b — execution path). ONE row per message awaiting
+ * a rate-limited MOVE-to-Trash, modelled on the `enrichments`-as-queue pattern: a pending
+ * row with `nextAttemptAt` is claimed by the trickle runner, MOVEd to the account's Trash
+ * folder, then marked `done`. Trash-only by design — the runner never EXPUNGEs, so moving
+ * to Trash *is* the archive-before-delete staging (recoverable, nothing hard-deleted in one
+ * step). The local tombstone (`messages.deletedAt`) is set up front by the execute endpoint;
+ * this table only tracks the outstanding server-side IMAP work so it survives a restart.
+ */
+export const cleanupQueue = sqliteTable(
+  'cleanup_queue',
+  {
+    id: uuid(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    /** Denormalised for per-account batching without a join in the runner's hot path. */
+    accountId: text('account_id').notNull(),
+    /** Provenance — which slice queued this message ('never-replied' | 'cold-storage'). */
+    slice: text('slice').notNull(),
+    status: text('status', { enum: ['pending', 'done', 'failed', 'dead'] })
+      .notNull()
+      .default('pending'),
+    /** Retry counter; at the cap a failed row is parked as 'dead'. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Backoff gate (ms): a pending row is only claimed once now >= nextAttemptAt. */
+    nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp_ms' }),
+    /** Last failure reason (null on success). */
+    error: text('error'),
+    createdAt: now(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex('cleanup_queue_message_uq').on(t.messageId),
+    index('cleanup_queue_status_due_idx').on(t.status, t.nextAttemptAt),
+  ],
+);

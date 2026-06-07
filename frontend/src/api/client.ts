@@ -7,6 +7,9 @@ import type {
   AccountDto,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
+  CleanupExecuteRequest,
+  CleanupExecuteResultDto,
+  CleanupQueueStatusDto,
   CleanupSliceDto,
   CleanupSummaryDto,
   ContactCardDto,
@@ -268,13 +271,21 @@ export const api = {
   dismissAction: (id: string) =>
     request<ProposalActionResult>(`/api/actions/${id}/dismiss`, { method: 'POST' }),
 
-  // ── Cleanup Dashboard (Phase 6 — read-only deterministic analytics) ──────────
+  // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
     storage: () => request<CleanupSliceDto>('/api/cleanup/storage'),
     neverReplied: () => request<CleanupSliceDto>('/api/cleanup/never-replied'),
     coldStorage: (years?: number) =>
       request<CleanupSliceDto>(`/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`),
+    /** Queue a delete-eligible slice for trashing (server re-validates the safety gate). */
+    execute: (body: CleanupExecuteRequest) =>
+      request<CleanupExecuteResultDto>('/api/cleanup/execute', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    /** Trash-queue progress for the "Moving N to Trash…" readout. */
+    queueStatus: () => request<CleanupQueueStatusDto>('/api/cleanup/queue'),
   },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),

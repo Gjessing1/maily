@@ -176,19 +176,73 @@ export function neverRepliedSenders(limit = GROUP_LIMIT): CleanupSliceDto {
 }
 
 /**
+ * The cold-storage predicate: mail older than `years` whose body lacks the value markers
+ * (invoice/tax/contract, EN+NO) and which isn't protected. Shared by the preview slice and
+ * the execution resolver so both apply the identical safety + keyword + age filter.
+ */
+function coldStorageWhere(years: number): SQL {
+  const cutoff = Date.now() - years * MS_PER_YEAR;
+  const coldMatch = ftsOrMatch(COLD_KEEP_KEYWORDS);
+  return sql`${LIVE}
+    AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
+    AND ${notProtected('m')}
+    AND m.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${coldMatch})`;
+}
+
+/**
  * Cold-storage candidates — mail older than `years` whose body lacks the value markers
  * (invoice/tax/contract, EN+NO) and which isn't protected. The roadmap's deterministic
  * cold heuristic. Safety-filtered (HARD RULE) and keyword-filtered via the FTS index.
  */
 export function coldStorageCandidates(years = COLD_YEARS, limit = GROUP_LIMIT): CleanupSliceDto {
-  const cutoff = Date.now() - years * MS_PER_YEAR;
-  const coldMatch = ftsOrMatch(COLD_KEEP_KEYWORDS);
-  const where = sql`${LIVE}
-    AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
-    AND ${notProtected('m')}
-    AND m.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${coldMatch})`;
+  const where = coldStorageWhere(years);
   const { groups, truncated } = groupedByDomain(where, limit);
   return { slice: 'cold-storage', groups, truncated, ...totalsFor(where) };
+}
+
+/** A single message earmarked for cleanup execution (the trash queue's unit of work). */
+export interface CleanupMessageRef {
+  id: string;
+  accountId: string;
+}
+
+/**
+ * Resolve a delete-eligible slice to the concrete messages it would trash — the execution
+ * counterpart of the preview slices. **Re-runs the exact same predicates server-side** so
+ * the HARD safety gate (financial/legal/account/medical) and the slice's own filters are
+ * enforced at execution time; the client's previewed list is never trusted. `excludeDomains`
+ * (lowercased) implements the dashboard's "uncheck by domain" affordance.
+ *
+ * Only the destructive slices resolve — 'storage' is informational and throws.
+ */
+export function sliceMessageIds(
+  slice: 'never-replied' | 'cold-storage',
+  opts: { years?: number; excludeDomains?: string[] } = {},
+): CleanupMessageRef[] {
+  const exclude = new Set((opts.excludeDomains ?? []).map((d) => d.toLowerCase()));
+
+  if (slice === 'cold-storage') {
+    const rows = db.all(
+      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+          FROM messages m WHERE ${coldStorageWhere(opts.years ?? COLD_YEARS)}`,
+    ) as { id: string; accountId: string; domain: string }[];
+    return rows
+      .filter((r) => !exclude.has(r.domain))
+      .map((r) => ({ id: r.id, accountId: r.accountId }));
+  }
+
+  if (slice === 'never-replied') {
+    const replied = repliedDomains();
+    const rows = db.all(
+      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+          FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
+    ) as { id: string; accountId: string; domain: string }[];
+    return rows
+      .filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain) && !exclude.has(r.domain))
+      .map((r) => ({ id: r.id, accountId: r.accountId }));
+  }
+
+  throw new Error(`slice '${slice as string}' is not delete-eligible`);
 }
 
 /** Top-line dashboard figures: total live mail, estimated bytes, and protected count. */

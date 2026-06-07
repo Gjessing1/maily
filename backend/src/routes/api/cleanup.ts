@@ -1,22 +1,30 @@
 /**
  * Cleanup Dashboard API (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
- * Read-only deterministic analytics over the local SQLite archive: a storage audit plus
- * delete-eligible slices (senders never replied to, cold-storage candidates), each with
- * its preview impact (count + estimated storage, grouped by sender domain).
+ * Read-only deterministic analytics over the local SQLite archive (a storage audit plus the
+ * delete-eligible slices — senders never replied to, cold-storage candidates — each with its
+ * preview impact) PLUS the Phase 6b execution path: POST /execute queues a slice for trashing
+ * and GET /queue reports trickle progress.
  *
- * These are GET-only on purpose. The destructive execution path (rate-limited IMAP trash
- * queue, archive-before-delete staging, 1-click presets) is a separate, later pass — the
- * roadmap requires previewing impact before any execution, and bulk delete is hard to
- * reverse, so the analytics land and get verified first. The delete-eligible slices are
- * already safety-filtered (financial/legal/account/medical mail excluded — HARD RULE).
+ * Safety invariants on execute: the client sends only the slice + filters (never a message
+ * list), and `sliceMessageIds` re-runs the SAME predicates the preview used — so the HARD
+ * safety gate (financial/legal/account/medical) is re-applied at execution time. Trash-only:
+ * messages are tombstoned locally then MOVEd to Trash by the rate-limited queue, never
+ * EXPUNGEd, so the action is recoverable (archive-before-delete staging).
  */
 import type { FastifyInstance } from 'fastify';
+import type { CleanupExecuteRequest, CleanupExecuteResultDto } from '@maily/shared';
 import {
   cleanupSummary,
   coldStorageCandidates,
   neverRepliedSenders,
+  sliceMessageIds,
   storageByDomain,
 } from '../../cleanup/slices.js';
+import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
+import { markMessageDeleted } from '../../imap/store.js';
+import { emitSignal } from '../../events.js';
+
+const DELETE_ELIGIBLE = new Set(['never-replied', 'cold-storage']);
 
 export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Headline figures: total live mail, estimated bytes, protected-from-cleanup count.
@@ -33,4 +41,27 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     const years = Number(req.query.years);
     return coldStorageCandidates(Number.isFinite(years) && years > 0 ? years : undefined);
   });
+
+  // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
+  // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
+  app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
+    const { slice, years, excludeDomains } = req.body ?? {};
+    if (!slice || !DELETE_ELIGIBLE.has(slice)) {
+      return reply.code(400).send({ error: 'slice is not delete-eligible' });
+    }
+
+    const refs = sliceMessageIds(slice, { years, excludeDomains });
+    for (const ref of refs) {
+      markMessageDeleted(ref.id);
+      emitSignal({ type: 'mail:deleted', accountId: ref.accountId, messageId: ref.id });
+    }
+    const queued = enqueueTrash(refs, slice);
+    if (queued > 0) nudgeTrashQueue();
+
+    const result: CleanupExecuteResultDto = { slice, queued };
+    return result;
+  });
+
+  // Trash-queue progress (pending / failed / done) for the dashboard's "Moving N…" readout.
+  app.get('/api/cleanup/queue', async () => queueStatus());
 }

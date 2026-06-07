@@ -172,6 +172,61 @@ test('coldStorageCandidates: old non-protected value-free mail only', () => {
   assert.equal(findGroup(slice, 'bank.example'), undefined, 'protected mail excluded');
 });
 
+test('sliceMessageIds(cold-storage): resolves to the same messages, safety re-applied', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+
+  const coldId = seedMessage(acct, {
+    fromAddress: 'old@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  // Old + protected (password) → must NOT resolve, the HARD gate re-applies at execution time.
+  seedMessage(acct, {
+    fromAddress: 'noreply@bank.example',
+    bodyText: 'password reset',
+    receivedAt: old,
+  });
+
+  const refs = S.sliceMessageIds('cold-storage', { years: 2 });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [coldId],
+    'only the cold, unprotected message resolves',
+  );
+  assert.equal(refs[0]!.accountId, acct);
+});
+
+test('sliceMessageIds(never-replied): excludeDomains spares a domain', () => {
+  const acct = seedAccount();
+  const inbox = seedFolder(acct, 'inbox');
+
+  const keepId = seedMessage(acct, {
+    fromAddress: 'news@promo.example',
+    bodyText: 'newsletter',
+    folderId: inbox,
+  });
+  seedMessage(acct, {
+    fromAddress: 'ads@spam.example',
+    bodyText: 'buy now',
+    folderId: inbox,
+  });
+
+  const all = S.sliceMessageIds('never-replied');
+  assert.equal(all.length, 2, 'both unreplied senders resolve');
+
+  const spared = S.sliceMessageIds('never-replied', { excludeDomains: ['spam.example'] });
+  assert.deepEqual(
+    spared.map((r) => r.id),
+    [keepId],
+    'the unchecked domain is dropped from the resolved set',
+  );
+});
+
+test('sliceMessageIds: storage slice is not delete-eligible', () => {
+  assert.throws(() => S.sliceMessageIds('storage' as 'cold-storage'), /not delete-eligible/);
+});
+
 test('cleanupSummary: counts protected mail', () => {
   const acct = seedAccount();
   seedMessage(acct, { fromAddress: 'a@x.example', bodyText: 'invoice attached' });

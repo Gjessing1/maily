@@ -347,6 +347,32 @@ export interface CleanupSummaryDto {
   protectedMessages: number;
 }
 
+/**
+ * Execute a delete-eligible cleanup slice (ROADMAP Phase 6b). The server re-resolves the
+ * slice and re-applies the HARD safety gate at execution time — the client never sends a
+ * message list, only the slice + filters. `excludeDomains` powers "uncheck by domain".
+ */
+export interface CleanupExecuteRequest {
+  slice: 'never-replied' | 'cold-storage';
+  /** Cold-storage age threshold (years); ignored for other slices. */
+  years?: number;
+  /** Sender domains to spare from this run (lowercased). */
+  excludeDomains?: string[];
+}
+
+/** Result of queuing a cleanup execution — how many messages were enqueued for trashing. */
+export interface CleanupExecuteResultDto {
+  slice: string;
+  queued: number;
+}
+
+/** Trash-queue progress for the dashboard. `failed` = rows that exhausted their retries. */
+export interface CleanupQueueStatusDto {
+  pending: number;
+  failed: number;
+  done: number;
+}
+
 /** A browser Web Push subscription, registered by the PWA for background notifications. */
 export interface PushSubscriptionDto {
   endpoint: string;

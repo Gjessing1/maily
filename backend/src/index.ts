@@ -19,6 +19,7 @@ import { initWebPush, wirePushNotifications } from './push/webpush.js';
 import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
+import { startTrashQueue } from './cleanup/trashQueue.js';
 
 const log = createLogger('maily');
 
@@ -70,6 +71,10 @@ async function main(): Promise<void> {
 
   // Keep the contacts cache fresh from the Radicale addressbook (no-op if unset).
   startContactsSync();
+
+  // Resume any cleanup trash-queue work left pending from a previous run, and trickle new
+  // bulk-cleanup MOVEs to Trash thereafter (Phase 6b — rate-limited, restart-safe).
+  startTrashQueue();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {
