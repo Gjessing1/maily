@@ -56,6 +56,13 @@ function deleteBeforeCaret(node: Node, offset: number, count: number): void {
   range.setStart(node, offset - count);
   range.setEnd(node, offset);
   range.deleteContents();
+  // Collapse the live selection to the deletion point. deleteContents only mutates
+  // the throwaway range, leaving the document selection stale — a following
+  // execCommand (insertText / formatBlock) would then target the wrong place.
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
 }
 
 /** Wrap [start,end) of a text node in `tag`, placing the caret just after it. */
@@ -113,22 +120,32 @@ function tryInlineMarkdown(): boolean {
 function applyBlockMarkdown(marker: string): boolean {
   // formatBlock's tag arg must be angle-bracketed to work in every engine (Firefox
   // ignores the bare 'H1' form Chrome tolerates) — pass '<h1>' so #/##/### all apply.
+  //
+  // It also silently no-ops on a truly empty line, which is exactly the state we're
+  // in: the marker text ("#", ">"…) was just removed by deleteBeforeCaret. So seed a
+  // zero-width space first to give formatBlock a non-empty line to wrap; the caret
+  // lands after it inside the new block, and cleanEditorHtml strips ZWSP off the wire.
+  // (List commands wrap an empty line fine, so they don't need the seed.)
+  const formatBlock = (tag: string): void => {
+    exec('insertText', '\u200b');
+    exec('formatBlock', tag);
+  };
   switch (marker) {
     case '#':
-      exec('formatBlock', '<h1>');
+      formatBlock('<h1>');
       return true;
     case '##':
-      exec('formatBlock', '<h2>');
+      formatBlock('<h2>');
       return true;
     case '###':
-      exec('formatBlock', '<h3>');
+      formatBlock('<h3>');
       return true;
     case '-':
     case '*':
       exec('insertUnorderedList');
       return true;
     case '>':
-      exec('formatBlock', '<blockquote>');
+      formatBlock('<blockquote>');
       return true;
     default:
       if (/^\d+\.$/.test(marker)) {
