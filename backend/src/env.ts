@@ -80,7 +80,7 @@ function ollamaConfig(): { url: string; model: string; timeoutMs: number } | nul
   if (!url) return null;
   return {
     url: url.replace(/\/+$/, ''),
-    model: optional('OLLAMA_MODEL', 'qwen2.5'),
+    model: optional('OLLAMA_MODEL', 'qwen2.5:7b'),
     timeoutMs: Number(optional('OLLAMA_TIMEOUT_MS', String(120_000))),
   };
 }
