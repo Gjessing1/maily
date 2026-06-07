@@ -241,7 +241,14 @@ export async function drainPipeline(opts: DrainOptions = {}): Promise<DrainResul
     rows = claimDue(now, max);
   }
 
-  const result: DrainResult = { claimed: rows.length, ok: 0, failed: 0, dead: 0, skipped: 0, proposals: [] };
+  const result: DrainResult = {
+    claimed: rows.length,
+    ok: 0,
+    failed: 0,
+    dead: 0,
+    skipped: 0,
+    proposals: [],
+  };
   for (const row of rows) {
     const { outcome, proposals: ready } = await processRow(row, now);
     result[outcome] += 1;
@@ -283,7 +290,12 @@ export function queueDepth(now: Date = new Date()): {
       )
       .get()?.n ?? 0;
 
-  return { pending: countStatus('pending'), failed: countStatus('failed'), due, dead: countStatus('dead') };
+  return {
+    pending: countStatus('pending'),
+    failed: countStatus('failed'),
+    due,
+    dead: countStatus('dead'),
+  };
 }
 
 /**
@@ -316,11 +328,8 @@ export function reindex(scope: ReindexScope, now: Date = new Date()): number {
         .run().changes;
     }
     if (scope.kind === 'enricher') {
-      return db
-        .update(enrichments)
-        .set(reset)
-        .where(eq(enrichments.enricher, scope.enricher))
-        .run().changes;
+      return db.update(enrichments).set(reset).where(eq(enrichments.enricher, scope.enricher)).run()
+        .changes;
     }
     // 'all': reset everything; backfill picks up any never-enqueued messages.
     const changed = db.update(enrichments).set(reset).run().changes;

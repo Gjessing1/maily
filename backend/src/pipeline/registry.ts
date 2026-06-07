@@ -9,6 +9,7 @@
  */
 import type { Enricher, Tier } from './types.js';
 import { factsEnricher } from './enrichers/facts.js';
+import { travelEnricher } from './enrichers/travel.js';
 
 const registry = new Map<string, Enricher>();
 
@@ -42,6 +43,7 @@ export function enrichersForTier(tier: Tier): Enricher[] {
 }
 
 // --- Default enrichers ------------------------------------------------------------------
-// Phase 4 ships the framework with ONE reference enricher (see enrichers/facts.ts);
-// real deterministic enrichers register here in subsequent roadmap bullets.
+// `facts` is the framework reference enricher (search-kind, inert). `travel` is the
+// first real deterministic enricher: JSON-LD reservation extraction → calendar offers.
 registerEnricher(factsEnricher);
+registerEnricher(travelEnricher);

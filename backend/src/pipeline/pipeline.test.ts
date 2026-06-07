@@ -572,3 +572,185 @@ test('drain on a message with malformed address JSON degrades to empty recipient
     recipientCount: 0,
   });
 });
+
+// ========================================================================================
+// travel — JSON-LD reservation extraction → calendar offers
+// ========================================================================================
+
+/** Wrap JSON-LD in a `<script>` block the way travel mail embeds it. */
+function ldHtml(json: unknown): string {
+  return `<html><body><p>Your booking</p><script type="application/ld+json">${JSON.stringify(
+    json,
+  )}</script></body></html>`;
+}
+
+/** Build a minimal PipelineMessage carrying the given HTML body (direct-run unit tests). */
+function pmsg(bodyHtml: string | null): PipelineMessage {
+  return {
+    id: randomUUID(),
+    accountId: randomUUID(),
+    threadId: null,
+    subject: 'Booking',
+    fromName: null,
+    fromAddress: 'noreply@airline.com',
+    to: [],
+    cc: [],
+    snippet: null,
+    bodyText: null,
+    bodyHtml,
+    inReplyTo: null,
+    references: null,
+    sentAt: null,
+    receivedAt: new Date(),
+    sourcePath: null,
+  };
+}
+
+const FLIGHT_LD = {
+  '@context': 'http://schema.org',
+  '@type': 'FlightReservation',
+  reservationNumber: 'ABC123',
+  reservationFor: {
+    '@type': 'Flight',
+    flightNumber: '110',
+    airline: { '@type': 'Airline', name: 'United', iataCode: 'UA' },
+    departureAirport: { '@type': 'Airport', name: 'San Francisco', iataCode: 'SFO' },
+    departureTime: '2099-03-04T20:15:00-08:00',
+    arrivalAirport: { '@type': 'Airport', name: 'JFK', iataCode: 'JFK' },
+    arrivalTime: '2099-03-05T06:30:00-05:00',
+  },
+};
+
+test('travel: the enricher self-registers and is operational (Tier-0 gated)', () => {
+  const travel = P.enricherByName('travel');
+  assert.ok(travel, 'travel enricher is registered by default');
+  assert.equal(travel.kind, 'operational');
+});
+
+test('travel: applies() only fires for HTML bodies carrying JSON-LD', () => {
+  const travel = P.enricherByName('travel')!;
+  assert.equal(travel.applies!(pmsg(ldHtml(FLIGHT_LD))), true);
+  assert.equal(travel.applies!(pmsg('<p>plain</p>')), false);
+  assert.equal(travel.applies!(pmsg(null)), false);
+});
+
+test('travel: extracts a FlightReservation and emits a VEVENT-shaped calendar offer', async () => {
+  const travel = P.enricherByName('travel')!;
+  const out = await travel.run({ message: pmsg(ldHtml(FLIGHT_LD)), tier: 0 });
+  const result = out.result as { reservations: Array<Record<string, unknown>> };
+  assert.equal(result.reservations.length, 1);
+  assert.deepEqual(result.reservations[0], {
+    type: 'flight',
+    reservationNumber: 'ABC123',
+    title: 'UA110 SFO→JFK',
+    startsAt: '2099-03-04T20:15:00-08:00',
+    endsAt: '2099-03-05T06:30:00-05:00',
+    location: 'SFO → JFK',
+  });
+  assert.equal(out.proposals?.length, 1);
+  const p = out.proposals![0]!;
+  assert.equal(p.type, 'calendar_event');
+  assert.equal(p.title, 'UA110 SFO→JFK');
+  assert.deepEqual(p.payload, {
+    summary: 'UA110 SFO→JFK',
+    start: '2099-03-04T20:15:00-08:00',
+    end: '2099-03-05T06:30:00-05:00',
+    location: 'SFO → JFK',
+    description: 'Confirmation: ABC123',
+    source: 'flight',
+  });
+});
+
+test('travel: extracts a LodgingReservation (dates live on the reservation)', async () => {
+  const travel = P.enricherByName('travel')!;
+  const ld = {
+    '@type': 'LodgingReservation',
+    reservationNumber: 'H-9',
+    checkinTime: '2099-04-11T16:00:00-05:00',
+    checkoutTime: '2099-04-13T11:00:00-05:00',
+    reservationFor: {
+      '@type': 'LodgingBusiness',
+      name: 'Grand Hotel',
+      address: { '@type': 'PostalAddress', streetAddress: '1 Main St', addressLocality: 'Austin' },
+    },
+  };
+  const out = await travel.run({ message: pmsg(ldHtml(ld)), tier: 0 });
+  const r = (out.result as { reservations: Array<Record<string, unknown>> }).reservations[0]!;
+  assert.equal(r.type, 'lodging');
+  assert.equal(r.title, 'Grand Hotel');
+  assert.equal(r.startsAt, '2099-04-11T16:00:00-05:00');
+  assert.equal(r.endsAt, '2099-04-13T11:00:00-05:00');
+  assert.equal(r.location, '1 Main St, Austin');
+});
+
+test('travel: extracts an EventReservation from a `@graph` wrapper', async () => {
+  const travel = P.enricherByName('travel')!;
+  const ld = {
+    '@context': 'http://schema.org',
+    '@graph': [
+      { '@type': 'WebSite', name: 'Tickets' },
+      {
+        '@type': 'EventReservation',
+        reservationNumber: 'EVT-7',
+        reservationFor: {
+          '@type': 'Event',
+          name: 'Foo Fighters',
+          startDate: '2099-03-09T19:30:00-08:00',
+          location: { '@type': 'Place', name: 'The Fillmore' },
+        },
+      },
+    ],
+  };
+  const out = await travel.run({ message: pmsg(ldHtml(ld)), tier: 0 });
+  const r = (out.result as { reservations: Array<Record<string, unknown>> }).reservations[0]!;
+  assert.equal(r.type, 'event');
+  assert.equal(r.title, 'Foo Fighters');
+  assert.equal(r.startsAt, '2099-03-09T19:30:00-08:00');
+  assert.equal(r.location, 'The Fillmore');
+});
+
+test('travel: tolerates a malformed JSON-LD block and parses the valid sibling', async () => {
+  const travel = P.enricherByName('travel')!;
+  const html =
+    `<script type="application/ld+json">{ not valid json }</script>` +
+    `<script type="application/ld+json">${JSON.stringify([FLIGHT_LD])}</script>`;
+  const out = await travel.run({ message: pmsg(html), tier: 0 });
+  assert.equal((out.result as { reservations: unknown[] }).reservations.length, 1);
+});
+
+test('travel: a non-reservation JSON-LD body yields no reservations and no proposals', async () => {
+  const travel = P.enricherByName('travel')!;
+  const out = await travel.run({
+    message: pmsg(ldHtml({ '@type': 'Organization', name: 'ACME' })),
+    tier: 0,
+  });
+  assert.deepEqual(out.result, { reservations: [] });
+  assert.equal(out.proposals, undefined);
+});
+
+test('travel: end-to-end drain persists the calendar proposal and signals it', async () => {
+  only(P.enricherByName('travel')!);
+  const acct = seedAccount();
+  const msg = seedMessage(acct, { receivedAt: new Date(), bodyHtml: ldHtml(FLIGHT_LD) });
+  P.enqueueMessage(msg, new Date());
+
+  const res = await P.drainPipeline({ selfHeal: false });
+  assert.equal(res.ok, 1);
+  assert.equal(res.proposals.length, 1, 'a proposal was surfaced this drain');
+  assert.equal(res.proposals[0]!.label, 'UA110 SFO→JFK');
+
+  const prop = db.select().from(schema.proposals).where(eq(schema.proposals.messageId, msg)).get();
+  assert.ok(prop, 'proposal row persisted');
+  assert.equal(prop.type, 'calendar_event');
+  assert.equal(prop.enricher, 'travel');
+  assert.equal(prop.status, 'pending');
+  assert.ok(prop.expiresAt, 'horizon-bounded expiry is set');
+});
+
+test('travel: old mail is suppressed (operational) so no stale flight offers fire', () => {
+  // enrichersForTier drops operational enrichers on Tier 1 — the framework guarantee
+  // that a deep backfill can never surface a years-old "add this flight" proposal.
+  only(P.enricherByName('travel')!);
+  const names = P.enrichersForTier(1).map((e) => e.name);
+  assert.deepEqual(names, [], 'travel does not enqueue for older mail');
+});
