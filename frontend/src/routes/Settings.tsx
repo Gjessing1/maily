@@ -809,16 +809,17 @@ export function Settings() {
           </div>
           {sync && sync.length > 0 && (
             <p className="px-4 pt-2 text-xs text-faint">
-              Total synced content:{' '}
+              Local storage used:{' '}
               <span className="font-medium text-fg">
                 {humanBytes(sync.reduce((sum, a) => sum + (a.contentBytes ?? 0), 0))}
               </span>
             </p>
           )}
           <p className="px-4 pt-2 text-xs text-faint">
-            Counts are messages cached locally per folder. Mail outside the cache window stays on
-            the server and is fetched on demand. Size is stored message bodies plus downloaded
-            attachments.
+            Counts are messages cached locally per folder. This is on-disk size here — archived
+            message sources plus message bodies and any downloaded attachments — not your
+            mailbox’s server-side total. It’s normally far smaller because attachments are fetched
+            on demand, and older mail stays on the server until you open it.
           </p>
         </section>
 

@@ -156,16 +156,21 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
 }
 
 /**
- * Estimated bytes of synced content for an account: stored message body text (subject
- * + snippet + text/html bodies) plus the bytes of attachments actually downloaded to
- * disk — lazy attachments never fetched don't occupy space (ARCHITECTURE §4). A cheap
- * SQL estimate for Settings → Sync; the raw `.eml` archive isn't counted (no stored
- * size). `length(cast(… as blob))` yields byte length rather than character count.
+ * Estimated on-disk bytes of synced content for an account: the archived raw `.eml`
+ * (`source_bytes` — the dominant true cost once the master-archive sweep has run,
+ * ROADMAP §3.7.E) plus the parsed body columns (subject + snippet + text/html) plus
+ * the bytes of attachments actually downloaded to disk. Lazy attachments never fetched
+ * occupy no space (ARCHITECTURE §4), so the local figure is far smaller than the
+ * mailbox's server-side total. For an archived message the body terms double-count a
+ * small slice already inside the `.eml`, but `source_bytes` dominates — same trade-off
+ * as the cleanup storage metric (slices.ts). `length(cast(… as blob))` yields byte
+ * length rather than character count.
  */
 export function accountContentBytes(accountId: string): number {
   const body = db
     .select({
       bytes: sql<number>`coalesce(sum(
+        coalesce(${messages.sourceBytes}, 0) +
         length(cast(coalesce(${messages.subject}, '') as blob)) +
         length(cast(coalesce(${messages.snippet}, '') as blob)) +
         length(cast(coalesce(${messages.bodyText}, '') as blob)) +
