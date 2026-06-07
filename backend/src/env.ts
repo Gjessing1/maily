@@ -67,6 +67,24 @@ function caldavConfig(): { url: string; user: string; password: string } | null 
   return { url, user, password };
 }
 
+/**
+ * Local Ollama runtime config for LLM enrichment (ROADMAP Phase 5), or null when unset.
+ * LLM features are OFF unless `OLLAMA_URL` is explicitly set — privacy-first: a local-only
+ * provider, no Claude/OpenAI/cloud path. When null no LLM enricher should register.
+ * `model` defaults to `qwen2.5` (strong multilingual EN/NO, runs on modest CPU like the
+ * target Intel N150). `timeoutMs` bounds every generation so a stuck model can't wedge the
+ * single-flight queue.
+ */
+function ollamaConfig(): { url: string; model: string; timeoutMs: number } | null {
+  const url = process.env.OLLAMA_URL;
+  if (!url) return null;
+  return {
+    url: url.replace(/\/+$/, ''),
+    model: optional('OLLAMA_MODEL', 'qwen2.5'),
+    timeoutMs: Number(optional('OLLAMA_TIMEOUT_MS', String(120_000))),
+  };
+}
+
 /** VAPID config for Web Push, or null when not configured (push disabled). */
 function vapidConfig(): { publicKey: string; privateKey: string; subject: string } | null {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -127,4 +145,6 @@ export const env = {
   vapid: vapidConfig,
   carddav: carddavConfig,
   caldav: caldavConfig,
+  /** Local Ollama LLM runtime config (ROADMAP Phase 5), or null when not configured. */
+  ollama: ollamaConfig,
 } as const;
