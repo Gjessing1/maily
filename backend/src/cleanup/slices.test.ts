@@ -252,6 +252,95 @@ test('sliceMessageIds(never-replied): excludeDomains spares a domain', () => {
   );
 });
 
+test('sliceMessageIds(never-replied): domain scopes to one sender', () => {
+  const acct = seedAccount();
+  const inbox = seedFolder(acct, 'inbox');
+
+  const keepId = seedMessage(acct, {
+    fromAddress: 'news@promo.example',
+    bodyText: 'newsletter',
+    folderId: inbox,
+  });
+  seedMessage(acct, { fromAddress: 'ads@spam.example', bodyText: 'buy now', folderId: inbox });
+
+  const scoped = S.sliceMessageIds('never-replied', { domain: 'promo.example' });
+  assert.deepEqual(
+    scoped.map((r) => r.id),
+    [keepId],
+    'only the scoped sender resolves',
+  );
+});
+
+test('sliceMessageIds(never-replied): messageIds intersect the eligible set', () => {
+  const acct = seedAccount();
+  const inbox = seedFolder(acct, 'inbox');
+
+  const a = seedMessage(acct, { fromAddress: 'a@promo.example', bodyText: 'hi', folderId: inbox });
+  const b = seedMessage(acct, { fromAddress: 'b@promo.example', bodyText: 'hi', folderId: inbox });
+
+  // Pick only one of the eligible messages plus a bogus id — the bogus one is dropped.
+  const refs = S.sliceMessageIds('never-replied', { messageIds: [a, 'does-not-exist'] });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [a],
+    'only the selected, eligible id resolves; the unknown id is ignored',
+  );
+  assert.ok(!refs.some((r) => r.id === b), 'the unselected eligible message is left alone');
+});
+
+test('sliceMessageIds(cold-storage): a protected id passed in is dropped (safety wins)', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+
+  const coldId = seedMessage(acct, {
+    fromAddress: 'old@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  // Old + protected (password) — even if explicitly selected, the HARD gate keeps it out.
+  const protId = seedMessage(acct, {
+    fromAddress: 'noreply@bank.example',
+    bodyText: 'password reset',
+    receivedAt: old,
+  });
+
+  const refs = S.sliceMessageIds('cold-storage', { years: 2, messageIds: [coldId, protId] });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [coldId],
+    'the protected id is intersected away — selection cannot override safety',
+  );
+});
+
+test('slice group list: offset + q paginate and filter, truncated flags more pages', () => {
+  const acct = seedAccount();
+  // Three distinct sender domains, descending bytes so order is deterministic.
+  seedMessage(acct, { fromAddress: 'a@alpha.example', bodyText: 'x'.repeat(300) });
+  seedMessage(acct, { fromAddress: 'b@beta.example', bodyText: 'x'.repeat(200) });
+  seedMessage(acct, { fromAddress: 'c@gamma.example', bodyText: 'x'.repeat(100) });
+
+  // First page of one → truncated (two more remain).
+  const page1 = S.storageByDomain({ limit: 1 });
+  assert.equal(page1.groups.length, 1);
+  assert.equal(page1.groups[0]!.domain, 'alpha.example');
+  assert.equal(page1.truncated, true);
+  // Headline total spans every domain regardless of the page.
+  assert.equal(page1.totalMessages, 3);
+
+  // Offset into the list.
+  const page2 = S.storageByDomain({ limit: 1, offset: 1 });
+  assert.equal(page2.groups[0]!.domain, 'beta.example');
+  assert.equal(page2.truncated, true);
+
+  // Substring search reaches a specific sender (case-insensitive), no more pages.
+  const found = S.storageByDomain({ q: 'GAMMA' });
+  assert.deepEqual(
+    found.groups.map((g) => g.domain),
+    ['gamma.example'],
+  );
+  assert.equal(found.truncated, false);
+});
+
 test('sliceMessageIds: storage slice is not delete-eligible', () => {
   assert.throws(() => S.sliceMessageIds('storage' as 'cold-storage'), /not delete-eligible/);
 });

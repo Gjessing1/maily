@@ -31,21 +31,42 @@ import { emitSignal } from '../../events.js';
 
 const DELETE_ELIGIBLE = new Set(['never-replied', 'cold-storage']);
 
+/** Parse the shared group-list paging/search query (`q` substring + `offset`). */
+function pageOpts(q: { offset?: string; q?: string }): { q?: string; offset?: number } {
+  const off = Number(q.offset);
+  return {
+    q: q.q?.trim() ? q.q.trim() : undefined,
+    offset: Number.isFinite(off) && off > 0 ? off : undefined,
+  };
+}
+
+type PageQuery = { offset?: string; q?: string };
+
 export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Headline figures: total live mail, estimated bytes, protected-from-cleanup count.
   app.get('/api/cleanup/summary', async () => cleanupSummary());
 
   // Storage audit — every sender domain by estimated bytes (informational, not a preset).
-  app.get('/api/cleanup/storage', async () => storageByDomain());
+  app.get<{ Querystring: PageQuery }>('/api/cleanup/storage', async (req) =>
+    storageByDomain(pageOpts(req.query)),
+  );
 
   // Senders never written back to — a passive bulk-unsubscribe / clutter candidate.
-  app.get('/api/cleanup/never-replied', async () => neverRepliedSenders());
+  app.get<{ Querystring: PageQuery }>('/api/cleanup/never-replied', async (req) =>
+    neverRepliedSenders(pageOpts(req.query)),
+  );
 
   // Cold-storage candidates — old mail without value markers (invoice/tax/contract).
-  app.get<{ Querystring: { years?: string } }>('/api/cleanup/cold-storage', async (req) => {
-    const years = Number(req.query.years);
-    return coldStorageCandidates(Number.isFinite(years) && years > 0 ? years : undefined);
-  });
+  app.get<{ Querystring: PageQuery & { years?: string } }>(
+    '/api/cleanup/cold-storage',
+    async (req) => {
+      const years = Number(req.query.years);
+      return coldStorageCandidates(
+        Number.isFinite(years) && years > 0 ? years : undefined,
+        pageOpts(req.query),
+      );
+    },
+  );
 
   // Drill a delete-eligible slice down to individual messages (review surface), optionally
   // scoped to one sender domain. Re-runs the same safety + slice predicates as the preview.
@@ -77,12 +98,14 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
   app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
-    const { slice, years, excludeDomains } = req.body ?? {};
+    const { slice, years, messageIds, domain, excludeDomains } = req.body ?? {};
     if (!slice || !DELETE_ELIGIBLE.has(slice)) {
       return reply.code(400).send({ error: 'slice is not delete-eligible' });
     }
 
-    const refs = sliceMessageIds(slice, { years, excludeDomains });
+    // The scope (messageIds/domain/excludeDomains) only narrows the server-resolved eligible
+    // set — the HARD safety gate is re-applied inside sliceMessageIds, never trusting the client.
+    const refs = sliceMessageIds(slice, { years, messageIds, domain, excludeDomains });
     for (const ref of refs) {
       markMessageDeleted(ref.id);
       emitSignal({ type: 'mail:deleted', accountId: ref.accountId, messageId: ref.id });

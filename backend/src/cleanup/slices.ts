@@ -26,7 +26,7 @@ import { db } from '../db/client.js';
 import { COLD_KEEP_KEYWORDS } from './keywords.js';
 import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
 
-/** Default cap on returned groups per slice — the dashboard shows the worst offenders. */
+/** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
 const GROUP_LIMIT = 50;
 /** Default cold-storage age threshold (years). */
 const COLD_YEARS = 2;
@@ -72,13 +72,13 @@ const toGroup = (r: RawGroup): CleanupGroupDto => ({
 });
 
 /**
- * Run the grouped storage query for a `WHERE` predicate. Returns rows newest-bytes-first;
- * fetches one past the limit so the caller can flag truncation without a second COUNT.
+ * Run the grouped storage query for a `WHERE` predicate, returning EVERY sender-domain group
+ * (bytes-descending). The distinct-domain count is small (hundreds–low thousands), so paging
+ * and substring search happen in JS via {@link paginateGroups} — that keeps a sender search
+ * able to reach the long tail without a body-scanning `LIKE` (ARCHITECTURE §12 forbids those
+ * for message search; this is a tiny domain-label filter, not an FTS bypass).
  */
-function groupedByDomain(
-  where: SQL,
-  limit: number,
-): { groups: CleanupGroupDto[]; truncated: boolean } {
+function allGroupsByDomain(where: SQL): CleanupGroupDto[] {
   const rows = db.all(
     sql`SELECT ${DOMAIN} AS domain,
                COUNT(*) AS messageCount,
@@ -88,11 +88,39 @@ function groupedByDomain(
         FROM messages m
         WHERE ${where}
         GROUP BY domain
-        ORDER BY bytes DESC
-        LIMIT ${limit + 1}`,
+        ORDER BY bytes DESC`,
   ) as RawGroup[];
-  const truncated = rows.length > limit;
-  return { groups: rows.slice(0, limit).map(toGroup), truncated };
+  return rows.map(toGroup);
+}
+
+/** Group-list paging + search options, shared by every slice. */
+export interface GroupPageOpts {
+  /** Case-insensitive sender-domain substring filter (the "Browse by sender" search box). */
+  q?: string;
+  /** Page offset into the (filtered) group list. */
+  offset?: number;
+  /** Page size; defaults to {@link GROUP_LIMIT}. */
+  limit?: number;
+}
+
+/**
+ * Filter a group list by domain substring (case-insensitive) and return the
+ * `[offset, offset+limit)` page. `truncated` means more pages remain past this one — what the
+ * dashboard's "Load more" hangs off. Totals are computed by the callers over the *unfiltered*
+ * set so the slice headline (and the "Clean all N" express path) always reflect the whole slice.
+ */
+function paginateGroups(
+  groups: CleanupGroupDto[],
+  opts: GroupPageOpts = {},
+): { groups: CleanupGroupDto[]; truncated: boolean } {
+  const q = opts.q?.trim().toLowerCase();
+  const filtered = q ? groups.filter((g) => g.domain.includes(q)) : groups;
+  const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
+  const limit = opts.limit && opts.limit > 0 ? opts.limit : GROUP_LIMIT;
+  return {
+    groups: filtered.slice(offset, offset + limit),
+    truncated: offset + limit < filtered.length,
+  };
 }
 
 /** Aggregate totals (count + bytes) for a `WHERE` predicate — the slice headline figures. */
@@ -110,8 +138,8 @@ const LIVE = sql`m.deleted_at IS NULL`;
  * Storage audit — every sender domain by estimated bytes. Informational, so NOT
  * safety-filtered (a storage audit shows all mail; it never proposes deletion).
  */
-export function storageByDomain(limit = GROUP_LIMIT): CleanupSliceDto {
-  const { groups, truncated } = groupedByDomain(LIVE, limit);
+export function storageByDomain(opts: GroupPageOpts = {}): CleanupSliceDto {
+  const { groups, truncated } = paginateGroups(allGroupsByDomain(LIVE), opts);
   return { slice: 'storage', groups, truncated, ...totalsFor(LIVE) };
 }
 
@@ -155,34 +183,18 @@ function repliedDomains(): Set<string> {
  * passive bulk-unsubscribe / clutter candidate. Safety-filtered (protected mail excluded)
  * and the '(unknown)' bucket dropped (not actionable). Reply set is computed from Sent.
  */
-export function neverRepliedSenders(limit = GROUP_LIMIT): CleanupSliceDto {
+export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
   const replied = repliedDomains();
   const where = sql`${LIVE} AND ${notProtected('m')}`;
 
-  // Pull all candidate domain groups, then drop those we've replied to / can't act on.
-  const all = (
-    db.all(
-      sql`SELECT ${DOMAIN} AS domain,
-                 COUNT(*) AS messageCount,
-                 SUM(${BYTES}) AS bytes,
-                 MIN(m.received_at) AS oldestAt,
-                 MAX(m.received_at) AS newestAt
-          FROM messages m
-          WHERE ${where}
-          GROUP BY domain
-          ORDER BY bytes DESC`,
-    ) as RawGroup[]
-  ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
-
-  const totalMessages = all.reduce((n, r) => n + r.messageCount, 0);
-  const totalBytes = all.reduce((n, r) => n + (r.bytes ?? 0), 0);
-  return {
-    slice: 'never-replied',
-    groups: all.slice(0, limit).map(toGroup),
-    truncated: all.length > limit,
-    totalMessages,
-    totalBytes,
-  };
+  // All candidate groups minus those we've replied to / can't act on; total over the full set.
+  const all = allGroupsByDomain(where).filter(
+    (g) => g.domain !== '(unknown)' && !replied.has(g.domain),
+  );
+  const totalMessages = all.reduce((n, g) => n + g.messageCount, 0);
+  const totalBytes = all.reduce((n, g) => n + g.bytes, 0);
+  const { groups, truncated } = paginateGroups(all, opts);
+  return { slice: 'never-replied', groups, truncated, totalMessages, totalBytes };
 }
 
 /**
@@ -204,9 +216,12 @@ function coldStorageWhere(years: number): SQL {
  * (invoice/tax/contract, EN+NO) and which isn't protected. The roadmap's deterministic
  * cold heuristic. Safety-filtered (HARD RULE) and keyword-filtered via the FTS index.
  */
-export function coldStorageCandidates(years = COLD_YEARS, limit = GROUP_LIMIT): CleanupSliceDto {
+export function coldStorageCandidates(
+  years = COLD_YEARS,
+  opts: GroupPageOpts = {},
+): CleanupSliceDto {
   const where = coldStorageWhere(years);
-  const { groups, truncated } = groupedByDomain(where, limit);
+  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
   return { slice: 'cold-storage', groups, truncated, ...totalsFor(where) };
 }
 
@@ -220,39 +235,48 @@ export interface CleanupMessageRef {
  * Resolve a delete-eligible slice to the concrete messages it would trash — the execution
  * counterpart of the preview slices. **Re-runs the exact same predicates server-side** so
  * the HARD safety gate (financial/legal/account/medical) and the slice's own filters are
- * enforced at execution time; the client's previewed list is never trusted. `excludeDomains`
- * (lowercased) implements the dashboard's "uncheck by domain" affordance.
+ * enforced at execution time; the client's previewed list is never trusted.
+ *
+ * The optional scope narrows the eligible set without ever widening it — this is what makes
+ * client-driven selection safe:
+ *  - `domain` (lowercased): restrict to one sender — "trash all from this sender".
+ *  - `messageIds`: an explicit selection; the result is the **intersection** with the eligible
+ *    set, so a stale/forged/now-protected id simply isn't in the set and is silently dropped.
+ *  - `excludeDomains` (lowercased): spare senders from the whole-slice "Clean all" path.
  *
  * Only the destructive slices resolve — 'storage' is informational and throws.
  */
 export function sliceMessageIds(
   slice: 'never-replied' | 'cold-storage',
-  opts: { years?: number; excludeDomains?: string[] } = {},
+  opts: { years?: number; domain?: string; messageIds?: string[]; excludeDomains?: string[] } = {},
 ): CleanupMessageRef[] {
   const exclude = new Set((opts.excludeDomains ?? []).map((d) => d.toLowerCase()));
+  const only = opts.domain?.toLowerCase();
+  const ids = opts.messageIds ? new Set(opts.messageIds) : null;
 
+  let rows: { id: string; accountId: string; domain: string }[];
   if (slice === 'cold-storage') {
-    const rows = db.all(
+    rows = db.all(
       sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
           FROM messages m WHERE ${coldStorageWhere(opts.years ?? COLD_YEARS)}`,
-    ) as { id: string; accountId: string; domain: string }[];
-    return rows
-      .filter((r) => !exclude.has(r.domain))
-      .map((r) => ({ id: r.id, accountId: r.accountId }));
-  }
-
-  if (slice === 'never-replied') {
+    ) as typeof rows;
+  } else if (slice === 'never-replied') {
     const replied = repliedDomains();
-    const rows = db.all(
-      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
-          FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
-    ) as { id: string; accountId: string; domain: string }[];
-    return rows
-      .filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain) && !exclude.has(r.domain))
-      .map((r) => ({ id: r.id, accountId: r.accountId }));
+    rows = (
+      db.all(
+        sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+            FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
+      ) as typeof rows
+    ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
+  } else {
+    throw new Error(`slice '${slice as string}' is not delete-eligible`);
   }
 
-  throw new Error(`slice '${slice as string}' is not delete-eligible`);
+  return rows
+    .filter((r) => !exclude.has(r.domain))
+    .filter((r) => !only || r.domain === only)
+    .filter((r) => !ids || ids.has(r.id))
+    .map((r) => ({ id: r.id, accountId: r.accountId }));
 }
 
 /** Default cap on returned drill-down messages (the review surface, not a bulk export). */

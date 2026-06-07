@@ -2,21 +2,31 @@
  * Cleanup Dashboard (ROADMAP Phase 6 "Master archive & Cleanup Dashboard"). An opt-in
  * power tool over the local SQLite archive — *not* a backlog to clear. It previews the
  * impact (message count + estimated storage, grouped by sender domain) of deterministic
- * cleanup slices, then (Phase 6b) executes them via a review-less 1-click flow: a decided
- * action with an "uncheck by domain" escape hatch and an explicit confirm.
+ * cleanup slices, then executes them with an explicit include/select model:
+ *
+ *  - **Clean all N** — a one-tap express path that trashes the whole server-resolved slice
+ *    (no truncation pretense: the count is the true total, not the 50 shown).
+ *  - **Browse by sender** — a searchable, paginated sender list; drilling into a sender opens
+ *    the message screen where individual messages are selected (default all) and trashed.
  *
  * Execution is Trash-only and recoverable: the server re-validates the HARD safety gate
- * (financial / legal / account / medical mail is protected), tombstones the messages, and a
- * rate-limited background queue MOVEs them to Trash — never EXPUNGE. The dashboard shows the
- * "Moving N to Trash…" progress until the queue drains.
+ * (financial / legal / account / medical mail is protected) and **intersects** any client
+ * selection with the eligible set, tombstones, and a rate-limited background queue MOVEs them
+ * to Trash — never EXPUNGE. The dashboard shows the "Moving N to Trash…" progress until the
+ * queue drains.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { CleanupMessageDto, CleanupSliceDto, CleanupSummaryDto } from '@maily/shared';
+import type {
+  CleanupGroupDto,
+  CleanupMessageDto,
+  CleanupSliceDto,
+  CleanupSummaryDto,
+} from '@maily/shared';
 import { api } from '../api/client';
 import { setPref, usePrefs, type CleanupPreset } from '../state/prefs';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ChevronDownIcon, SparklesIcon } from '../ui/icons';
+import { BackIcon, ChevronDownIcon, SearchIcon, SparklesIcon } from '../ui/icons';
 
 /** Delete-eligible slice ids (must match the backend's DELETE_ELIGIBLE set). */
 type ActionSlice = 'never-replied' | 'cold-storage';
@@ -38,7 +48,7 @@ const PRESETS: Record<CleanupPreset, { label: string; coldYears: number; slices:
 const PRESET_ORDER: CleanupPreset[] = ['strict', 'balanced', 'aggressive'];
 
 /** Human-readable byte size (1 KB = 1024 B). */
-function formatBytes(n: number): string {
+export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let v = n / 1024;
@@ -68,13 +78,24 @@ export function formatMsgDate(iso: string | null): string {
 }
 
 /**
- * One drill-down message row — subject + sender/date + size, linking to the reader so the
- * user can inspect a message before it's trashed (deep link uses the internal UUID). Shared
- * by the inline expansion here and the dedicated drill-down screen.
+ * One drill-down message row — subject + sender/date + size. Shared by the dedicated
+ * drill-down screen. When `selectable`, a leading checkbox reflects/toggles selection and the
+ * row no longer links to the reader (tapping toggles); otherwise it deep-links to the reader
+ * (the internal UUID) so a message can be inspected before it's trashed.
  */
-export function CleanupMessageRow({ m }: { m: CleanupMessageDto }) {
-  return (
-    <Link to={`/m/${m.id}`} className="flex items-center gap-3 px-3 py-2 active:bg-surface-2">
+export function CleanupMessageRow({
+  m,
+  selectable = false,
+  selected = false,
+  onToggle,
+}: {
+  m: CleanupMessageDto;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
+}) {
+  const body = (
+    <>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-fg">{m.subject || '(no subject)'}</span>
         <span className="block truncate text-xs text-faint">
@@ -82,149 +103,212 @@ export function CleanupMessageRow({ m }: { m: CleanupMessageDto }) {
         </span>
       </span>
       <span className="shrink-0 text-xs tabular-nums text-faint">{formatBytes(m.bytes)}</span>
+    </>
+  );
+
+  if (selectable) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left active:bg-surface-2"
+        aria-pressed={selected}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          readOnly
+          tabIndex={-1}
+          aria-hidden
+          className="size-4 shrink-0 accent-accent"
+        />
+        {body}
+      </button>
+    );
+  }
+
+  return (
+    <Link to={`/m/${m.id}`} className="flex items-center gap-3 px-3 py-2 active:bg-surface-2">
+      {body}
     </Link>
   );
 }
 
-/** Senders with at most this many messages expand inline; bigger ones open a full screen. */
-const INLINE_MAX = 10;
+/** What a {@link SenderBrowser} lists, and (for action slices) where a sender row drills to. */
+type BrowseSource =
+  | { slice: 'storage' }
+  | { slice: 'never-replied' }
+  | { slice: 'cold-storage'; years: number };
 
 /**
- * Per-domain breakdown with message-level drill-down. Each sender row reveals its actual
- * messages: small senders (≤ {@link INLINE_MAX}) expand inline (lazy-fetched); larger ones
- * open the dedicated drill-down screen (kept off-list so the card stays scannable). When
- * `selectable`, each row also gets a checkbox to spare a domain (sent as `excludeDomains`).
- * `drill` is omitted for the informational storage card (no message drill-down there).
+ * Collapsible "Browse by sender" — a searchable, paginated per-domain list. Owns its own
+ * fetching so it can page the long tail (Load more) and filter by a domain substring (the
+ * search box) without re-rendering the whole dashboard. For action slices each row navigates
+ * to the message drill-down (where messages are selected + trashed); the informational storage
+ * slice has no drill, so its rows are static.
  */
-function GroupList({
-  slice,
-  selectable = false,
-  excluded,
-  onToggle,
-  drill,
-}: {
-  slice: CleanupSliceDto;
-  selectable?: boolean;
-  excluded?: Set<string>;
-  onToggle?: (domain: string) => void;
-  drill?: { sliceId: ActionSlice; years?: number };
-}) {
+function SenderBrowser({ source }: { source: BrowseSource }) {
   const navigate = useNavigate();
-  const [openDomain, setOpenDomain] = useState<string | null>(null);
-  const [msgs, setMsgs] = useState<Record<string, CleanupMessageDto[] | 'loading' | 'error'>>({});
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [groups, setGroups] = useState<CleanupGroupDto[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState(false);
 
-  if (slice.groups.length === 0) {
-    return <p className="px-1 py-2 text-sm text-muted">Nothing here — nice and tidy.</p>;
-  }
+  const kind = source.slice;
+  const years = source.slice === 'cold-storage' ? source.years : undefined;
 
-  const drillInto = (domain: string, count: number) => {
-    if (!drill) return;
-    // Big senders get their own screen; small ones expand right here (the user's call).
-    if (count > INLINE_MAX) {
-      const q = new URLSearchParams({ slice: drill.sliceId, domain });
-      if (drill.years) q.set('years', String(drill.years));
-      navigate(`/cleanup/messages?${q.toString()}`);
-      return;
-    }
-    const next = openDomain === domain ? null : domain;
-    setOpenDomain(next);
-    if (next && !msgs[domain]) {
-      setMsgs((m) => ({ ...m, [domain]: 'loading' }));
-      api.cleanup
-        .messages({ slice: drill.sliceId, domain, years: drill.years, limit: INLINE_MAX + 5 })
-        .then((res) => setMsgs((m) => ({ ...m, [domain]: res.messages })))
-        .catch(() => setMsgs((m) => ({ ...m, [domain]: 'error' })));
-    }
+  const fetchPage = useCallback(
+    (opts: { q?: string; offset?: number }): Promise<CleanupSliceDto> => {
+      if (kind === 'storage') return api.cleanup.storage(opts);
+      if (kind === 'never-replied') return api.cleanup.neverReplied(opts);
+      return api.cleanup.coldStorage(years, opts);
+    },
+    [kind, years],
+  );
+
+  // (Re)load the first page when opened or the (debounced) search term changes.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    const t = setTimeout(
+      () => {
+        fetchPage({ q: q || undefined })
+          .then((res) => {
+            if (cancelled) return;
+            setGroups(res.groups);
+            setHasMore(res.truncated);
+          })
+          .catch(() => {
+            if (!cancelled) setError(true);
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false);
+          });
+      },
+      q ? 250 : 0,
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [open, q, fetchPage]);
+
+  const loadMore = () => {
+    setLoadingMore(true);
+    setError(false);
+    fetchPage({ q: q || undefined, offset: groups.length })
+      .then((res) => {
+        setGroups((prev) => [...prev, ...res.groups]);
+        setHasMore(res.truncated);
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoadingMore(false));
   };
 
-  const rows = slice.groups.map((g) => {
-    const sparing = selectable && excluded?.has(g.domain);
-    const open = openDomain === g.domain;
-    const cached = msgs[g.domain];
-    const navigates = g.messageCount > INLINE_MAX;
-    return (
-      <li key={g.domain} className={sparing ? 'opacity-40' : ''}>
-        <div className="flex items-center gap-3 px-3 py-2 text-sm">
-          {selectable && (
+  const drillInto = (domain: string) => {
+    if (kind === 'storage') return;
+    const params = new URLSearchParams({ slice: kind, domain });
+    if (years) params.set('years', String(years));
+    navigate(`/cleanup/messages?${params.toString()}`);
+  };
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="text-sm font-medium text-accent active:opacity-80"
+      >
+        {open ? 'Hide senders ▴' : 'Browse by sender ▾'}
+      </button>
+
+      {open && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+            <SearchIcon className="size-4 shrink-0 text-faint" />
             <input
-              type="checkbox"
-              checked={!sparing}
-              onChange={() => onToggle?.(g.domain)}
-              aria-label={`Include ${g.domain}`}
-              className="size-4 shrink-0 accent-accent"
+              type="search"
+              inputMode="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search senders…"
+              className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
             />
-          )}
-          {drill ? (
-            <button
-              type="button"
-              onClick={() => drillInto(g.domain, g.messageCount)}
-              aria-expanded={navigates ? undefined : open}
-              aria-label={`${navigates ? 'View' : open ? 'Hide' : 'Show'} messages from ${g.domain}`}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left active:opacity-70"
-            >
-              <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
-              <ChevronDownIcon
-                className={`size-4 shrink-0 text-faint transition-transform ${
-                  navigates ? '-rotate-90' : open ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          ) : error && groups.length === 0 ? (
+            <p className="px-1 py-3 text-center text-sm text-danger">Couldn’t load senders.</p>
+          ) : groups.length === 0 ? (
+            <p className="px-1 py-3 text-center text-sm text-muted">
+              {q ? 'No senders match.' : 'Nothing here — nice and tidy.'}
+            </p>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
-          )}
-          <span className="shrink-0 tabular-nums text-muted">{g.messageCount} msg</span>
-          <span className="w-20 shrink-0 text-right tabular-nums text-faint">
-            {formatBytes(g.bytes)}
-          </span>
-        </div>
-        {open && (
-          <div className="border-t border-border bg-surface-2/40">
-            {cached === undefined || cached === 'loading' ? (
-              <div className="flex justify-center py-3">
-                <Spinner />
-              </div>
-            ) : cached === 'error' ? (
-              <p className="px-3 py-2 text-xs text-danger">Couldn’t load messages.</p>
-            ) : cached.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-muted">No messages.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {cached.map((m) => (
-                  <li key={m.id}>
-                    <CleanupMessageRow m={m} />
+            <>
+              <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
+                {groups.map((g) => (
+                  <li key={g.domain}>
+                    {kind === 'storage' ? (
+                      <div className="flex items-center gap-3 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
+                        <span className="shrink-0 tabular-nums text-muted">
+                          {g.messageCount} msg
+                        </span>
+                        <span className="w-20 shrink-0 text-right tabular-nums text-faint">
+                          {formatBytes(g.bytes)}
+                        </span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => drillInto(g.domain)}
+                        aria-label={`Review messages from ${g.domain}`}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm active:bg-surface-2"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
+                        <span className="shrink-0 tabular-nums text-muted">
+                          {g.messageCount} msg
+                        </span>
+                        <span className="w-20 shrink-0 text-right tabular-nums text-faint">
+                          {formatBytes(g.bytes)}
+                        </span>
+                        <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
-            )}
-          </div>
-        )}
-      </li>
-    );
-  });
-
-  const list = (
-    <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
-      {rows}
-      {slice.truncated && (
-        <li className="px-3 py-2 text-center text-xs text-faint">
-          …and more (top {slice.groups.length} shown
-          {selectable ? '; the rest are included' : ''})
-        </li>
+              {hasMore && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-1.5 text-sm font-medium text-fg active:bg-surface-2 disabled:opacity-50"
+                  >
+                    {loadingMore ? <Spinner /> : 'Load more senders'}
+                  </button>
+                </div>
+              )}
+              {error && groups.length > 0 && (
+                <p className="px-1 pt-2 text-center text-xs text-danger">
+                  Couldn’t load more — try again.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       )}
-    </ul>
-  );
-
-  // In confirm mode the list is always expanded (it IS the review surface).
-  if (selectable) return list;
-
-  return (
-    <details className="group mt-2">
-      <summary className="cursor-pointer select-none list-none text-sm font-medium text-accent">
-        <span className="group-open:hidden">Browse by sender ▾</span>
-        <span className="hidden group-open:inline">Hide ▴</span>
-      </summary>
-      {list}
-    </details>
+    </div>
   );
 }
 
@@ -254,16 +338,17 @@ function InfoSliceCard({
           <Spinner />
         </div>
       ) : (
-        <GroupList slice={slice} />
+        <SenderBrowser source={{ slice: 'storage' }} />
       )}
     </section>
   );
 }
 
 /**
- * A delete-eligible slice card with the review-less execution flow: a decided action →
- * confirm (with per-domain unchecking) → background trashing with progress. `onExecuted`
- * lets the parent refresh totals once the queue drains.
+ * A delete-eligible slice card. The express "Clean all N" path trashes the whole
+ * server-resolved slice (confirm → background trashing with progress); selective cleanup
+ * happens by browsing into a sender and picking messages on the drill-down screen.
+ * `onExecuted` lets the parent refresh totals once the queue drains.
  */
 function ActionSliceCard({
   title,
@@ -283,7 +368,6 @@ function ActionSliceCard({
   onSuppress: () => void;
 }) {
   const [mode, setMode] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [queued, setQueued] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -294,37 +378,18 @@ function ActionSliceCard({
     [],
   );
 
-  const toggle = (domain: string) => {
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (next.has(domain)) next.delete(domain);
-      else next.add(domain);
-      return next;
-    });
-  };
-
-  // Spared (visible) domains can be subtracted exactly; unchecking only touches visible rows.
-  const sparedShown = slice ? slice.groups.filter((g) => excluded.has(g.domain)) : [];
-  const msgToDelete =
-    (slice?.totalMessages ?? 0) - sparedShown.reduce((n, g) => n + g.messageCount, 0);
-  const bytesToFree = (slice?.totalBytes ?? 0) - sparedShown.reduce((n, g) => n + g.bytes, 0);
-
   async function execute() {
     if (!slice) return;
     setMode('running');
     try {
-      const res = await api.cleanup.execute({
-        slice: sliceId,
-        years,
-        excludeDomains: [...excluded],
-      });
+      const res = await api.cleanup.execute({ slice: sliceId, years });
       setQueued(res.queued);
       // Poll the global trash queue until it drains, then refresh the dashboard totals.
       pollRef.current = setInterval(() => {
         void api.cleanup
           .queueStatus()
-          .then((q) => {
-            if (q.pending === 0) {
+          .then((status) => {
+            if (status.pending === 0) {
               if (pollRef.current) clearInterval(pollRef.current);
               setMode('done');
               onExecuted();
@@ -356,7 +421,7 @@ function ActionSliceCard({
           <Spinner />
         </div>
       ) : slice.totalMessages === 0 ? (
-        <GroupList slice={slice} />
+        <p className="px-1 py-2 text-sm text-muted">Nothing here — nice and tidy.</p>
       ) : mode === 'done' ? (
         <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-sm text-fg">
           Moved {queued.toLocaleString()} to Trash — recoverable there if you need them back.
@@ -364,24 +429,33 @@ function ActionSliceCard({
       ) : mode === 'running' ? (
         <div className="mt-3 flex items-center gap-3 rounded-lg bg-surface-2 px-3 py-2 text-sm text-fg">
           <Spinner />
-          <span>Moving {(queued || msgToDelete).toLocaleString()} to Trash…</span>
+          <span>Moving {(queued || slice.totalMessages).toLocaleString()} to Trash…</span>
         </div>
       ) : mode === 'idle' ? (
         <>
           <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-2 px-3 py-2">
             <span className="text-sm text-fg">
-              Delete {slice.totalMessages.toLocaleString()} · free{' '}
+              {slice.totalMessages.toLocaleString()} messages · free{' '}
               <span className="font-medium">{formatBytes(slice.totalBytes)}</span>
             </span>
             <button
               type="button"
               onClick={() => setMode('confirm')}
-              className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-fg active:bg-surface-2"
+              className="shrink-0 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white active:opacity-80"
             >
-              Review…
+              Clean all…
             </button>
           </div>
-          <GroupList slice={slice} drill={{ sliceId, years }} />
+          <p className="mt-2 text-xs text-faint">
+            Or browse by sender to review and pick individual messages.
+          </p>
+          <SenderBrowser
+            source={
+              sliceId === 'cold-storage'
+                ? { slice: 'cold-storage', years: years ?? PRESETS.balanced.coldYears }
+                : { slice: 'never-replied' }
+            }
+          />
           <button
             type="button"
             onClick={onSuppress}
@@ -397,32 +471,21 @@ function ActionSliceCard({
             <p className="mt-3 text-sm text-danger">Couldn’t start cleanup — try again.</p>
           )}
           <p className="mt-3 text-sm text-fg">
-            Move <span className="font-medium">{msgToDelete.toLocaleString()}</span> to Trash and
-            free <span className="font-medium">{formatBytes(Math.max(0, bytesToFree))}</span>?
-            Uncheck any sender to spare it.
+            Move all <span className="font-medium">{slice.totalMessages.toLocaleString()}</span> to
+            Trash and free <span className="font-medium">{formatBytes(slice.totalBytes)}</span>?
+            They’re recoverable from Trash. To spare some, cancel and browse by sender instead.
           </p>
-          <GroupList
-            slice={slice}
-            selectable
-            excluded={excluded}
-            onToggle={toggle}
-            drill={{ sliceId, years }}
-          />
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
               onClick={() => void execute()}
-              disabled={msgToDelete <= 0}
-              className="rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80"
             >
-              Move to Trash
+              Move all to Trash
             </button>
             <button
               type="button"
-              onClick={() => {
-                setMode('idle');
-                setExcluded(new Set());
-              }}
+              onClick={() => setMode('idle')}
               className="rounded-full px-4 py-1.5 text-sm font-medium text-muted active:bg-surface-2"
             >
               Cancel

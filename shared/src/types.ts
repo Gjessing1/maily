@@ -464,15 +464,22 @@ export interface CleanupSummaryDto {
 }
 
 /**
- * Execute a delete-eligible cleanup slice (ROADMAP Phase 6b). The server re-resolves the
- * slice and re-applies the HARD safety gate at execution time — the client never sends a
- * message list, only the slice + filters. `excludeDomains` powers "uncheck by domain".
+ * Execute a delete-eligible cleanup slice (ROADMAP Phase 6b). The server always re-resolves
+ * the slice and re-applies the HARD safety gate at execution time, then **intersects** that
+ * eligible set with whatever scope the client sends — so a forged/stale/protected id can never
+ * be trashed (it simply isn't in the eligible set). Scope precedence: `messageIds` (explicit
+ * selection) and/or `domain` (single sender) narrow the set; `excludeDomains` spares senders
+ * from the whole-slice "Clean all" path. Sending none of them targets the entire slice.
  */
 export interface CleanupExecuteRequest {
   slice: 'never-replied' | 'cold-storage';
   /** Cold-storage age threshold (years); ignored for other slices. */
   years?: number;
-  /** Sender domains to spare from this run (lowercased). */
+  /** Explicit message selection — only these ids (∩ the eligible set) are trashed. */
+  messageIds?: string[];
+  /** Restrict to a single sender domain (lowercased) — "trash all from this sender". */
+  domain?: string;
+  /** Sender domains to spare from a whole-slice run (lowercased). */
   excludeDomains?: string[];
 }
 

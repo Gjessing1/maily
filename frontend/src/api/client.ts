@@ -86,6 +86,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Cleanup group-list paging/search: a domain substring (`q`) and a page `offset`. */
+interface GroupPage {
+  q?: string;
+  offset?: number;
+  years?: number;
+}
+
+/** Build the `?q=…&offset=…&years=…` query for a slice request (omitting empty parts). */
+function groupQuery(opts: GroupPage): string {
+  const p = new URLSearchParams();
+  if (opts.q?.trim()) p.set('q', opts.q.trim());
+  if (opts.offset) p.set('offset', String(opts.offset));
+  if (opts.years) p.set('years', String(opts.years));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
   /** Exchange the master password for a JWT. Does not auto-attach a token. */
   async login(password: string): Promise<string> {
@@ -283,10 +300,12 @@ export const api = {
   // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
-    storage: () => request<CleanupSliceDto>('/api/cleanup/storage'),
-    neverReplied: () => request<CleanupSliceDto>('/api/cleanup/never-replied'),
-    coldStorage: (years?: number) =>
-      request<CleanupSliceDto>(`/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`),
+    storage: (opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/storage${groupQuery(opts)}`),
+    neverReplied: (opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/never-replied${groupQuery(opts)}`),
+    coldStorage: (years?: number, opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/cold-storage${groupQuery({ ...opts, years })}`),
     /** Drill a delete-eligible slice down to messages, optionally scoped to one sender. */
     messages: (opts: {
       slice: string;
