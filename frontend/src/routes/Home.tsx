@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
-import { requestDelete } from '../state/undo';
+import { requestDelete, requestDeleteMany } from '../state/undo';
 import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
@@ -234,12 +234,9 @@ export function Home() {
     clearSelect();
   }, [selectedIds, clearSelect]);
   const bulkDelete = useCallback(() => {
-    // Bulk delete commits immediately (recoverable from Trash); the single-undo
-    // snackbar only models one pending delete, so it's bypassed here.
-    for (const id of selectedIds) {
-      void removeCachedMessage(id);
-      api.deleteMessage(id).catch(() => undefined);
-    }
+    // Stage the whole selection behind one undo window (snapshots + optimistic
+    // removal), mirroring swipe-to-delete so a bulk delete is just as recoverable.
+    void requestDeleteMany([...selectedIds]);
     clearSelect();
   }, [selectedIds, clearSelect]);
 

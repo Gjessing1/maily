@@ -13,11 +13,12 @@ import { cache, removeCachedMessage, type CachedBody, type CachedMessage } from 
 const WINDOW_MS = 5000;
 
 interface Pending {
-  id: string;
+  /** Every message id in this batch (one for a swipe/context delete, many for bulk). */
+  ids: string[];
   label: string;
   /** Snapshots kept so undo can re-insert the optimistically-removed rows. */
-  message?: CachedMessage;
-  body?: CachedBody;
+  messages: CachedMessage[];
+  bodies: CachedBody[];
 }
 
 let pending: Pending | null = null;
@@ -35,39 +36,59 @@ function clearTimer(): void {
   }
 }
 
-/** Commit the pending delete to the server, then clear undo state. */
+/** Commit the pending delete(s) to the server, then clear undo state. */
 function commit(): void {
   if (!pending) return;
-  const { id } = pending;
+  const { ids } = pending;
   clearTimer();
   pending = null;
   // Server move to Trash is out-of-band; the next folder resync is authoritative.
-  api.deleteMessage(id).catch(() => undefined);
+  for (const id of ids) api.deleteMessage(id).catch(() => undefined);
   notify();
 }
 
 /**
- * Stage a delete: snapshot + optimistically remove the cached rows, then arm the
- * undo window. A second delete while one is pending commits the first immediately.
+ * Stage a single delete: snapshot + optimistically remove the cached rows, then arm
+ * the undo window. A second delete while one is pending commits the first immediately.
  */
 export async function requestDelete(id: string, label = 'Message deleted'): Promise<void> {
+  return requestDeleteMany([id], label);
+}
+
+/**
+ * Stage a batch delete (multi-select). Same undo window as a single delete, so a
+ * bulk delete is just as recoverable as a swipe; the snackbar labels the count.
+ */
+export async function requestDeleteMany(ids: string[], label?: string): Promise<void> {
+  if (ids.length === 0) return;
   commit();
-  const message = await cache.messages.get(id);
-  const body = await cache.bodies.get(id);
-  await removeCachedMessage(id);
-  pending = { id, label, message, body };
+  const messages: CachedMessage[] = [];
+  const bodies: CachedBody[] = [];
+  for (const id of ids) {
+    const message = await cache.messages.get(id);
+    const body = await cache.bodies.get(id);
+    if (message) messages.push(message);
+    if (body) bodies.push(body);
+    await removeCachedMessage(id);
+  }
+  pending = {
+    ids,
+    label: label ?? (ids.length === 1 ? 'Message deleted' : `${ids.length} messages deleted`),
+    messages,
+    bodies,
+  };
   timer = setTimeout(commit, WINDOW_MS);
   notify();
 }
 
-/** Cancel a pending delete and restore the cached rows. No server call is made. */
+/** Cancel the pending delete(s) and restore the cached rows. No server call is made. */
 export async function undoDelete(): Promise<void> {
   if (!pending) return;
   clearTimer();
-  const { message, body } = pending;
+  const { messages, bodies } = pending;
   pending = null;
-  if (message) await cache.messages.put(message);
-  if (body) await cache.bodies.put(body);
+  for (const m of messages) await cache.messages.put(m);
+  for (const b of bodies) await cache.bodies.put(b);
   notify();
 }
 

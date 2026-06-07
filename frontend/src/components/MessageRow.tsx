@@ -181,8 +181,15 @@ export function MessageRow({
   const rightReveal = rightLive ? swipeReveal(swipeRight, message.seen) : null;
   const leftReveal = leftLive ? swipeReveal(swipeLeft, message.seen) : null;
 
+  // Desktop hover affordance: the trailing action icons sit hidden at rest and fade
+  // in on row hover (or keyboard focus-within for a11y). A flagged star stays visible
+  // so starred state reads at a glance. Mobile keeps the icons always-on (no hover).
+  const hoverReveal = isWide
+    ? 'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
+    : '';
+
   return (
-    <div className="relative overflow-hidden">
+    <div className="group relative overflow-hidden">
       {rightReveal && (
         <div
           className={`absolute inset-y-0 left-0 flex items-center gap-1.5 px-5 text-white ${rightReveal.bg}`}
@@ -287,16 +294,16 @@ export function MessageRow({
           </div>
         </Link>
 
-        {/* Trailing action column. On mobile the read/unread toggle lives on the
-            swipe gesture, so the slot is the star toggle alone; desktop keeps the
-            read/unread icon and adds the star beside it. */}
-        {!selectionMode && (onToggleFlag || (isWide && onToggleRead)) && (
+        {/* Trailing action column. On mobile the read/unread + delete actions live on
+            the swipe gestures, so the slot is the star toggle alone; desktop reveals
+            read/unread, delete and star on hover (see hoverReveal). */}
+        {!selectionMode && (onToggleFlag || (isWide && (onToggleRead || onDelete))) && (
           <div className="flex shrink-0 items-stretch">
             {isWide && onToggleRead && (
               <button
                 type="button"
                 onClick={() => onToggleRead(message.id, !message.seen)}
-                className="flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors active:bg-surface-2"
+                className={`flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors active:bg-surface-2 ${hoverReveal}`}
                 aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
               >
                 {message.seen ? (
@@ -306,11 +313,23 @@ export function MessageRow({
                 )}
               </button>
             )}
+            {isWide && onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(message.id)}
+                className={`flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors hover:text-danger active:bg-surface-2 ${hoverReveal}`}
+                aria-label="Delete"
+              >
+                <TrashIcon className="size-5" />
+              </button>
+            )}
             {onToggleFlag && (
               <button
                 type="button"
                 onClick={() => onToggleFlag(message.id, !message.flagged)}
-                className="flex shrink-0 items-center border-b border-border/60 px-3 transition-colors active:bg-surface-2"
+                className={`flex shrink-0 items-center border-b border-border/60 px-3 transition-colors active:bg-surface-2 ${
+                  message.flagged ? '' : hoverReveal
+                }`}
                 aria-label={message.flagged ? 'Unstar' : 'Star'}
               >
                 <StarIcon
