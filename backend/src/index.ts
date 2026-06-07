@@ -12,7 +12,7 @@ import { runMigrations } from './db/migrate.js';
 import { createLogger } from './logger.js';
 import { loadAccountConfigs } from './config/accounts.js';
 import { startSyncEngines, type AccountEngine } from './imap/engine.js';
-import { shutdownWorker } from './worker/host.js';
+import { enqueueEnrichPass, shutdownWorker } from './worker/host.js';
 import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
@@ -81,6 +81,10 @@ async function main(): Promise<void> {
   log.info(`starting sync engines for ${accounts.length} account(s)`);
   const engines = startSyncEngines(accounts);
   installShutdown(engines, io);
+
+  // Kick the enrichment pipeline once at boot so backlog + any mail enqueued while the
+  // process was down (or synced before the pipeline existed) gets drained (Phase 4).
+  enqueueEnrichPass();
 }
 
 void main();

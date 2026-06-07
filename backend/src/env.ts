@@ -90,6 +90,16 @@ export const env = {
   sourceSweepEnabled: optional('MAILY_SOURCE_SWEEP', 'true') !== 'false',
   /** How often each account's sweep driver wakes to do more backfill work. */
   sourceSweepIntervalMs: Number(optional('MAILY_SOURCE_SWEEP_MS', String(5 * 60_000))),
+  /**
+   * Enrichment-pipeline OPERATIONAL horizon (ARCHITECTURE §14): messages newer than
+   * this run *all* enrichers incl. operational ones (Action Center / CalDAV side
+   * effects); older mail is still processed for search/analytical, but operational
+   * enrichers are suppressed so a deep backfill can't fire stale calendar events.
+   * This gates side effects only — NOT whether old mail is processed.
+   */
+  pipelineHorizonDays: Number(optional('MAILY_PIPELINE_HORIZON_DAYS', '30')),
+  /** Retry cap before a poison enrichment row is parked as dead-letter (status='dead'). */
+  pipelineMaxAttempts: Number(optional('MAILY_PIPELINE_MAX_ATTEMPTS', '5')),
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),

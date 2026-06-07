@@ -7,6 +7,7 @@
  */
 import { Worker } from 'node:worker_threads';
 import { createLogger } from '../logger.js';
+import { emitSignal } from '../events.js';
 import type { MainToWorker, WorkerToMain } from './protocol.js';
 
 const log = createLogger('worker:host');
@@ -44,9 +45,12 @@ function spawn(): Worker {
   w.on('message', (msg: WorkerToMain) => {
     if (msg.type === 'error') {
       log.warn(`worker error${msg.accountId ? ` (${msg.accountId})` : ''}: ${msg.message}`);
+    } else if (msg.type === 'proposal:ready') {
+      // The worker has no socket/bus of its own — relay onto the main-thread bus so
+      // Socket.io (and later Web Push) surface the new Action Center offer (Phase 4).
+      emitSignal({ type: 'action:ready', messageId: msg.messageId, label: msg.label });
     }
-    // 'sweep:done' needs no main-side action today (the sweep emits no per-message
-    // signals — intentional, ARCHITECTURE §3 / engine history).
+    // 'sweep:done' / 'enrich:done' need no main-side action today.
   });
   w.on('error', (err) => {
     log.error('worker crashed:', err.message);
@@ -74,6 +78,15 @@ function postJob(job: MainToWorker): void {
 /** Queue a full-source sweep pass for an account on the worker. */
 export function enqueueSweep(accountId: string, email: string): void {
   postJob({ type: 'sweep', accountId, email });
+}
+
+/**
+ * Nudge the worker to drain due enrichment work (Phase 4). The queue lives in SQLite,
+ * so this is only a wake-up — the worker coalesces repeated nudges and claims whatever
+ * is due. Losing a nudge only delays work (the runner's self-heal backfill is the backstop).
+ */
+export function enqueueEnrichPass(): void {
+  postJob({ type: 'enrich' });
 }
 
 /**

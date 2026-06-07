@@ -23,7 +23,8 @@ import { createClient } from '../imap/connection.js';
 import { budgetRemaining, canDownloadSource } from '../imap/budget.js';
 import { getFolderById, syncFolders } from '../imap/folders.js';
 import { sweepFolderSource, syncContext } from '../imap/sync.js';
-import type { MainToWorker, SweepJob, WorkerToMain } from './protocol.js';
+import { drainPipeline } from '../pipeline/index.js';
+import type { EnrichJob, MainToWorker, SweepJob, WorkerToMain } from './protocol.js';
 
 const log = createLogger('worker');
 
@@ -85,22 +86,49 @@ async function runSweep(job: SweepJob): Promise<void> {
   }
 }
 
+/**
+ * Drain due enrichment work (Phase 4). Loops `drainPipeline` so a single nudge clears
+ * the currently-due backlog, bounded so it can't monopolise the worker against sweeps;
+ * leftover work continues on the next nudge. Self-heal backfill runs only on the first
+ * pass (later passes would re-scan needlessly). Proposals are relayed to the main thread.
+ */
+async function runEnrich(): Promise<void> {
+  const MAX_PASSES = 20;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let result;
+    try {
+      result = await drainPipeline({ selfHeal: pass === 0 });
+    } catch (err) {
+      post({ type: 'error', message: `enrich drain: ${(err as Error).message}` });
+      break;
+    }
+    for (const p of result.proposals) {
+      post({ type: 'proposal:ready', messageId: p.messageId, label: p.label });
+    }
+    if (result.claimed === 0) break;
+  }
+  post({ type: 'enrich:done' });
+}
+
 // --- Serial job queue -------------------------------------------------------------------
-// A queue with per-account dedup: if a sweep for an account is already queued or running,
-// drop the new one (mirrors the old `sweepBusy` guard — no point stacking sweeps).
-const queue: SweepJob[] = [];
+// One heavy op at a time across the whole process. Sweeps dedup per-account; enrich jobs
+// coalesce (the queue lives in SQLite, so one pending nudge is enough — stacking adds
+// nothing). A sweep already queued/running for an account, or an enrich already
+// queued/running, is dropped.
+const queue: (SweepJob | EnrichJob)[] = [];
 let running = false;
-let activeAccountId: string | null = null;
+let active: SweepJob | EnrichJob | null = null;
 
 async function drain(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    let job: SweepJob | undefined;
+    let job: SweepJob | EnrichJob | undefined;
     while ((job = queue.shift())) {
-      activeAccountId = job.accountId;
-      await runSweep(job);
-      activeAccountId = null;
+      active = job;
+      if (job.type === 'sweep') await runSweep(job);
+      else await runEnrich();
+      active = null;
     }
   } finally {
     running = false;
@@ -120,7 +148,14 @@ port.on('message', (msg: MainToWorker) => {
   }
   if (msg.type === 'sweep') {
     const dup =
-      activeAccountId === msg.accountId || queue.some((j) => j.accountId === msg.accountId);
+      (active?.type === 'sweep' && active.accountId === msg.accountId) ||
+      queue.some((j) => j.type === 'sweep' && j.accountId === msg.accountId);
+    if (!dup) queue.push(msg);
+    void drain();
+    return;
+  }
+  if (msg.type === 'enrich') {
+    const dup = active?.type === 'enrich' || queue.some((j) => j.type === 'enrich');
     if (!dup) queue.push(msg);
     void drain();
   }

@@ -21,17 +21,41 @@ export interface SweepJob {
   email: string;
 }
 
+/**
+ * Drain a bounded snapshot of due enrichment work (Phase 4). Carries no payload — the
+ * queue lives in SQLite (`enrichments` ledger), so a single coalesced job tells the
+ * worker "there may be work" and it claims whatever is due across all accounts.
+ */
+export interface EnrichJob {
+  type: 'enrich';
+}
+
 /** Ask the worker to wind down before the process exits. */
 export interface ShutdownJob {
   type: 'shutdown';
 }
 
-export type MainToWorker = SweepJob | ShutdownJob;
+export type MainToWorker = SweepJob | EnrichJob | ShutdownJob;
 
 /** A sweep pass for an account finished (budget-exhausted or all folders done). */
 export interface SweepDoneMsg {
   type: 'sweep:done';
   accountId: string;
+}
+
+/** An enrichment drain pass finished. */
+export interface EnrichDoneMsg {
+  type: 'enrich:done';
+}
+
+/**
+ * An enricher surfaced a proposal (Phase 4). Relayed so the MAIN thread can emit the
+ * `action:ready` socket signal + Web Push — the worker has no socket/bus of its own.
+ */
+export interface ProposalReadyMsg {
+  type: 'proposal:ready';
+  messageId: string;
+  label: string;
 }
 
 /** A handled failure inside the worker (logged on the main side too). */
@@ -41,4 +65,4 @@ export interface WorkerErrorMsg {
   message: string;
 }
 
-export type WorkerToMain = SweepDoneMsg | WorkerErrorMsg;
+export type WorkerToMain = SweepDoneMsg | EnrichDoneMsg | ProposalReadyMsg | WorkerErrorMsg;

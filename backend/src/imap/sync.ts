@@ -28,6 +28,7 @@ import {
   touchKnownMessage,
   upsertMessage,
 } from './store.js';
+import { enqueueMessage } from '../pipeline/index.js';
 
 /**
  * Local cache window — roughly one year by default (ARCHITECTURE §1). A value of 0
@@ -266,6 +267,9 @@ export async function fetchAndStore(
       );
       if (result.inserted) {
         insertedIds.push(result.id);
+        // Ingest hook (Phase 4): queue the new message for enrichment. Pure DB write,
+        // safe from either thread; the worker nudge that actually runs it is separate.
+        enqueueMessage(result.id, parsed.receivedAt);
       } else {
         updated += 1;
         // Dedup race: the row already existed, so the staged `.eml` is orphaned.

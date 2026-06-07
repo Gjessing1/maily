@@ -236,3 +236,81 @@ export const attachments = sqliteTable(
   },
   (t) => [index('attachments_message_idx').on(t.messageId)],
 );
+
+/**
+ * Enrichment-pipeline ledger (Phase 4; ARCHITECTURE §14/§15 — the `enriched` stage).
+ * ONE row per (message, enricher), serving three roles at once:
+ *  - work queue:   status='pending' + nextAttemptAt gate the runner's claim scan;
+ *  - result store: status='ok' rows carry the enricher output JSON in `result`;
+ *  - dead-letter:  status='dead' = a poison message that exhausted its retries.
+ * A rebuildable projection over messages (drop + re-run with zero IMAP refetch).
+ * Observability (duration, failure reason, version applied, queue depth) is all
+ * derivable from this single table.
+ */
+export const enrichments = sqliteTable(
+  'enrichments',
+  {
+    id: uuid(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    /** Registered enricher name (stable key; pairs with `enricherVersion`). */
+    enricher: text('enricher').notNull(),
+    /** Enricher version at (last) run — a bump marks rows stale + eligible for re-run. */
+    enricherVersion: integer('enricher_version').notNull(),
+    /** Classification driving tiering/ordering (ARCHITECTURE §14). */
+    kind: text('kind', { enum: ['operational', 'search', 'analytical'] }).notNull(),
+    status: text('status', { enum: ['pending', 'ok', 'failed', 'dead'] })
+      .notNull()
+      .default('pending'),
+    /** Retry counter; at the configured cap a failed row is parked as 'dead'. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Backoff gate (ms): a pending row is only claimed once now >= nextAttemptAt. */
+    nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp_ms' }),
+    /** JSON enricher output (search tokens / extracted facts); null unless status='ok'. */
+    result: text('result'),
+    /** Last failure reason (null on success). */
+    error: text('error'),
+    /** Last run duration (observability). */
+    durationMs: integer('duration_ms'),
+    createdAt: now(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex('enrichments_message_enricher_uq').on(t.messageId, t.enricher),
+    index('enrichments_status_due_idx').on(t.status, t.nextAttemptAt),
+    index('enrichments_enricher_version_idx').on(t.enricher, t.enricherVersion),
+  ],
+);
+
+/**
+ * Proposals — the `derived` stage (ARCHITECTURE §15). An *offer* attached to a source
+ * message (add-to-calendar, track-package, …), surfaced later by the Action Center.
+ * Un-acted proposals silently expire (`expiresAt`) rather than piling into a second
+ * inbox (ROADMAP Phase 4 anti-chore guardrail). A rebuildable projection like enrichments.
+ */
+export const proposals = sqliteTable(
+  'proposals',
+  {
+    id: uuid(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    /** Enricher that produced this proposal (provenance). */
+    enricher: text('enricher').notNull(),
+    /** Proposal kind, e.g. 'calendar_event' | 'package_track' (enricher-defined). */
+    type: text('type').notNull(),
+    /** Human-readable label for the action chip / list row. */
+    title: text('title'),
+    /** JSON detail the approve-flow acts on (e.g. a VEVENT, a tracking URL). */
+    payload: text('payload'),
+    status: text('status', { enum: ['pending', 'approved', 'dismissed', 'expired'] })
+      .notNull()
+      .default('pending'),
+    /** Horizon-bounded silent expiry — an ignored offer ages out without nagging. */
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
+    createdAt: now(),
+    resolvedAt: integer('resolved_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('proposals_status_idx').on(t.status), index('proposals_message_idx').on(t.messageId)],
+);

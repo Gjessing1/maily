@@ -21,7 +21,7 @@ import { getFolderById, syncFolders } from './folders.js';
 import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
 import { syncContext, type SyncContext } from './sync.js';
-import { enqueueSweep } from '../worker/host.js';
+import { enqueueEnrichPass, enqueueSweep } from '../worker/host.js';
 
 const INITIAL_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -42,6 +42,7 @@ export class AccountEngine {
   private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
+  private enrichTimer: NodeJS.Timeout | null = null;
   private recipientsBackfilled = false;
 
   constructor(private readonly config: AccountConfig) {
@@ -79,6 +80,11 @@ export class AccountEngine {
       this.sweepTimer = setInterval(() => this.tickSweep(), env.sourceSweepIntervalMs);
       if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
     }
+    // Enrichment-pipeline drain nudge (Phase 4) — independent of the sweep + its byte
+    // budget. Drives backfill of un-enqueued mail and retry of backed-off failures; new
+    // mail is nudged inline on arrival (onInboxEvent / cron). The worker coalesces nudges.
+    this.enrichTimer = setInterval(() => enqueueEnrichPass(), env.sourceSweepIntervalMs);
+    if (typeof this.enrichTimer.unref === 'function') this.enrichTimer.unref();
   }
 
   /** Tear the engine down cleanly. */
@@ -86,6 +92,7 @@ export class AccountEngine {
     this.stopped = true;
     if (this.cronTimer) clearInterval(this.cronTimer);
     if (this.sweepTimer) clearInterval(this.sweepTimer);
+    if (this.enrichTimer) clearInterval(this.enrichTimer);
     const client = this.client;
     this.client = null;
     if (client) {
@@ -180,6 +187,8 @@ export class AccountEngine {
       for (const messageId of result.insertedIds) {
         emitSignal({ type: 'mail:new', accountId: this.id, messageId });
       }
+      // New mail was enqueued for enrichment by the ingest hook — wake the worker now.
+      if (result.insertedIds.length) enqueueEnrichPass();
       // Flag/expunge changes have no per-message id here; nudge clients to refresh.
       if (result.updated || result.expunged) {
         const changed = result.updated + result.expunged;
@@ -222,6 +231,7 @@ export class AccountEngine {
         const fresh = getFolderById(folder.id);
         if (!fresh) continue;
         const result = await resyncFolder(ctx, fresh);
+        if (result.insertedIds.length) enqueueEnrichPass();
         if (result.insertedIds.length || result.updated || result.expunged) {
           this.log.info(
             `${folder.path} cron (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
