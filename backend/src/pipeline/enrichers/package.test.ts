@@ -26,6 +26,7 @@ function msg(fields: {
     snippet: null,
     bodyText: fields.bodyText ?? null,
     bodyHtml: fields.bodyHtml ?? null,
+    bodyCalendar: null,
     inReplyTo: null,
     references: null,
     sentAt: null,

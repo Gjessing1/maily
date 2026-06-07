@@ -196,6 +196,7 @@ export function upsertMessage(
         snippet: parsed.snippet,
         bodyText: parsed.bodyText,
         bodyHtml: parsed.bodyHtml,
+        bodyCalendar: parsed.bodyCalendar,
         sourcePath: parsed.sourcePath,
         sentAt: parsed.sentAt,
         receivedAt: parsed.receivedAt,
@@ -307,6 +308,7 @@ export function updateMessageContent(messageId: string, c: RebuiltContent): void
       snippet: c.snippet,
       bodyText: c.bodyText,
       bodyHtml: c.bodyHtml,
+      bodyCalendar: c.bodyCalendar,
     })
     .where(eq(messages.id, messageId))
     .run();

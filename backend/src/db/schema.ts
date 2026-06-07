@@ -95,6 +95,12 @@ export const messages = sqliteTable(
     bodyText: text('body_text'),
     bodyHtml: text('body_html'),
     /**
+     * Captured iCalendar (text/calendar) part, when the message carries one — a
+     * calendar invite's small inline VEVENT block (ARCHITECTURE §4 eager exception).
+     * Null = no calendar part. Input to the deterministic ICS enricher; not in FTS.
+     */
+    bodyCalendar: text('body_calendar'),
+    /**
      * On-disk path of the complete raw RFC822 (.eml) — the canonical content store
      * (ROADMAP §3.7.E / ARCHITECTURE §15). Null = not yet archived; the parsed
      * columns above are then the message's only copy. Once set, the parsed rows /

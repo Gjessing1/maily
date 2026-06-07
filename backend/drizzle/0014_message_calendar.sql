@@ -1,0 +1,12 @@
+-- Captured text/calendar (iCalendar) part of a message (ROADMAP Phase 4 — ICS /
+-- calendar-invite parsing). Additive + nullable, so safe on the live DB with no
+-- backfill: NULL means "no iCalendar part" (the overwhelming majority of mail).
+--
+-- A calendar invite (Google/Outlook) ships a small text/calendar; method=REQUEST
+-- part inside multipart/alternative — neither a display body nor (when inline,
+-- without a filename) an attachment, so it was previously dropped on ingest. It is
+-- small inline content, exactly the eager-capture exception ARCHITECTURE §4 allows,
+-- so we store it alongside body_text/body_html for the deterministic ICS enricher
+-- to read. Out of FTS on purpose: the enricher indexes the extracted VEVENT facts
+-- via the pipeline index seam, not the raw iCalendar text.
+ALTER TABLE `messages` ADD `body_calendar` text;

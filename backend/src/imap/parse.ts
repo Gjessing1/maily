@@ -14,6 +14,12 @@ export interface ExtractedStructure {
   textPartId: string | null;
   /** BODYSTRUCTURE part id of the best text/html body, if any. */
   htmlPartId: string | null;
+  /**
+   * BODYSTRUCTURE part id of an inline text/calendar part (a calendar invite's
+   * VEVENT block), if any. Only the inline form (no filename / disposition) lands
+   * here; a `.ics` *attachment* is classified as an attachment and fetched lazily.
+   */
+  calendarPartId: string | null;
   attachments: ParsedAttachment[];
 }
 
@@ -49,7 +55,12 @@ export function classifyPart(t: PartTraits): { selected: boolean; isInline: bool
 
 /** Walk the BODYSTRUCTURE tree, collecting body part ids and attachment metadata. */
 export function extractStructure(root: MessageStructureObject | undefined): ExtractedStructure {
-  const out: ExtractedStructure = { textPartId: null, htmlPartId: null, attachments: [] };
+  const out: ExtractedStructure = {
+    textPartId: null,
+    htmlPartId: null,
+    calendarPartId: null,
+    attachments: [],
+  };
   if (!root) return out;
 
   const visit = (node: MessageStructureObject): void => {
@@ -88,6 +99,7 @@ export function extractStructure(root: MessageStructureObject | undefined): Extr
 
     if (type === 'text/plain' && !out.textPartId) out.textPartId = partId;
     else if (type === 'text/html' && !out.htmlPartId) out.htmlPartId = partId;
+    else if (type === 'text/calendar' && !out.calendarPartId) out.calendarPartId = partId;
   };
 
   visit(root);

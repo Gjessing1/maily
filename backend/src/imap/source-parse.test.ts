@@ -69,6 +69,54 @@ test('§3.7.E: parseSourceContent derives content columns from the raw .eml', as
     assert.equal(c.bodyText?.trim(), 'Plain body text here.');
     assert.match(c.bodyHtml ?? '', /HTML body here\./);
     assert.equal(c.snippet, 'Plain body text here.');
+    // No text/calendar part in this message → bodyCalendar stays null.
+    assert.equal(c.bodyCalendar, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** A calendar invite: text/plain + an inline text/calendar; method=REQUEST part. */
+const INVITE_EML = [
+  'From: Organizer <org@example.com>',
+  'To: me@example.com',
+  'Subject: Invitation: Team Sync',
+  'MIME-Version: 1.0',
+  'Content-Type: multipart/alternative; boundary="ALT"',
+  '',
+  '--ALT',
+  'Content-Type: text/plain; charset="utf-8"',
+  '',
+  'You are invited.',
+  '',
+  '--ALT',
+  'Content-Type: text/calendar; method=REQUEST; charset="utf-8"',
+  '',
+  'BEGIN:VCALENDAR',
+  'METHOD:REQUEST',
+  'BEGIN:VEVENT',
+  'UID:evt-1@example.com',
+  'SUMMARY:Team Sync',
+  'DTSTART:20260610T090000Z',
+  'END:VEVENT',
+  'END:VCALENDAR',
+  '',
+  '--ALT--',
+  '',
+].join(CRLF);
+
+test('§3.7.E: parseSourceContent captures an inline text/calendar part as bodyCalendar', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maily-rebuild-ics-'));
+  try {
+    const path = join(dir, 'source.eml');
+    await writeFile(path, INVITE_EML);
+
+    const c = await parseSourceContent(path);
+
+    assert.match(c.bodyCalendar ?? '', /BEGIN:VEVENT/);
+    assert.match(c.bodyCalendar ?? '', /SUMMARY:Team Sync/);
+    // The display body is still the human text part, not the iCalendar block.
+    assert.equal(c.bodyText?.trim(), 'You are invited.');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

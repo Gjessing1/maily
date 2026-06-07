@@ -104,6 +104,7 @@ function makeParsed(overrides: Partial<ParsedMessage> = {}): ParsedMessage {
     snippet: 'snippet',
     bodyText: 'body',
     bodyHtml: null,
+    bodyCalendar: null,
     sourcePath: null,
     sentAt: null,
     receivedAt: new Date('2025-06-01T00:00:00Z'),
@@ -507,6 +508,7 @@ test('updateMessageContent rewrites derived columns but leaves flags + folder ma
     sentAt: new Date('2025-01-02T03:04:05Z'),
     bodyText: 'NEW body',
     bodyHtml: '<p>NEW</p>',
+    bodyCalendar: null,
     snippet: 'NEW snippet',
   });
 

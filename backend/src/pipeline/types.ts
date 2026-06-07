@@ -42,6 +42,8 @@ export interface PipelineMessage {
   snippet: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  /** Captured iCalendar (text/calendar) part for a calendar invite; null when absent. */
+  bodyCalendar: string | null;
   inReplyTo: string | null;
   references: string | null;
   sentAt: Date | null;

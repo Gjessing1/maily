@@ -598,6 +598,7 @@ function pmsg(bodyHtml: string | null): PipelineMessage {
     snippet: null,
     bodyText: null,
     bodyHtml,
+    bodyCalendar: null,
     inReplyTo: null,
     references: null,
     sentAt: null,

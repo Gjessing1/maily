@@ -15,7 +15,7 @@ import type { CapturedMessage, FetchMessage } from './message-shape.js';
 import { type Capabilities, detectCapabilities } from './connection.js';
 import { env } from '../env.js';
 import { canDownloadSource, recordDownloadedBytes } from './budget.js';
-import { deriveBodyFromSource } from './source-parse.js';
+import { deriveBodyFromSource, type DerivedBody } from './source-parse.js';
 import { discardSource, sourcePathFor, writeSourceStream } from '../storage/source.js';
 import { updateFolderSyncState } from './folders.js';
 import { extractStructure, flagsFromSet } from './parse.js';
@@ -122,11 +122,12 @@ async function downloadTextPart(
   }
 }
 
-/** Bulk/body-only body acquisition: download just the text/plain + text/html parts. */
-async function downloadBodyParts(
-  ctx: SyncContext,
-  msg: CapturedMessage,
-): Promise<{ bodyText: string | null; bodyHtml: string | null }> {
+/**
+ * Bulk/body-only body acquisition: download just the text/plain + text/html parts,
+ * plus a small inline text/calendar part when present (a calendar invite's VEVENT —
+ * the ARCHITECTURE §4 eager exception for small inline content).
+ */
+async function downloadBodyParts(ctx: SyncContext, msg: CapturedMessage): Promise<DerivedBody> {
   const structure = extractStructure(msg.bodyStructure);
   const bodyText = structure.textPartId
     ? await downloadTextPart(ctx, msg.uid, structure.textPartId)
@@ -134,14 +135,17 @@ async function downloadBodyParts(
   const bodyHtml = structure.htmlPartId
     ? await downloadTextPart(ctx, msg.uid, structure.htmlPartId)
     : null;
-  return { bodyText, bodyHtml };
+  const bodyCalendar = structure.calendarPartId
+    ? await downloadTextPart(ctx, msg.uid, structure.calendarPartId)
+    : null;
+  return { bodyText, bodyHtml, bodyCalendar };
 }
 
 /** A staged full-source capture: the pre-assigned UUID, its `.eml` path, and the body. */
 interface SourceCapture {
   id: string;
   sourcePath: string;
-  body: { bodyText: string | null; bodyHtml: string | null };
+  body: DerivedBody;
 }
 
 /**

@@ -21,6 +21,8 @@ import { makeSnippet } from './parse.js';
 export interface DerivedBody {
   bodyText: string | null;
   bodyHtml: string | null;
+  /** Inline iCalendar (text/calendar) part for a calendar invite, when present. */
+  bodyCalendar: string | null;
 }
 
 /** Parse a saved `.eml` with the body-only options shared by the live + rebuild paths. */
@@ -28,14 +30,26 @@ function parseEml(path: string): Promise<ParsedMail> {
   return simpleParser(createReadStream(path), { skipImageLinks: true, skipTextToHtml: true });
 }
 
-/** text/plain + text/html bodies from a parsed `.eml` (null when blank). */
+/**
+ * mailparser surfaces a text/calendar part as an attachment carrying its raw bytes
+ * (no filename for the inline invite form). Pull the first one back out as text.
+ */
+function calendarOf(parsed: ParsedMail): string | null {
+  const part = parsed.attachments.find(
+    (a) => (a.contentType || '').toLowerCase() === 'text/calendar',
+  );
+  const text = part?.content?.toString('utf-8').trim();
+  return text ? text : null;
+}
+
+/** text/plain + text/html + text/calendar bodies from a parsed `.eml` (null when blank). */
 function bodiesOf(parsed: ParsedMail): DerivedBody {
   const bodyText = parsed.text && parsed.text.trim() ? parsed.text : null;
   const bodyHtml = typeof parsed.html === 'string' && parsed.html.trim() ? parsed.html : null;
-  return { bodyText, bodyHtml };
+  return { bodyText, bodyHtml, bodyCalendar: calendarOf(parsed) };
 }
 
-/** Parse a saved `.eml` and return its text/plain and text/html bodies. */
+/** Parse a saved `.eml` and return its text/plain, text/html and text/calendar bodies. */
 export async function deriveBodyFromSource(path: string): Promise<DerivedBody> {
   return bodiesOf(await parseEml(path));
 }
@@ -58,6 +72,7 @@ export interface RebuiltContent {
   sentAt: Date | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  bodyCalendar: string | null;
   snippet: string | null;
 }
 
@@ -95,6 +110,7 @@ export async function parseSourceContent(path: string): Promise<RebuiltContent> 
     sentAt: parsed.date ?? null,
     bodyText: body.bodyText,
     bodyHtml: body.bodyHtml,
+    bodyCalendar: body.bodyCalendar,
     snippet: makeSnippet(body.bodyText, body.bodyHtml),
   };
 }

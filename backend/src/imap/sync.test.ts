@@ -47,7 +47,7 @@ function captured(overrides: Partial<CapturedMessage> = {}): CapturedMessage {
   };
 }
 
-const body = { bodyText: 'plain body', bodyHtml: '<p>html</p>' };
+const body = { bodyText: 'plain body', bodyHtml: '<p>html</p>', bodyCalendar: null };
 
 test('non-Gmail: gm_msgid and providerThreadId are NULL even when the fetch carried them', () => {
   const parsed = buildParsedMessage(capsWith(false), captured(), body, null);
@@ -108,7 +108,7 @@ test('missing envelope/flags degrade to nulls and false flags, not a throw', () 
   const parsed = buildParsedMessage(
     capsWith(false),
     captured({ envelope: undefined, flags: undefined, headers: undefined }),
-    { bodyText: null, bodyHtml: null },
+    { bodyText: null, bodyHtml: null, bodyCalendar: null },
     null,
   );
   assert.equal(parsed.messageId, null);

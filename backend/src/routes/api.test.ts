@@ -121,6 +121,7 @@ function seedMessage(
     snippet: 'a short snippet',
     bodyText: 'plain text body',
     bodyHtml: '<p>html body</p>',
+    bodyCalendar: null,
     sourcePath: null,
     sentAt: new Date('2025-01-01T00:00:00Z'),
     receivedAt: new Date('2025-01-01T00:00:05Z'),

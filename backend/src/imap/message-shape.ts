@@ -11,6 +11,7 @@
 import type { ImapFlow } from 'imapflow';
 import type { Capabilities } from './connection.js';
 import type { ParsedMessage } from './types.js';
+import type { DerivedBody } from './source-parse.js';
 import { extractHeaderValue, extractStructure, flagsFromSet, makeSnippet } from './parse.js';
 
 export type FetchMessage = Awaited<ReturnType<ImapFlow['fetchOne']>>;
@@ -59,7 +60,7 @@ export function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
 export function buildParsedMessage(
   caps: Capabilities,
   msg: CapturedMessage,
-  body: { bodyText: string | null; bodyHtml: string | null },
+  body: DerivedBody,
   sourcePath: string | null,
 ): ParsedMessage {
   const structure = extractStructure(msg.bodyStructure);
@@ -92,6 +93,7 @@ export function buildParsedMessage(
     snippet: makeSnippet(body.bodyText, body.bodyHtml),
     bodyText: body.bodyText,
     bodyHtml: body.bodyHtml,
+    bodyCalendar: body.bodyCalendar,
     sourcePath,
     sentAt: envelope?.date ?? null,
     receivedAt: internalDate,
