@@ -341,6 +341,9 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
   const remaining = slice.pending + slice.failed;
   const pct = slice.total > 0 ? Math.round((slice.done / slice.total) * 100) : 100;
   const cur = status.current;
+  // Total background pipeline (every enricher). Surfaced as a secondary line when the
+  // LLM headline is shown, so the broader background backlog stays visible too.
+  const overallRemaining = status.overall.pending + status.overall.failed;
 
   return (
     <section className="mt-6">
@@ -397,6 +400,19 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
           <p className="mt-1.5 truncate text-xs text-muted">
             Now: <span className="text-fg">{cur.subject || '(no subject)'}</span>{' '}
             <span className="text-faint">· {elapsed(cur.since)}</span>
+          </p>
+        )}
+
+        {/* Secondary line: the whole background pipeline (deterministic + LLM), so the
+            broader backlog is visible even while the Ollama slice is the headline. */}
+        {status.llmEnabled && (
+          <p className="mt-1.5 text-xs text-faint tabular-nums">
+            All enrichers:{' '}
+            <span className="font-medium text-fg">{status.overall.done.toLocaleString()}</span> of{' '}
+            {status.overall.total.toLocaleString()} done
+            {overallRemaining > 0
+              ? ` · ${overallRemaining.toLocaleString()} in the background queue`
+              : ' · queue clear'}
           </p>
         )}
       </div>
