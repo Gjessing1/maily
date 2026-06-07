@@ -52,6 +52,21 @@ function carddavConfig(): {
   };
 }
 
+/**
+ * Radicale CalDAV config for calendar push-on-approval (ROADMAP Phase 4), or null when
+ * unset. `url` must point at the **target calendar collection** (the events land there
+ * directly as `<uid>.ics`); the password is the same Radicale secret as CardDAV. When
+ * null the `calendar_event` approve handler is not registered, so approving an offer
+ * just acknowledges it with no external write (proposal-handlers.ts).
+ */
+function caldavConfig(): { url: string; user: string; password: string } | null {
+  const url = process.env.CALDAV_URL;
+  const user = process.env.CALDAV_USER;
+  const password = process.env.CALDAV_PASSWORD;
+  if (!url || !user || !password) return null;
+  return { url, user, password };
+}
+
 /** VAPID config for Web Push, or null when not configured (push disabled). */
 function vapidConfig(): { publicKey: string; privateKey: string; subject: string } | null {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -103,6 +118,13 @@ export const env = {
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),
+  /**
+   * Public base URL of the PWA (e.g. https://mail.example.com), used to build absolute
+   * `/m/:uuid` deep links embedded in pushed calendar events. Empty → a relative path is
+   * embedded instead (still recorded, just not directly clickable from an external client).
+   */
+  publicUrl: optional('MAILY_PUBLIC_URL', '').replace(/\/+$/, ''),
   vapid: vapidConfig,
   carddav: carddavConfig,
+  caldav: caldavConfig,
 } as const;

@@ -7,8 +7,9 @@
  * registered handler is still approvable — the offer is simply *acknowledged* with no
  * external effect. This is what lets new operational targets land without touching the
  * route or the data layer:
- *   - ROADMAP "Radicale CalDAV push on approval" registers a `calendar_event` handler
- *     here (PUT the VEVENT-shaped payload to Radicale) — deferred, so unregistered today.
+ *   - `calendar_event` registers a handler here (`calendar/caldav.ts`, wired at boot in
+ *     index.ts) that PUTs the VEVENT-shaped payload to Radicale — but only when CalDAV is
+ *     configured; unconfigured, the type stays handler-less and approval just acknowledges.
  *   - future `package_track` / RSVP / task handlers slot in the same way.
  *
  * Handlers run human-in-the-loop only (the user approved) and stay small + idempotent;
@@ -45,7 +46,7 @@ export function approveHandlerFor(type: string): ApproveHandler | undefined {
   return handlers.get(type);
 }
 
-// No handlers are registered yet: the only proposal producer today is the `travel`
-// enricher (`calendar_event`), whose CalDAV side effect is the deferred ROADMAP item.
-// Approving a `calendar_event` therefore acknowledges the offer (status → approved)
-// without writing to Radicale until that handler lands here.
+// The `calendar_event` handler is registered at boot by `calendar/caldav.ts` when CalDAV
+// is configured (index.ts → registerCalendarApproveHandler). When it is not configured,
+// no handler is registered, so approving a `calendar_event` acknowledges the offer
+// (status → approved) without writing to Radicale.

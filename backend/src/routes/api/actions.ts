@@ -4,7 +4,7 @@
  * is just the human-in-the-loop read + approve/dismiss surface. Deep links use the
  * internal message UUID (never Message-ID/UID). Approve runs the proposal type's
  * registered side-effect handler if one exists (`proposal-handlers.ts`); types with no
- * handler (e.g. `calendar_event` until the CalDAV push lands) are still approvable —
+ * handler (e.g. `calendar_event` when CalDAV is unconfigured) are still approvable —
  * the offer is acknowledged with no external effect.
  */
 import type { FastifyInstance } from 'fastify';

@@ -18,6 +18,7 @@ import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
 import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
+import { registerCalendarApproveHandler } from './calendar/caldav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 
@@ -71,6 +72,9 @@ async function main(): Promise<void> {
 
   // Keep the contacts cache fresh from the Radicale addressbook (no-op if unset).
   startContactsSync();
+
+  // Wire the approve-time CalDAV push for calendar_event offers (no-op if unset).
+  registerCalendarApproveHandler();
 
   // Resume any cleanup trash-queue work left pending from a previous run, and trickle new
   // bulk-cleanup MOVEs to Trash thereafter (Phase 6b — rate-limited, restart-safe).
