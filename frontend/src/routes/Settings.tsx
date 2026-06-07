@@ -341,9 +341,12 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
   const remaining = slice.pending + slice.failed;
   const pct = slice.total > 0 ? Math.round((slice.done / slice.total) * 100) : 100;
   const cur = status.current;
-  // Total background pipeline (every enricher). Surfaced as a secondary line when the
-  // LLM headline is shown, so the broader background backlog stays visible too.
-  const overallRemaining = status.overall.pending + status.overall.failed;
+  // Deterministic-only slice = overall minus the LLM slice, so the secondary line counts the
+  // instant enrichers on their own and the big number can't be read as AI-summary progress.
+  const instantDone = status.overall.done - status.llm.done;
+  const instantTotal = status.overall.total - status.llm.total;
+  const instantRemaining =
+    status.overall.pending + status.overall.failed - status.llm.pending - status.llm.failed;
 
   return (
     <section className="mt-6">
@@ -403,15 +406,16 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
           </p>
         )}
 
-        {/* Secondary line: the whole background pipeline (deterministic + LLM), so the
-            broader backlog is visible even while the Ollama slice is the headline. */}
+        {/* Secondary line: the instant deterministic pipeline (facts/invoice/package/…),
+            labelled so its large count is never mistaken for AI-summary progress — those
+            enrichers finish sub-millisecond, the AI headline above is the slow part. */}
         {status.llmEnabled && (
           <p className="mt-1.5 text-xs text-faint tabular-nums">
-            All enrichers:{' '}
-            <span className="font-medium text-fg">{status.overall.done.toLocaleString()}</span> of{' '}
-            {status.overall.total.toLocaleString()} done
-            {overallRemaining > 0
-              ? ` · ${overallRemaining.toLocaleString()} in the background queue`
+            Instant enrichers (no AI):{' '}
+            <span className="font-medium text-fg">{instantDone.toLocaleString()}</span> of{' '}
+            {instantTotal.toLocaleString()} done
+            {instantRemaining > 0
+              ? ` · ${instantRemaining.toLocaleString()} in the background queue`
               : ' · queue clear'}
           </p>
         )}

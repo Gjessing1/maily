@@ -57,10 +57,16 @@ interface RawSummary {
   category?: unknown;
 }
 
-const MAX_BODY_CHARS = 1500; // bound the prompt for the N150 (context + latency)
-const NUM_PREDICT = 200; // cap output so a runaway model can't blow the timeout budget
+// N150 latency budget (see docs/enricher_report.md): on the target CPU a 7B model spends
+// most of a generation on prompt-eval, and runs straddle the 120 s timeout. A 1–2 sentence
+// gist + category needs only the head of the email, so we keep the prompt small: ~800 body
+// chars and a tight num_ctx bound prompt-eval, while num_predict caps the output. This pulls
+// the median run well under the timeout without measurably hurting summary quality.
+const MAX_BODY_CHARS = 800; // head of the email is enough for a gist; smaller = faster prompt-eval
+const NUM_PREDICT = 160; // cap output so a runaway model can't blow the timeout budget
+const NUM_CTX = 1024; // bound the context window: prompt (~400 tok) + output (160) fits comfortably
 
-const OPTIONS: OllamaOptions = { temperature: 0, num_predict: NUM_PREDICT };
+const OPTIONS: OllamaOptions = { temperature: 0, num_predict: NUM_PREDICT, num_ctx: NUM_CTX };
 
 const SYSTEM_PROMPT = [
   'You are an email triage assistant. Given one email, return STRICT JSON with exactly',
@@ -115,7 +121,10 @@ function normalise(raw: RawSummary): SummaryFacts | null {
 
 export const summaryEnricher: Enricher = {
   name: 'summary',
-  version: 1,
+  // v2: smaller prompt budget for N150 throughput (docs/enricher_report.md). Note a version
+  // bump alone does NOT re-run existing rows — backfill only fills missing (message,enricher)
+  // pairs; force a re-run of old summaries with reindex({ kind: 'enricher', enricher: 'summary' }).
+  version: 2,
   kind: 'analytical',
   cost: 'llm',
   // Skip mail with no usable body to summarise (and stay inert if LLM was disabled after
@@ -130,6 +139,10 @@ export const summaryEnricher: Enricher = {
       system: SYSTEM_PROMPT,
       prompt: buildPrompt(ctx.message, body),
       options: OPTIONS,
+      // Keep the model resident across the backlog drain: a cold load on the N150 is huge
+      // (~130 s, alone past the timeout), so re-loading per email guarantees timeouts. With
+      // this only the first item in a drain pays the load; the rest reuse the warm model.
+      keepAlive: '30m',
     });
     return { result: { summary: normalise(raw) } };
   },

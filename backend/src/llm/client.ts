@@ -55,6 +55,13 @@ export interface GenerateParams {
   options?: OllamaOptions;
   /** Override the per-call timeout (ms) for this request only. */
   timeoutMs?: number;
+  /**
+   * Ollama `keep_alive`: how long to keep the model resident after this call (e.g. '30m',
+   * or -1 to never unload). On the N150 a cold model load is enormous (~130 s — alone past
+   * the timeout), so enrichers draining a backlog MUST keep the model warm so only the first
+   * item pays the load. Omitted = Ollama's 5-min default (evicts between sparse calls).
+   */
+  keepAlive?: string | number;
   /** Caller-supplied cancellation; combined with the internal timeout signal. */
   signal?: AbortSignal;
 }
@@ -160,6 +167,7 @@ export function generate(params: GenerateParams): Promise<string> {
     ...(params.system !== undefined ? { system: params.system } : {}),
     ...(params.format ? { format: params.format } : {}),
     ...(params.options ? { options: params.options } : {}),
+    ...(params.keepAlive !== undefined ? { keep_alive: params.keepAlive } : {}),
     stream: false,
   };
   const timeoutMs = params.timeoutMs ?? cfg.timeoutMs;
