@@ -11,12 +11,13 @@
  */
 import assert from 'node:assert/strict';
 import test, { afterEach, before, mock } from 'node:test';
+import type * as ClientModule from './client.js';
 
 process.env.OLLAMA_URL = 'http://ollama.test:11434';
 process.env.OLLAMA_MODEL = 'qwen2.5';
 process.env.OLLAMA_TIMEOUT_MS = '50';
 
-let client: typeof import('./client.js');
+let client: typeof ClientModule;
 const realFetch = globalThis.fetch;
 
 before(async () => {
