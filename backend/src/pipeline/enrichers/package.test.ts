@@ -130,6 +130,58 @@ test('package: a JSON-LD hit wins over a regex hit for the same number', () => {
   assert.equal(s.trackingUrl, 'https://ups.example/authoritative');
 });
 
+test('package: S10 with a bad check digit is rejected (digit check)', () => {
+  // RR123456785NO is valid (check digit 5); flip it to 0 and it must be dropped.
+  assert.equal(run({ bodyText: 'Postal item RR123456780NO is on the way.' }).length, 0);
+  assert.equal(run({ bodyText: 'Postal item RR123456785NO is on the way.' }).length, 1);
+});
+
+test('package: UPS with a bad check digit is rejected (digit check)', () => {
+  // 1Z999AA10123456784 is valid (check digit 4); flip it to 0 and it must be dropped.
+  assert.equal(run({ bodyText: 'Your shipment 1Z999AA10123456780.' }).length, 0);
+  assert.equal(run({ bodyText: 'Your shipment 1Z999AA10123456784.' }).length, 1);
+});
+
+test('package: S10 is re-attributed to the Nordic carrier named in the body', () => {
+  // Valid S10 (check digit 5) + "PostNord" in the copy → labelled PostNord, not Postal.
+  const ships = run({ bodyText: 'Your PostNord parcel CC123456785SE is on its way.' });
+  assert.equal(ships.length, 1);
+  const [s] = ships;
+  assert.ok(s);
+  assert.equal(s.carrier, 'PostNord');
+  assert.equal(s.trackingUrl, 'https://tracking.postnord.com/no/?id=CC123456785SE');
+});
+
+test('package: Norwegian carrier numbers are lifted from the tracking-page link', () => {
+  const bring = run({
+    bodyHtml: '<a href="https://tracking.bring.com/tracking/TESTNUM12345">Spor pakken</a>',
+  });
+  assert.equal(bring.length, 1);
+  assert.equal(bring[0]?.carrier, 'Posten/Bring');
+  assert.equal(bring[0]?.trackingNumber, 'TESTNUM12345');
+
+  // Query-string id, with the &amp; entity HTML hrefs carry decoded first.
+  const postnord = run({
+    bodyHtml: '<a href="https://tracking.postnord.com/no/?type=parcel&amp;id=99887766554433">x</a>',
+  });
+  assert.equal(postnord.length, 1);
+  assert.equal(postnord[0]?.carrier, 'PostNord');
+  assert.equal(postnord[0]?.trackingNumber, '99887766554433');
+
+  const helthjem = run({ bodyText: 'Track: https://helthjem.no/sporing/HJ12345678' });
+  assert.equal(helthjem.length, 1);
+  assert.equal(helthjem[0]?.carrier, 'Helthjem');
+  assert.equal(helthjem[0]?.trackingUrl, 'https://helthjem.no/sporing/HJ12345678');
+});
+
+test('package: a carrier homepage link with no tracking token is ignored', () => {
+  assert.equal(
+    run({ bodyHtml: '<a href="https://www.posten.no/">Posten</a> Tracking number coming soon.' })
+      .length,
+    0,
+  );
+});
+
 test('package: applies gate skips mail with no tracking marker', () => {
   assert.equal(packageEnricher.applies?.(msg({ bodyText: 'Lunch on Friday?' })), false);
   assert.equal(
