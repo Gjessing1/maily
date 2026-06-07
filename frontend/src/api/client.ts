@@ -26,6 +26,7 @@ import type {
   SaveDraftResult,
   SendMessageRequest,
   ServerConfigDto,
+  TripDto,
   UploadDto,
 } from '@maily/shared';
 
@@ -270,6 +271,10 @@ export const api = {
   /** Dismiss an offer (no side effect). */
   dismissAction: (id: string) =>
     request<ProposalActionResult>(`/api/actions/${id}/dismiss`, { method: 'POST' }),
+
+  // ── Trip History (Phase 4 — read-only travel timeline) ───────────────────────
+  /** Travel reservations grouped into trips, newest-first (deep-links by message UUID). */
+  trips: () => request<TripDto[]>('/api/trips'),
 
   // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
   cleanup: {

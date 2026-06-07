@@ -12,6 +12,7 @@ import {
   DraftIcon,
   FolderIcon,
   InboxIcon,
+  MapPinIcon,
   MonitorIcon,
   MoonIcon,
   SendIcon,
@@ -383,6 +384,14 @@ export function FolderDrawer({
           >
             <UsersIcon className="size-5 opacity-70" />
             Contacts
+          </Link>
+          <Link
+            to="/trips"
+            onClick={onClose}
+            className="flex items-center gap-3 px-4 py-3 text-[15px] text-fg active:bg-surface-2"
+          >
+            <MapPinIcon className="size-5 opacity-70" />
+            Trips
           </Link>
           <Link
             to="/cleanup"

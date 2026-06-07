@@ -310,6 +310,48 @@ export interface ProposalActionResult {
 }
 
 /**
+ * One reservation surfaced in the read-only Trip History (ROADMAP Phase 4). A
+ * `derived`-stage projection over the `travel` enricher's persisted result — pure
+ * *retrieval*, never an "add to calendar" nudge (the operational offer path stays
+ * Tier-0-only). Deep-links to its source message by internal UUID (never Message-ID/UID).
+ */
+export interface TripReservationDto {
+  type: 'flight' | 'lodging' | 'event';
+  /** Confirmation / booking reference, when present (also a trip-grouping key). */
+  reservationNumber: string | null;
+  /** Human label, e.g. "UA110 SFO→JFK", a hotel name, or an event name. */
+  title: string;
+  /** ISO 8601 start (departure / check-in / event start), or null. */
+  startsAt: string | null;
+  /** ISO 8601 end (arrival / check-out / event end), or null. */
+  endsAt: string | null;
+  /** Free-text place (airport pair, hotel address, venue), or null. */
+  location: string | null;
+  /** Source message UUID for the `/m/:id` deep link. */
+  messageId: string;
+  /** When the source mail arrived (ISO) — fallback ordering for undated reservations. */
+  receivedAt: string | null;
+}
+
+/**
+ * A trip — reservations clustered by shared confirmation number + date proximity,
+ * newest-first (ROADMAP Phase 4 "Trip History"). A deterministic, rebuildable
+ * projection (no persisted entity); it's something the user *browses*, not a chore.
+ */
+export interface TripDto {
+  /** Stable content-derived id (first reservation's messageId + its date). */
+  id: string;
+  /** Label derived from the trip's reservations (destination stay/event, else first leg). */
+  title: string;
+  /** Earliest reservation start across the trip (ISO), or null if all undated. */
+  startsAt: string | null;
+  /** Latest reservation end across the trip (ISO), or null. */
+  endsAt: string | null;
+  /** The trip's reservations, chronological. */
+  reservations: TripReservationDto[];
+}
+
+/**
  * One row of a cleanup slice — a sender domain with its preview impact (ROADMAP Phase 6
  * Cleanup Dashboard). Grouping by domain is what lets a future preset say "delete N from
  * <domain>, free X" before any execution.

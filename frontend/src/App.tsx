@@ -15,6 +15,7 @@ import { Settings } from './routes/Settings';
 import { Contacts } from './routes/Contacts';
 import { ContactDetail } from './routes/ContactDetail';
 import { Actions } from './routes/Actions';
+import { Trips } from './routes/Trips';
 import { Cleanup } from './routes/Cleanup';
 
 export function App() {
@@ -54,6 +55,7 @@ export function App() {
         <Route path="/compose" element={<Compose />} />
         <Route path="/search" element={<Search />} />
         <Route path="/actions" element={<Actions />} />
+        <Route path="/trips" element={<Trips />} />
         <Route path="/cleanup" element={<Cleanup />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/contacts" element={<Contacts />} />
