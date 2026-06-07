@@ -288,11 +288,18 @@ export const api = {
     coldStorage: (years?: number) =>
       request<CleanupSliceDto>(`/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`),
     /** Drill a delete-eligible slice down to messages, optionally scoped to one sender. */
-    messages: (opts: { slice: string; domain?: string; years?: number; limit?: number }) => {
+    messages: (opts: {
+      slice: string;
+      domain?: string;
+      years?: number;
+      limit?: number;
+      offset?: number;
+    }) => {
       const q = new URLSearchParams({ slice: opts.slice });
       if (opts.domain) q.set('domain', opts.domain);
       if (opts.years) q.set('years', String(opts.years));
       if (opts.limit) q.set('limit', String(opts.limit));
+      if (opts.offset) q.set('offset', String(opts.offset));
       return request<CleanupMessagesDto>(`/api/cleanup/messages?${q.toString()}`);
     },
     /** Queue a delete-eligible slice for trashing (server re-validates the safety gate). */

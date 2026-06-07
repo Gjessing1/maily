@@ -281,14 +281,16 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
  * Drill a delete-eligible slice down to its individual messages (ROADMAP Phase 6b review
  * surface), optionally scoped to one sender `domain`. Reuses the EXACT slice + safety
  * predicates of the preview/execute paths, so the listed messages are precisely what an
- * execute would trash. Newest-first; capped at `limit` with a `truncated`/`total` readout.
- * Only the destructive slices drill — 'storage' is informational and throws.
+ * execute would trash. Newest-first; returns the `[offset, offset+limit)` page with a
+ * `total` count and a `truncated` flag (more rows exist past this page) so the drill-down
+ * can paginate. Only the destructive slices drill — 'storage' is informational and throws.
  */
 export function sliceMessages(
   slice: 'never-replied' | 'cold-storage',
-  opts: { years?: number; domain?: string; limit?: number } = {},
+  opts: { years?: number; domain?: string; limit?: number; offset?: number } = {},
 ): { messages: CleanupMessageDto[]; total: number; truncated: boolean } {
   const limit = opts.limit ?? MESSAGE_LIMIT;
+  const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
   const domain = opts.domain?.toLowerCase();
 
   const base =
@@ -314,9 +316,9 @@ export function sliceMessages(
   }
 
   return {
-    messages: matched.slice(0, limit).map(toMessage),
+    messages: matched.slice(offset, offset + limit).map(toMessage),
     total: matched.length,
-    truncated: matched.length > limit,
+    truncated: offset + limit < matched.length,
   };
 }
 
