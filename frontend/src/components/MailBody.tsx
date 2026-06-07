@@ -54,7 +54,12 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
   :root { color-scheme: ${theme}; }
   html,body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-    overflow-wrap:anywhere; word-break:break-word; }
+    /* break-word breaks a long URL only when it would actually overflow, and —
+       unlike overflow-wrap:anywhere / word-break:break-word — does NOT lower an
+       element's min-content width to one glyph. The aggressive variants collapse
+       table columns to a single character (GitHub CI emails rendered "docker"
+       one letter per line), so keep wrapping conservative here. */
+    overflow-wrap:break-word; }
   img { max-width:100%; height:auto; }
   a { color:${linkFg}; }
   /* Contain tables that declare no width of their own, but DON'T override an
