@@ -16,7 +16,12 @@
  * queue + archive-before-delete staging) is a separate, later pass.
  */
 import { sql, type SQL } from 'drizzle-orm';
-import type { CleanupGroupDto, CleanupSliceDto, CleanupSummaryDto } from '@maily/shared';
+import type {
+  CleanupGroupDto,
+  CleanupMessageDto,
+  CleanupSliceDto,
+  CleanupSummaryDto,
+} from '@maily/shared';
 import { db } from '../db/client.js';
 import { COLD_KEEP_KEYWORDS } from './keywords.js';
 import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
@@ -248,6 +253,71 @@ export function sliceMessageIds(
   }
 
   throw new Error(`slice '${slice as string}' is not delete-eligible`);
+}
+
+/** Default cap on returned drill-down messages (the review surface, not a bulk export). */
+const MESSAGE_LIMIT = 200;
+
+interface RawMessage {
+  id: string;
+  subject: string | null;
+  fromName: string | null;
+  fromAddress: string | null;
+  receivedAt: number | null;
+  bytes: number | null;
+  domain: string;
+}
+
+const toMessage = (r: RawMessage): CleanupMessageDto => ({
+  id: r.id,
+  subject: r.subject,
+  fromName: r.fromName,
+  fromAddress: r.fromAddress,
+  receivedAt: iso(r.receivedAt),
+  bytes: r.bytes ?? 0,
+});
+
+/**
+ * Drill a delete-eligible slice down to its individual messages (ROADMAP Phase 6b review
+ * surface), optionally scoped to one sender `domain`. Reuses the EXACT slice + safety
+ * predicates of the preview/execute paths, so the listed messages are precisely what an
+ * execute would trash. Newest-first; capped at `limit` with a `truncated`/`total` readout.
+ * Only the destructive slices drill — 'storage' is informational and throws.
+ */
+export function sliceMessages(
+  slice: 'never-replied' | 'cold-storage',
+  opts: { years?: number; domain?: string; limit?: number } = {},
+): { messages: CleanupMessageDto[]; total: number; truncated: boolean } {
+  const limit = opts.limit ?? MESSAGE_LIMIT;
+  const domain = opts.domain?.toLowerCase();
+
+  const base =
+    slice === 'cold-storage'
+      ? coldStorageWhere(opts.years ?? COLD_YEARS)
+      : sql`${LIVE} AND ${notProtected('m')}`;
+  const where = domain ? sql`${base} AND ${DOMAIN} = ${domain}` : base;
+
+  const rows = db.all(
+    sql`SELECT m.id AS id, m.subject AS subject, m.from_name AS fromName,
+               m.from_address AS fromAddress, m.received_at AS receivedAt,
+               ${BYTES} AS bytes, ${DOMAIN} AS domain
+        FROM messages m
+        WHERE ${where}
+        ORDER BY m.received_at DESC`,
+  ) as RawMessage[];
+
+  // never-replied filters the reply set + '(unknown)' bucket in JS (same as the slice/exec).
+  let matched = rows;
+  if (slice === 'never-replied') {
+    const replied = repliedDomains();
+    matched = rows.filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
+  }
+
+  return {
+    messages: matched.slice(0, limit).map(toMessage),
+    total: matched.length,
+    truncated: matched.length > limit,
+  };
 }
 
 /** Top-line dashboard figures: total live mail, estimated bytes, and protected count. */

@@ -9,6 +9,7 @@ import type {
   AddressbookSettingsDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
+  CleanupMessagesDto,
   CleanupQueueStatusDto,
   CleanupSliceDto,
   CleanupSummaryDto,
@@ -286,6 +287,14 @@ export const api = {
     neverReplied: () => request<CleanupSliceDto>('/api/cleanup/never-replied'),
     coldStorage: (years?: number) =>
       request<CleanupSliceDto>(`/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`),
+    /** Drill a delete-eligible slice down to messages, optionally scoped to one sender. */
+    messages: (opts: { slice: string; domain?: string; years?: number; limit?: number }) => {
+      const q = new URLSearchParams({ slice: opts.slice });
+      if (opts.domain) q.set('domain', opts.domain);
+      if (opts.years) q.set('years', String(opts.years));
+      if (opts.limit) q.set('limit', String(opts.limit));
+      return request<CleanupMessagesDto>(`/api/cleanup/messages?${q.toString()}`);
+    },
     /** Queue a delete-eligible slice for trashing (server re-validates the safety gate). */
     execute: (body: CleanupExecuteRequest) =>
       request<CleanupExecuteResultDto>('/api/cleanup/execute', {

@@ -12,12 +12,17 @@
  * EXPUNGEd, so the action is recoverable (archive-before-delete staging).
  */
 import type { FastifyInstance } from 'fastify';
-import type { CleanupExecuteRequest, CleanupExecuteResultDto } from '@maily/shared';
+import type {
+  CleanupExecuteRequest,
+  CleanupExecuteResultDto,
+  CleanupMessagesDto,
+} from '@maily/shared';
 import {
   cleanupSummary,
   coldStorageCandidates,
   neverRepliedSenders,
   sliceMessageIds,
+  sliceMessages,
   storageByDomain,
 } from '../../cleanup/slices.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
@@ -41,6 +46,26 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     const years = Number(req.query.years);
     return coldStorageCandidates(Number.isFinite(years) && years > 0 ? years : undefined);
   });
+
+  // Drill a delete-eligible slice down to individual messages (review surface), optionally
+  // scoped to one sender domain. Re-runs the same safety + slice predicates as the preview.
+  app.get<{ Querystring: { slice?: string; years?: string; domain?: string; limit?: string } }>(
+    '/api/cleanup/messages',
+    async (req, reply): Promise<CleanupMessagesDto> => {
+      const { slice, years, domain, limit } = req.query;
+      if (!slice || !DELETE_ELIGIBLE.has(slice)) {
+        return reply.code(400).send({ error: 'slice is not drillable' }) as never;
+      }
+      const y = Number(years);
+      const lim = Number(limit);
+      const res = sliceMessages(slice as 'never-replied' | 'cold-storage', {
+        years: Number.isFinite(y) && y > 0 ? y : undefined,
+        domain: domain || undefined,
+        limit: Number.isFinite(lim) && lim > 0 ? Math.min(lim, 500) : undefined,
+      });
+      return { slice, domain: domain || null, ...res };
+    },
+  );
 
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.

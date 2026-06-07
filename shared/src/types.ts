@@ -423,6 +423,38 @@ export interface CleanupSliceDto {
   truncated: boolean;
 }
 
+/**
+ * One message inside a cleanup slice — the drill-down unit (ROADMAP Phase 6b). Lets the
+ * user inspect exactly what a slice/sender would trash before confirming; `id` deep-links
+ * to the reader (the internal UUID, never the IMAP UID — see CLAUDE.md gotchas).
+ */
+export interface CleanupMessageDto {
+  id: string;
+  subject: string | null;
+  fromName: string | null;
+  fromAddress: string | null;
+  /** Received timestamp (ISO), or null if unknown. */
+  receivedAt: string | null;
+  /** Estimated bytes (same per-message estimate as the slice totals). */
+  bytes: number;
+}
+
+/**
+ * Drill-down of a delete-eligible slice to individual messages, optionally scoped to one
+ * sender domain. Re-runs the SAME safety + slice predicates as the preview/execute paths,
+ * so what's listed is exactly what would be trashed. `messages` is capped at `limit`;
+ * `truncated` flags that `total` exceeds what's returned.
+ */
+export interface CleanupMessagesDto {
+  slice: string;
+  /** Sender domain this drill-down is scoped to, or null for the whole slice. */
+  domain: string | null;
+  messages: CleanupMessageDto[];
+  /** Total matching messages (before the `limit` cap). */
+  total: number;
+  truncated: boolean;
+}
+
 /** Cleanup Dashboard headline figures. */
 export interface CleanupSummaryDto {
   totalMessages: number;

@@ -17,6 +17,7 @@ import { ContactDetail } from './routes/ContactDetail';
 import { Actions } from './routes/Actions';
 import { Trips } from './routes/Trips';
 import { Cleanup } from './routes/Cleanup';
+import { CleanupMessages } from './routes/CleanupMessages';
 
 export function App() {
   const { authed } = useAuth();
@@ -57,6 +58,7 @@ export function App() {
         <Route path="/actions" element={<Actions />} />
         <Route path="/trips" element={<Trips />} />
         <Route path="/cleanup" element={<Cleanup />} />
+        <Route path="/cleanup/messages" element={<CleanupMessages />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/contacts/:uid" element={<ContactDetail />} />

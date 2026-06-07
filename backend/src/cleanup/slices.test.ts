@@ -256,6 +256,77 @@ test('sliceMessageIds: storage slice is not delete-eligible', () => {
   assert.throws(() => S.sliceMessageIds('storage' as 'cold-storage'), /not delete-eligible/);
 });
 
+test('sliceMessages(cold-storage): lists the in-scope messages, scoped to a domain', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+
+  const promo = seedMessage(acct, {
+    fromAddress: 'old@promo.example',
+    subject: 'Old sale',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  // A second cold sender — should be excluded when we scope to promo.example.
+  seedMessage(acct, { fromAddress: 'old@shop.example', bodyText: 'sale', receivedAt: old });
+  // Protected (password) at the same domain → the HARD gate keeps it out of the drill-down.
+  seedMessage(acct, {
+    fromAddress: 'noreply@promo.example',
+    bodyText: 'password reset',
+    receivedAt: old,
+  });
+
+  const res = S.sliceMessages('cold-storage', { years: 2, domain: 'promo.example' });
+  assert.deepEqual(
+    res.messages.map((m) => m.id),
+    [promo],
+    'only the cold, unprotected promo.example message is listed',
+  );
+  assert.equal(res.total, 1);
+  assert.equal(res.truncated, false);
+  assert.equal(res.messages[0]!.subject, 'Old sale');
+});
+
+test('sliceMessages(never-replied): drops replied-to domains like the slice/exec paths', () => {
+  const acct = seedAccount();
+  const inbox = seedFolder(acct, 'inbox');
+  const sent = seedFolder(acct, 'sent');
+
+  const keep = seedMessage(acct, {
+    fromAddress: 'news@promo.example',
+    bodyText: 'newsletter',
+    folderId: inbox,
+  });
+  // Replied-to domain → excluded from the drill-down too.
+  seedMessage(acct, { fromAddress: 'colleague@work.example', bodyText: 'hi', folderId: inbox });
+  seedMessage(acct, {
+    fromAddress: `${acct}@me.example`,
+    bodyText: 'reply',
+    folderId: sent,
+    toAddresses: JSON.stringify([{ address: 'colleague@work.example' }]),
+  });
+
+  const res = S.sliceMessages('never-replied');
+  const ids = new Set(res.messages.map((m) => m.id));
+  assert.ok(ids.has(keep), 'the unreplied newsletter is listed');
+  assert.ok(
+    !res.messages.some((m) => (m.fromAddress ?? '').endsWith('@work.example')),
+    'the replied-to domain is excluded',
+  );
+});
+
+test('sliceMessages: limit caps the list and flags truncation', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+  for (let i = 0; i < 3; i++) {
+    seedMessage(acct, { fromAddress: `m${i}@promo.example`, bodyText: 'sale', receivedAt: old });
+  }
+
+  const res = S.sliceMessages('cold-storage', { years: 2, domain: 'promo.example', limit: 2 });
+  assert.equal(res.messages.length, 2, 'capped at the limit');
+  assert.equal(res.total, 3, 'total reflects all matches');
+  assert.equal(res.truncated, true);
+});
+
 test('cleanupSummary: counts protected mail', () => {
   const acct = seedAccount();
   seedMessage(acct, { fromAddress: 'a@x.example', bodyText: 'invoice attached' });
