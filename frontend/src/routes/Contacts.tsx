@@ -12,14 +12,7 @@ import { api, downloadContactsVcf } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import {
-  BackIcon,
-  CloseIcon,
-  DownloadIcon,
-  PlusIcon,
-  SearchIcon,
-  UploadIcon,
-} from '../ui/icons';
+import { BackIcon, CloseIcon, DownloadIcon, PlusIcon, SearchIcon, UploadIcon } from '../ui/icons';
 
 /**
  * Whole-card match: every whitespace-separated term must appear somewhere in the

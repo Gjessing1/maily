@@ -173,9 +173,7 @@ export function Cleanup() {
               ) : (
                 <div className="min-w-0 text-sm">
                   <p className="text-fg">
-                    <span className="font-semibold">
-                      {summary.totalMessages.toLocaleString()}
-                    </span>{' '}
+                    <span className="font-semibold">{summary.totalMessages.toLocaleString()}</span>{' '}
                     messages ·{' '}
                     <span className="font-semibold">{formatBytes(summary.totalBytes)}</span> cached
                   </p>

@@ -65,7 +65,10 @@ const toGroup = (r: RawGroup): CleanupGroupDto => ({
  * Run the grouped storage query for a `WHERE` predicate. Returns rows newest-bytes-first;
  * fetches one past the limit so the caller can flag truncation without a second COUNT.
  */
-function groupedByDomain(where: SQL, limit: number): { groups: CleanupGroupDto[]; truncated: boolean } {
+function groupedByDomain(
+  where: SQL,
+  limit: number,
+): { groups: CleanupGroupDto[]; truncated: boolean } {
   const rows = db.all(
     sql`SELECT ${DOMAIN} AS domain,
                COUNT(*) AS messageCount,

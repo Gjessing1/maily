@@ -274,9 +274,7 @@ export const api = {
     storage: () => request<CleanupSliceDto>('/api/cleanup/storage'),
     neverReplied: () => request<CleanupSliceDto>('/api/cleanup/never-replied'),
     coldStorage: (years?: number) =>
-      request<CleanupSliceDto>(
-        `/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`,
-      ),
+      request<CleanupSliceDto>(`/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`),
   },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),

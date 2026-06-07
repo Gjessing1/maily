@@ -58,9 +58,7 @@ function seedAccount(): string {
 
 function seedFolder(accountId: string, role: 'inbox' | 'sent'): string {
   const id = randomUUID();
-  db.insert(schema.folders)
-    .values({ id, accountId, path: role, name: role, role })
-    .run();
+  db.insert(schema.folders).values({ id, accountId, path: role, name: role, role }).run();
   return id;
 }
 
@@ -89,7 +87,9 @@ function seedMessage(
     })
     .run();
   if (opts.folderId) {
-    db.insert(schema.messageFolders).values({ messageId: id, folderId: opts.folderId, uid: 1 }).run();
+    db.insert(schema.messageFolders)
+      .values({ messageId: id, folderId: opts.folderId, uid: 1 })
+      .run();
   }
   return id;
 }
@@ -120,9 +120,17 @@ test('neverRepliedSenders: excludes replied-to domains and protected mail', () =
   // Never replied, ordinary → candidate.
   seedMessage(acct, { fromAddress: 'news@promo.example', bodyText: 'newsletter', folderId: inbox });
   // Protected (invoice) → must be excluded even though never replied.
-  seedMessage(acct, { fromAddress: 'billing@bank.example', bodyText: 'your invoice', folderId: inbox });
+  seedMessage(acct, {
+    fromAddress: 'billing@bank.example',
+    bodyText: 'your invoice',
+    folderId: inbox,
+  });
   // Replied to (we sent mail to work.example) → excluded.
-  seedMessage(acct, { fromAddress: 'colleague@work.example', bodyText: 'meeting', folderId: inbox });
+  seedMessage(acct, {
+    fromAddress: 'colleague@work.example',
+    bodyText: 'meeting',
+    folderId: inbox,
+  });
   // The Sent message establishing the reply relationship.
   seedMessage(acct, {
     fromAddress: `${acct}@me.example`,
@@ -145,9 +153,17 @@ test('coldStorageCandidates: old non-protected value-free mail only', () => {
   seedMessage(acct, { fromAddress: 'old@promo.example', bodyText: 'sale', receivedAt: old });
   seedMessage(acct, { fromAddress: 'new@promo.example', bodyText: 'sale', receivedAt: recent });
   // Old but carries a value marker (invoice) → kept, not cold (and protected).
-  seedMessage(acct, { fromAddress: 'billing@shop.example', bodyText: 'invoice 42', receivedAt: old });
+  seedMessage(acct, {
+    fromAddress: 'billing@shop.example',
+    bodyText: 'invoice 42',
+    receivedAt: old,
+  });
   // Old + protected (password) → excluded by safety filter.
-  seedMessage(acct, { fromAddress: 'noreply@bank.example', bodyText: 'password reset', receivedAt: old });
+  seedMessage(acct, {
+    fromAddress: 'noreply@bank.example',
+    bodyText: 'password reset',
+    receivedAt: old,
+  });
 
   const slice = S.coldStorageCandidates(2);
   assert.equal(slice.totalMessages, 1, 'only the one old, value-free, unprotected message');

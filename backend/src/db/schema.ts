@@ -312,5 +312,8 @@ export const proposals = sqliteTable(
     createdAt: now(),
     resolvedAt: integer('resolved_at', { mode: 'timestamp_ms' }),
   },
-  (t) => [index('proposals_status_idx').on(t.status), index('proposals_message_idx').on(t.messageId)],
+  (t) => [
+    index('proposals_status_idx').on(t.status),
+    index('proposals_message_idx').on(t.messageId),
+  ],
 );
