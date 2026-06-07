@@ -16,8 +16,15 @@
  * The proposal payload (`CalendarEventDraft`) is deliberately VEVENT-shaped so the
  * CalDAV push reuses one representation, no translation layer (ROADMAP Phase 4).
  */
-import * as cheerio from 'cheerio';
 import type { Enricher, EnricherContext, EnricherResult, ProposalDraft } from '../types.js';
+import {
+  collectJsonLdNodes,
+  isObject,
+  str,
+  typesOf,
+  type JsonObject,
+  type JsonValue,
+} from './jsonld.js';
 
 /** Reservation kinds we extract (schema.org `@type` → our tag). */
 const RESERVATION_TYPES: Record<string, TravelReservation['type']> = {
@@ -55,63 +62,6 @@ export interface CalendarEventDraft {
   description: string | null;
   /** Provenance: which reservation type produced this. */
   source: TravelReservation['type'];
-}
-
-type JsonValue = unknown;
-type JsonObject = Record<string, JsonValue>;
-
-function isObject(v: JsonValue): v is JsonObject {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/** Read a string-ish field (numbers coerced), trimmed; null when absent/empty. */
-function str(obj: JsonObject, key: string): string | null {
-  const v = obj[key];
-  if (typeof v === 'string') return v.trim() || null;
-  if (typeof v === 'number') return String(v);
-  return null;
-}
-
-/** schema.org `@type` may be a string or an array of strings. */
-function typesOf(obj: JsonObject): string[] {
-  const t = obj['@type'];
-  if (typeof t === 'string') return [t];
-  if (Array.isArray(t)) return t.filter((x): x is string => typeof x === 'string');
-  return [];
-}
-
-/**
- * Collect every JSON-LD object embedded in the HTML. Each `<script>` block may hold a
- * single object, an array, or a `{ "@graph": [...] }` wrapper; we flatten them all into
- * one flat list of candidate nodes. Malformed JSON in one block is skipped, not fatal.
- */
-function collectJsonLdNodes(html: string): JsonObject[] {
-  const $ = cheerio.load(html);
-  const nodes: JsonObject[] = [];
-  $('script[type="application/ld+json"]').each((_i, el) => {
-    const raw = $(el).text();
-    if (!raw.trim()) return;
-    let parsed: JsonValue;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return; // tolerate one broken block; others may still parse
-    }
-    pushNodes(parsed, nodes);
-  });
-  return nodes;
-}
-
-/** Flatten an object / array / `@graph` into the node list (one level of nesting). */
-function pushNodes(value: JsonValue, out: JsonObject[]): void {
-  if (Array.isArray(value)) {
-    for (const v of value) pushNodes(v, out);
-    return;
-  }
-  if (!isObject(value)) return;
-  out.push(value);
-  const graph = value['@graph'];
-  if (Array.isArray(graph)) for (const v of graph) pushNodes(v, out);
 }
 
 /** Pick the best human name from a schema.org place/airport/airline node. */
