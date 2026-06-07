@@ -19,6 +19,7 @@ import { pushRoutes } from './api/push.js';
 import { actionRoutes } from './api/actions.js';
 import { tripRoutes } from './api/trips.js';
 import { cleanupRoutes } from './api/cleanup.js';
+import { pipelineRoutes } from './api/pipeline.js';
 
 export async function apiRoutes(app: FastifyInstance): Promise<void> {
   // Gate the whole encapsulated plugin behind JWT auth. Registered before the child
@@ -36,4 +37,5 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(actionRoutes);
   await app.register(tripRoutes);
   await app.register(cleanupRoutes);
+  await app.register(pipelineRoutes);
 }

@@ -16,6 +16,7 @@ import type {
   ContactCardInput,
   ContactDto,
   ContactImportResult,
+  EnrichmentStatusDto,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -103,6 +104,8 @@ export const api = {
   folders: (accountId: string) => request<FolderDto[]>(`/api/accounts/${accountId}/folders`),
 
   syncStatus: () => request<AccountSyncStatusDto[]>('/api/sync/status'),
+
+  enrichmentStatus: () => request<EnrichmentStatusDto>('/api/enrichment/status'),
 
   config: () => request<ServerConfigDto>('/api/config'),
 

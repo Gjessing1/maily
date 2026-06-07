@@ -128,6 +128,14 @@ async function runEnrich(): Promise<void> {
         costs: ['llm'],
         max: env.pipelineLlmBatch,
         selfHeal: false,
+        // Relay each multi-second Ollama row so Settings can show "currently working on".
+        onRowStart: (info) =>
+          post({
+            type: 'enrich:active',
+            enricher: info.enricher,
+            messageId: info.messageId,
+            subject: info.subject,
+          }),
       });
       relay(result.proposals);
     } catch (err) {

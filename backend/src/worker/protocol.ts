@@ -49,6 +49,18 @@ export interface EnrichDoneMsg {
 }
 
 /**
+ * An LLM enrichment row is now generating (Settings "currently working on"). Relayed
+ * because only the main thread holds it for the status route — the worker has no HTTP
+ * surface. Posted per LLM row; `enrich:done` clears it back to idle.
+ */
+export interface EnrichActiveMsg {
+  type: 'enrich:active';
+  enricher: string;
+  messageId: string;
+  subject: string | null;
+}
+
+/**
  * An enricher surfaced a proposal (Phase 4). Relayed so the MAIN thread can emit the
  * `action:ready` socket signal + Web Push — the worker has no socket/bus of its own.
  */
@@ -65,4 +77,9 @@ export interface WorkerErrorMsg {
   message: string;
 }
 
-export type WorkerToMain = SweepDoneMsg | EnrichDoneMsg | ProposalReadyMsg | WorkerErrorMsg;
+export type WorkerToMain =
+  | SweepDoneMsg
+  | EnrichDoneMsg
+  | EnrichActiveMsg
+  | ProposalReadyMsg
+  | WorkerErrorMsg;

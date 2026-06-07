@@ -66,7 +66,7 @@ const SYSTEM_PROMPT = [
   'You are an email triage assistant. Given one email, return STRICT JSON with exactly',
   'two fields and nothing else:',
   '  "summary": a 1-2 sentence plain-text gist of what the email is about and any action',
-  "            it implies. Write it in the SAME language as the email (Norwegian or English).",
+  '            it implies. Write it in the SAME language as the email (Norwegian or English).',
   '            No greeting, no preamble, no markdown.',
   `  "category": EXACTLY one of: ${SUMMARY_CATEGORIES.join(', ')}.`,
   'Choose the single best category. Do not invent new categories. Output JSON only.',

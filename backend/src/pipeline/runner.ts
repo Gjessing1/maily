@@ -7,6 +7,7 @@
  * backlog. Reindex/version bumps just reset rows to `pending` (the §15 rebuild path).
  */
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import type { EnrichmentCounts } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { enrichments, proposals } from '../db/schema.js';
 import { env } from '../env.js';
@@ -32,6 +33,15 @@ export function backoffMs(attempt: number): number {
 export interface ProposalReady {
   messageId: string;
   label: string;
+}
+
+/** Notification that a claimed row is about to run (Settings "currently working on"). */
+export interface RowStartInfo {
+  enricher: string;
+  messageId: string;
+  cost: EnrichmentCost;
+  /** Subject of the message being enriched (best-effort label). */
+  subject: string | null;
 }
 
 export interface DrainResult {
@@ -187,6 +197,7 @@ function indexStage(_message: PipelineMessage, _result: EnricherResult): void {
 async function processRow(
   row: EnrichmentRow,
   now: Date,
+  onRowStart?: (info: RowStartInfo) => void,
 ): Promise<{ outcome: 'ok' | 'failed' | 'dead' | 'skipped'; proposals: ProposalReady[] }> {
   const enricher = enricherByName(row.enricher);
   if (!enricher) return { outcome: 'skipped', proposals: [] }; // deregistered → leave pending
@@ -201,6 +212,16 @@ async function processRow(
     persistSkipped(row, enricher, now);
     return { outcome: 'ok', proposals: [] };
   }
+
+  // Signal "now working on this" only once we're committed to actually running it
+  // (past the deregistered / not-found / applies() gates) so the UI never shows a
+  // phantom item that was immediately skipped.
+  onRowStart?.({
+    enricher: enricher.name,
+    messageId: row.messageId,
+    cost: row.cost,
+    subject: message.subject ?? null,
+  });
 
   const tier = tierForMessage(message.receivedAt, now);
   const started = Date.now();
@@ -232,6 +253,12 @@ export interface DrainOptions {
    * The worker drains `['cheap']` to completion, then one bounded `['llm']` batch.
    */
   costs?: EnrichmentCost[];
+  /**
+   * Called just before each claimed row runs (Settings "currently working on"). The
+   * worker uses it to relay the in-flight LLM item to the main thread. Optional — most
+   * callers (tests) omit it.
+   */
+  onRowStart?: (info: RowStartInfo) => void;
 }
 
 /**
@@ -266,7 +293,7 @@ export async function drainPipeline(opts: DrainOptions = {}): Promise<DrainResul
     proposals: [],
   };
   for (const row of rows) {
-    const { outcome, proposals: ready } = await processRow(row, now);
+    const { outcome, proposals: ready } = await processRow(row, now, opts.onRowStart);
     result[outcome] += 1;
     if (ready.length) result.proposals.push(...ready);
   }
@@ -312,6 +339,40 @@ export function queueDepth(now: Date = new Date()): {
     due,
     dead: countStatus('dead'),
   };
+}
+
+/**
+ * Progress for Settings → Enrichment: row counts folded into `overall` (every enricher)
+ * and `llm` (Ollama-cost rows only — the slow backlog the user watches). One grouped
+ * scan over the ledger; status maps to the DTO buckets (`ok`→done, etc.).
+ */
+export function enrichmentProgress(): { overall: EnrichmentCounts; llm: EnrichmentCounts } {
+  const empty = (): EnrichmentCounts => ({ total: 0, done: 0, pending: 0, failed: 0, dead: 0 });
+  const overall = empty();
+  const llm = empty();
+  const byStatus: Record<EnrichmentRow['status'], keyof EnrichmentCounts> = {
+    ok: 'done',
+    pending: 'pending',
+    failed: 'failed',
+    dead: 'dead',
+  };
+
+  const rows = db
+    .select({ cost: enrichments.cost, status: enrichments.status, n: sql<number>`count(*)` })
+    .from(enrichments)
+    .groupBy(enrichments.cost, enrichments.status)
+    .all();
+
+  for (const r of rows) {
+    const bucket = byStatus[r.status];
+    overall[bucket] += r.n;
+    overall.total += r.n;
+    if (r.cost === 'llm') {
+      llm[bucket] += r.n;
+      llm.total += r.n;
+    }
+  }
+  return { overall, llm };
 }
 
 /**

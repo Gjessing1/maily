@@ -6,6 +6,7 @@
  * call `enqueueSweep` from their sweep timer; the worker serialises and dedups.
  */
 import { Worker } from 'node:worker_threads';
+import type { CurrentEnrichmentDto } from '@maily/shared';
 import { createLogger } from '../logger.js';
 import { emitSignal } from '../events.js';
 import type { MainToWorker, WorkerToMain } from './protocol.js';
@@ -13,6 +14,18 @@ import type { MainToWorker, WorkerToMain } from './protocol.js';
 const log = createLogger('worker:host');
 
 let worker: Worker | null = null;
+
+/**
+ * The LLM enrichment row generating right now, relayed from the worker (Settings →
+ * Enrichment "currently working on"). Ephemeral: set on `enrich:active`, cleared on
+ * `enrich:done` and on any worker death — a live signal, never persisted.
+ */
+let currentEnrichment: CurrentEnrichmentDto | null = null;
+
+/** The item the worker is enriching right now, or null when idle. */
+export function getCurrentEnrichment(): CurrentEnrichmentDto | null {
+  return currentEnrichment;
+}
 
 /**
  * Spawn the worker, matching the current runtime:
@@ -49,15 +62,21 @@ function spawn(): Worker {
       // The worker has no socket/bus of its own — relay onto the main-thread bus so
       // Socket.io (and later Web Push) surface the new Action Center offer (Phase 4).
       emitSignal({ type: 'action:ready', messageId: msg.messageId, label: msg.label });
+    } else if (msg.type === 'enrich:active') {
+      currentEnrichment = { enricher: msg.enricher, subject: msg.subject, since: Date.now() };
+    } else if (msg.type === 'enrich:done') {
+      currentEnrichment = null; // drain pass over → back to idle
     }
-    // 'sweep:done' / 'enrich:done' need no main-side action today.
+    // 'sweep:done' needs no main-side action today.
   });
   w.on('error', (err) => {
     log.error('worker crashed:', err.message);
+    currentEnrichment = null;
     worker = null; // respawn lazily on next enqueue
   });
   w.on('exit', (code) => {
     if (code !== 0) log.warn(`worker exited with code ${code}`);
+    currentEnrichment = null;
     worker = null;
   });
 

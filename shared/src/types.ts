@@ -264,6 +264,48 @@ export interface ServerConfigDto {
   cacheWindowDays: number;
 }
 
+/** Row counts for one slice of the enrichment ledger (Settings → Enrichment). */
+export interface EnrichmentCounts {
+  /** All ledger rows in this slice (done + pending + failed + dead). */
+  total: number;
+  /** Successfully enriched rows (status `ok`). */
+  done: number;
+  /** Rows never attempted yet (status `pending`). */
+  pending: number;
+  /** Rows that errored and are awaiting a backoff retry (status `failed`). */
+  failed: number;
+  /** Rows that exhausted retries and were parked (status `dead`). */
+  dead: number;
+}
+
+/**
+ * The item the worker is generating right now. Only LLM (Ollama) enrichment takes
+ * multiple seconds, so it's the only work surfaced as "current"; cheap deterministic
+ * enrichers finish sub-millisecond. Ephemeral (lost on restart) — a live signal, not state.
+ */
+export interface CurrentEnrichmentDto {
+  /** Enricher name running now (e.g. `summary`). */
+  enricher: string;
+  /** Subject of the message being enriched, best-effort label for the UI. */
+  subject: string | null;
+  /** Epoch ms this item started generating. */
+  since: number;
+}
+
+/** Enrichment-pipeline progress for Settings (shown alongside Sync stats). */
+export interface EnrichmentStatusDto {
+  /** True when the LLM (Ollama) enricher is configured and registered. */
+  llmEnabled: boolean;
+  /** Configured Ollama model id when `llmEnabled`, else null. */
+  model: string | null;
+  /** Counts across every enricher (cheap + LLM). */
+  overall: EnrichmentCounts;
+  /** Counts for LLM-cost enrichers only — the slow Ollama backlog the user cares about. */
+  llm: EnrichmentCounts;
+  /** What's generating right now, or null when idle. */
+  current: CurrentEnrichmentDto | null;
+}
+
 /**
  * A pipeline proposal (the `derived` stage — an *offer*, never a chore) as exposed to
  * the Action Center. `type` drives client-side rendering (a per-type renderer registry)

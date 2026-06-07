@@ -9,8 +9,14 @@
  * Importing this module registers the default enrichers (via `./registry`).
  */
 export { enqueueMessage, backfillPending, backfillEnricherCoverage } from './enqueue.js';
-export { drainPipeline, reindex, queueDepth, backoffMs } from './runner.js';
-export type { DrainResult, DrainOptions, ProposalReady, ReindexScope } from './runner.js';
+export { drainPipeline, reindex, queueDepth, enrichmentProgress, backoffMs } from './runner.js';
+export type {
+  DrainResult,
+  DrainOptions,
+  ProposalReady,
+  RowStartInfo,
+  ReindexScope,
+} from './runner.js';
 export {
   registerEnricher,
   unregisterEnricher,

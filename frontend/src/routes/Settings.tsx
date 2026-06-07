@@ -4,6 +4,7 @@ import type {
   AccountDto,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
+  EnrichmentStatusDto,
   ServerConfigDto,
 } from '@maily/shared';
 import { api } from '../api/client';
@@ -308,6 +309,105 @@ function AddressBooks() {
   );
 }
 
+/** Short relative "for 12s" from an epoch-ms start (the current item's elapsed time). */
+function elapsed(sinceMs: number): string {
+  const s = Math.max(0, Math.round((Date.now() - sinceMs) / 1000));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/**
+ * Enrichment progress (Settings → Enrichment). Surfaces the LLM (Ollama) backlog — the
+ * slow part the user watches catch up — with a progress bar, processed/failed counts,
+ * and the live "currently working on" line. Falls back to the deterministic overall
+ * count when the LLM enricher isn't configured.
+ */
+function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
+  if (status === null) {
+    return (
+      <section className="mt-6">
+        <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+          Enrichment
+        </p>
+        <div className="border-y border-border px-4 py-3">
+          <p className="text-sm text-faint">Loading…</p>
+        </div>
+      </section>
+    );
+  }
+
+  // The LLM slice is the headline when configured; otherwise show the deterministic total.
+  const slice = status.llmEnabled ? status.llm : status.overall;
+  const remaining = slice.pending + slice.failed;
+  const pct = slice.total > 0 ? Math.round((slice.done / slice.total) * 100) : 100;
+  const cur = status.current;
+
+  return (
+    <section className="mt-6">
+      <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Enrichment</p>
+      <div className="border-y border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-[15px]">
+            {status.llmEnabled ? 'AI summaries & categories' : 'Deterministic enrichers'}
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5 text-xs">
+            {cur ? (
+              <>
+                <span className="size-2 animate-pulse rounded-full bg-accent" />
+                Working
+              </>
+            ) : remaining > 0 ? (
+              <>
+                <span className="size-2 rounded-full bg-amber-500" />
+                {remaining.toLocaleString()} queued
+              </>
+            ) : (
+              <>
+                <span className="size-2 rounded-full bg-green-500" />
+                Up to date
+              </>
+            )}
+          </span>
+        </div>
+
+        {status.llmEnabled && status.model && (
+          <p className="mt-0.5 text-xs text-faint">Local model · {status.model}</p>
+        )}
+        {!status.llmEnabled && (
+          <p className="mt-0.5 text-xs text-faint">
+            AI enrichment is off — set OLLAMA_URL on the server to enable summaries.
+          </p>
+        )}
+
+        {/* Progress bar — done out of total for the active slice. */}
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2">
+          <div
+            className="h-full rounded-full bg-accent transition-all"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-xs text-faint tabular-nums">
+          <span className="font-medium text-fg">{slice.done.toLocaleString()}</span> of{' '}
+          {slice.total.toLocaleString()} processed
+          {remaining > 0 && ` · ${remaining.toLocaleString()} to go`}
+          {slice.dead > 0 && ` · ${slice.dead.toLocaleString()} failed`}
+        </p>
+
+        {cur && (
+          <p className="mt-1.5 truncate text-xs text-muted">
+            Now: <span className="text-fg">{cur.subject || '(no subject)'}</span>{' '}
+            <span className="text-faint">· {elapsed(cur.since)}</span>
+          </p>
+        )}
+      </div>
+      <p className="px-4 pt-2 text-xs text-faint">
+        New mail is enriched on arrival; the historical backlog catches up gradually in the
+        background so it never slows the server.
+      </p>
+    </section>
+  );
+}
+
 export function Settings() {
   const navigate = useNavigate();
   const accounts = useAccounts();
@@ -316,6 +416,7 @@ export function Settings() {
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
+  const [enrich, setEnrich] = useState<EnrichmentStatusDto | null>(null);
   const [config, setConfig] = useState<ServerConfigDto | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   // Show the manual "Add to Home Screen" guidance on iOS Safari (not yet installed):
@@ -334,14 +435,20 @@ export function Settings() {
     };
   }, []);
 
-  // Poll sync status while Settings is open (cheap; counts drift during a sync pass).
+  // Poll sync + enrichment status while Settings is open (cheap; both drift as the
+  // worker processes mail — the LLM backlog catches up over many passes).
   useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = () => {
       api
         .syncStatus()
         .then((s) => alive && setSync(s))
         .catch(() => undefined);
+      api
+        .enrichmentStatus()
+        .then((e) => alive && setEnrich(e))
+        .catch(() => undefined);
+    };
     load();
     const t = setInterval(load, 5000);
     return () => {
@@ -714,6 +821,8 @@ export function Settings() {
             attachments.
           </p>
         </section>
+
+        <EnrichmentSection status={enrich} />
 
         <section className="mt-6">
           <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">

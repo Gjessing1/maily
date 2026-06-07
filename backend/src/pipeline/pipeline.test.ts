@@ -861,3 +861,44 @@ test('backfillEnricherCoverage horizon-gates operational enrichers off old mail'
   assert.equal(rowsFor(recent).length, 1);
   assert.equal(rowsFor(old).length, 0, 'no stale operational work manufactured on old mail');
 });
+
+test('enrichmentProgress folds ledger counts into overall + llm slices', async () => {
+  only(cheapEnricher, llmEnricherA);
+  const acct = seedAccount();
+  for (let i = 0; i < 3; i++) P.enqueueMessage(seedMessage(acct), new Date());
+
+  // 3 messages × {cheap, llm} = 6 pending rows, 3 of them llm.
+  let p = P.enrichmentProgress();
+  assert.deepEqual(p.overall, { total: 6, done: 0, pending: 6, failed: 0, dead: 0 });
+  assert.deepEqual(p.llm, { total: 3, done: 0, pending: 3, failed: 0, dead: 0 });
+
+  // Cheap drain marks the 3 cheap rows done; the llm slice is untouched.
+  await P.drainPipeline({ selfHeal: false, costs: ['cheap'] });
+  p = P.enrichmentProgress();
+  assert.deepEqual(p.overall, { total: 6, done: 3, pending: 3, failed: 0, dead: 0 });
+  assert.deepEqual(p.llm, { total: 3, done: 0, pending: 3, failed: 0, dead: 0 });
+
+  // LLM drain finishes the rest.
+  await P.drainPipeline({ selfHeal: false, costs: ['llm'] });
+  p = P.enrichmentProgress();
+  assert.deepEqual(p.overall, { total: 6, done: 6, pending: 0, failed: 0, dead: 0 });
+  assert.deepEqual(p.llm, { total: 3, done: 3, pending: 0, failed: 0, dead: 0 });
+});
+
+test('drainPipeline onRowStart reports each claimed row before it runs', async () => {
+  only(llmEnricherA);
+  const acct = seedAccount();
+  const m = seedMessage(acct); // subject defaults to 'Subject'
+  P.enqueueMessage(m, new Date());
+
+  const seen: PipelineNS.RowStartInfo[] = [];
+  await P.drainPipeline({ selfHeal: false, costs: ['llm'], onRowStart: (i) => seen.push(i) });
+
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], {
+    enricher: 'test-llm',
+    messageId: m,
+    cost: 'llm',
+    subject: 'Subject',
+  });
+});
