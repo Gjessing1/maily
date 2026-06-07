@@ -14,6 +14,8 @@ import type {
   FolderDto,
   MessageDetailDto,
   MessageDto,
+  ProposalActionResult,
+  ProposalDto,
   PushSubscriptionDto,
   SaveDraftRequest,
   SaveDraftResult,
@@ -244,6 +246,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ vcard, addressbook: addressbook ?? null }),
     }),
+
+  // ── Action Center (Phase 4 enrichment proposals) ──────────────────────────
+  /** Live proposals (offers), newest-first, with source-message context. */
+  actions: () => request<ProposalDto[]>('/api/actions'),
+
+  /** Count of live proposals — drives the nav badge. */
+  actionCount: () => request<{ count: number }>('/api/actions/count'),
+
+  /** Live proposals for one message (inline action chip in the reader). */
+  messageActions: (messageId: string) =>
+    request<ProposalDto[]>(`/api/messages/${messageId}/actions`),
+
+  /** Approve an offer — runs its side-effect handler where one is registered. */
+  approveAction: (id: string) =>
+    request<ProposalActionResult>(`/api/actions/${id}/approve`, { method: 'POST' }),
+
+  /** Dismiss an offer (no side effect). */
+  dismissAction: (id: string) =>
+    request<ProposalActionResult>(`/api/actions/${id}/dismiss`, { method: 'POST' }),
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
 

@@ -55,17 +55,30 @@ async function broadcast(payload: PushPayload): Promise<void> {
   );
 }
 
-/** Subscribe to the event bus and fire a background notification on new mail. */
+/** Subscribe to the event bus and fire background notifications (ARCHITECTURE §3). */
 export function wirePushNotifications(): void {
   onSignal((signal) => {
-    if (signal.type !== 'mail:new') return;
-    const m = getMessage(signal.messageId);
-    if (!m) return;
-    void broadcast({
-      // Radicale-first sender name (ROADMAP §3.7.D), matching the DTO precedence.
-      title: contactNameFor(m.fromAddress) ?? m.fromName ?? m.fromAddress ?? 'New mail',
-      body: m.subject ?? '(no subject)',
-      messageId: m.id,
-    });
+    if (signal.type === 'mail:new') {
+      const m = getMessage(signal.messageId);
+      if (!m) return;
+      void broadcast({
+        // Radicale-first sender name (ROADMAP §3.7.D), matching the DTO precedence.
+        title: contactNameFor(m.fromAddress) ?? m.fromName ?? m.fromAddress ?? 'New mail',
+        body: m.subject ?? '(no subject)',
+        messageId: m.id,
+      });
+      return;
+    }
+    // An enricher surfaced an Action Center offer (Phase 4). Deep-link to the source
+    // message — the inline action chip lives there, and the message gives the offer
+    // context. This is a *passive* offer, not a nag: the notification mirrors the
+    // already-emitted socket signal; the offer silently expires if ignored.
+    if (signal.type === 'action:ready') {
+      void broadcast({
+        title: 'Suggested action',
+        body: signal.label,
+        messageId: signal.messageId,
+      });
+    }
   });
 }

@@ -260,3 +260,38 @@ export const ExpandIcon = (p: IconProps) => (
     <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
   </Base>
 );
+
+/** Action Center — a lightning bolt for "actionable data, not a list" (VISION). */
+export const BoltIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M13 2 3 14h7l-1 8 10-12h-7Z" />
+  </Base>
+);
+
+export const CalendarIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="4" width="18" height="17" rx="2" />
+    <path d="M3 9h18M8 2v4M16 2v4" />
+  </Base>
+);
+
+export const MapPinIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+    <circle cx="12" cy="10" r="3" />
+  </Base>
+);
+
+export const PackageIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M21 8 12 3 3 8v8l9 5 9-5Z" />
+    <path d="m3 8 9 5 9-5M12 13v8" />
+  </Base>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </Base>
+);
