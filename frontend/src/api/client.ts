@@ -7,6 +7,8 @@ import type {
   AccountDto,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
+  CleanupSliceDto,
+  CleanupSummaryDto,
   ContactCardDto,
   ContactCardInput,
   ContactDto,
@@ -265,6 +267,17 @@ export const api = {
   /** Dismiss an offer (no side effect). */
   dismissAction: (id: string) =>
     request<ProposalActionResult>(`/api/actions/${id}/dismiss`, { method: 'POST' }),
+
+  // ── Cleanup Dashboard (Phase 6 — read-only deterministic analytics) ──────────
+  cleanup: {
+    summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
+    storage: () => request<CleanupSliceDto>('/api/cleanup/storage'),
+    neverReplied: () => request<CleanupSliceDto>('/api/cleanup/never-replied'),
+    coldStorage: (years?: number) =>
+      request<CleanupSliceDto>(
+        `/api/cleanup/cold-storage${years ? `?years=${years}` : ''}`,
+      ),
+  },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
 

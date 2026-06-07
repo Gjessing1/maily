@@ -15,6 +15,7 @@ import { Settings } from './routes/Settings';
 import { Contacts } from './routes/Contacts';
 import { ContactDetail } from './routes/ContactDetail';
 import { Actions } from './routes/Actions';
+import { Cleanup } from './routes/Cleanup';
 
 export function App() {
   const { authed } = useAuth();
@@ -53,6 +54,7 @@ export function App() {
         <Route path="/compose" element={<Compose />} />
         <Route path="/search" element={<Search />} />
         <Route path="/actions" element={<Actions />} />
+        <Route path="/cleanup" element={<Cleanup />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/contacts/:uid" element={<ContactDetail />} />

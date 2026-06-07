@@ -309,6 +309,44 @@ export interface ProposalActionResult {
   handled: boolean;
 }
 
+/**
+ * One row of a cleanup slice — a sender domain with its preview impact (ROADMAP Phase 6
+ * Cleanup Dashboard). Grouping by domain is what lets a future preset say "delete N from
+ * <domain>, free X" before any execution.
+ */
+export interface CleanupGroupDto {
+  /** Lowercased sender domain, or '(unknown)' when the address has none. */
+  domain: string;
+  messageCount: number;
+  /** Estimated bytes: parsed body (text+html) + attachment sizes. */
+  bytes: number;
+  /** Oldest / newest message in the group (ISO), null if unknown. */
+  oldestAt: string | null;
+  newestAt: string | null;
+}
+
+/**
+ * A deterministic cleanup slice with its preview impact (count + estimated storage),
+ * grouped by sender domain. Read-only analytics — the destructive execution path is
+ * separate. `groups` is capped to the worst offenders; `truncated` flags more below.
+ */
+export interface CleanupSliceDto {
+  /** Slice id: 'storage' | 'never-replied' | 'cold-storage'. */
+  slice: string;
+  groups: CleanupGroupDto[];
+  totalMessages: number;
+  totalBytes: number;
+  truncated: boolean;
+}
+
+/** Cleanup Dashboard headline figures. */
+export interface CleanupSummaryDto {
+  totalMessages: number;
+  totalBytes: number;
+  /** Messages caught by the HARD safety filter (protected from any cleanup). */
+  protectedMessages: number;
+}
+
 /** A browser Web Push subscription, registered by the PWA for background notifications. */
 export interface PushSubscriptionDto {
   endpoint: string;

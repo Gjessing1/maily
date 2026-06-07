@@ -153,6 +153,13 @@ export const SettingsIcon = (p: IconProps) => (
   </Base>
 );
 
+export const SparklesIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3l1.8 4.7L18.5 9.5 13.8 11.3 12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z" />
+    <path d="M19 14l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" />
+  </Base>
+);
+
 export const InboxIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M22 12h-6l-2 3h-4l-2-3H2" />

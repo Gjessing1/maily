@@ -16,6 +16,7 @@ import {
   MoonIcon,
   SendIcon,
   SettingsIcon,
+  SparklesIcon,
   SpamIcon,
   StarIcon,
   SunIcon,
@@ -382,6 +383,14 @@ export function FolderDrawer({
           >
             <UsersIcon className="size-5 opacity-70" />
             Contacts
+          </Link>
+          <Link
+            to="/cleanup"
+            onClick={onClose}
+            className="flex items-center gap-3 px-4 py-3 text-[15px] text-fg active:bg-surface-2"
+          >
+            <SparklesIcon className="size-5 opacity-70" />
+            Cleanup
           </Link>
           <Link
             to="/settings"

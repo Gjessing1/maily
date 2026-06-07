@@ -1,0 +1,200 @@
+/**
+ * Deterministic cleanup slices (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
+ * Read-only power-user analytics over the local SQLite archive — the slices that ship
+ * *first* because they need no enrichment: a storage audit, senders never replied to,
+ * and cold-storage candidates. Each returns a **preview impact** (message count + an
+ * estimated byte total, grouped by sender domain) so the eventual 1-click presets can
+ * always show "delete N, free X" before any execution.
+ *
+ * Two invariants:
+ *  - **Never delete-eligible without the safety gate.** The destructive slices
+ *    (never-replied, cold-storage) AND-in `notProtected` so financial / legal /
+ *    account-security / medical mail (EN+NO) can never surface (ROADMAP HARD RULES).
+ *  - **No LIKE-scan.** Keyword matching rides the FTS5 index (ARCHITECTURE §12).
+ *
+ * This is analytics only — no IMAP, no mutation. Bulk execution (the rate-limited trash
+ * queue + archive-before-delete staging) is a separate, later pass.
+ */
+import { sql, type SQL } from 'drizzle-orm';
+import type { CleanupGroupDto, CleanupSliceDto, CleanupSummaryDto } from '@maily/shared';
+import { db } from '../db/client.js';
+import { COLD_KEEP_KEYWORDS } from './keywords.js';
+import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
+
+/** Default cap on returned groups per slice — the dashboard shows the worst offenders. */
+const GROUP_LIMIT = 50;
+/** Default cold-storage age threshold (years). */
+const COLD_YEARS = 2;
+const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+
+/**
+ * Per-message byte estimate: parsed body (text + html) plus attachment sizes. A proxy
+ * for real disk use computed live from existing columns — attachments dominate. (The
+ * complete metric additionally stats the on-disk `.eml`; deferred — see ROADMAP.)
+ */
+const BYTES = sql`(
+  length(coalesce(m.body_text, '')) + length(coalesce(m.body_html, ''))
+  + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0)
+)`;
+
+/** Sender domain (lowercased); '(unknown)' when the address is missing or domain-less. */
+const DOMAIN = sql`CASE
+  WHEN m.from_address IS NULL OR instr(m.from_address, '@') = 0 THEN '(unknown)'
+  ELSE lower(substr(m.from_address, instr(m.from_address, '@') + 1))
+END`;
+
+interface RawGroup {
+  domain: string;
+  messageCount: number;
+  bytes: number | null;
+  oldestAt: number | null;
+  newestAt: number | null;
+}
+
+const iso = (ms: number | null): string | null => (ms != null ? new Date(ms).toISOString() : null);
+
+const toGroup = (r: RawGroup): CleanupGroupDto => ({
+  domain: r.domain,
+  messageCount: r.messageCount,
+  bytes: r.bytes ?? 0,
+  oldestAt: iso(r.oldestAt),
+  newestAt: iso(r.newestAt),
+});
+
+/**
+ * Run the grouped storage query for a `WHERE` predicate. Returns rows newest-bytes-first;
+ * fetches one past the limit so the caller can flag truncation without a second COUNT.
+ */
+function groupedByDomain(where: SQL, limit: number): { groups: CleanupGroupDto[]; truncated: boolean } {
+  const rows = db.all(
+    sql`SELECT ${DOMAIN} AS domain,
+               COUNT(*) AS messageCount,
+               SUM(${BYTES}) AS bytes,
+               MIN(m.received_at) AS oldestAt,
+               MAX(m.received_at) AS newestAt
+        FROM messages m
+        WHERE ${where}
+        GROUP BY domain
+        ORDER BY bytes DESC
+        LIMIT ${limit + 1}`,
+  ) as RawGroup[];
+  const truncated = rows.length > limit;
+  return { groups: rows.slice(0, limit).map(toGroup), truncated };
+}
+
+/** Aggregate totals (count + bytes) for a `WHERE` predicate — the slice headline figures. */
+function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
+  const row = db.get(
+    sql`SELECT COUNT(*) AS totalMessages, COALESCE(SUM(${BYTES}), 0) AS totalBytes
+        FROM messages m WHERE ${where}`,
+  ) as { totalMessages: number; totalBytes: number };
+  return { totalMessages: row.totalMessages, totalBytes: row.totalBytes };
+}
+
+const LIVE = sql`m.deleted_at IS NULL`;
+
+/**
+ * Storage audit — every sender domain by estimated bytes. Informational, so NOT
+ * safety-filtered (a storage audit shows all mail; it never proposes deletion).
+ */
+export function storageByDomain(limit = GROUP_LIMIT): CleanupSliceDto {
+  const { groups, truncated } = groupedByDomain(LIVE, limit);
+  return { slice: 'storage', groups, truncated, ...totalsFor(LIVE) };
+}
+
+/** Lowercased domain of an email address, or null if it has none. */
+function domainOf(address: string | null | undefined): string | null {
+  if (!address) return null;
+  const at = address.lastIndexOf('@');
+  return at >= 0 ? address.slice(at + 1).toLowerCase() : null;
+}
+
+/** Collect the set of domains the user has ever sent mail to (To + Cc of Sent mail). */
+function repliedDomains(): Set<string> {
+  const rows = db.all(
+    sql`SELECT m.to_addresses AS toA, m.cc_addresses AS ccA
+        FROM messages m
+        JOIN message_folders mf ON mf.message_id = m.id
+        JOIN folders f ON f.id = mf.folder_id
+        WHERE f.role = 'sent'`,
+  ) as { toA: string | null; ccA: string | null }[];
+
+  const domains = new Set<string>();
+  for (const row of rows) {
+    for (const json of [row.toA, row.ccA]) {
+      if (!json) continue;
+      try {
+        const list = JSON.parse(json) as { address?: string }[];
+        for (const a of list) {
+          const d = domainOf(a.address);
+          if (d) domains.add(d);
+        }
+      } catch {
+        // Tolerate a malformed recipients blob — just skip it.
+      }
+    }
+  }
+  return domains;
+}
+
+/**
+ * Senders never replied to — inbound domains the user has never written back to. A
+ * passive bulk-unsubscribe / clutter candidate. Safety-filtered (protected mail excluded)
+ * and the '(unknown)' bucket dropped (not actionable). Reply set is computed from Sent.
+ */
+export function neverRepliedSenders(limit = GROUP_LIMIT): CleanupSliceDto {
+  const replied = repliedDomains();
+  const where = sql`${LIVE} AND ${notProtected('m')}`;
+
+  // Pull all candidate domain groups, then drop those we've replied to / can't act on.
+  const all = (
+    db.all(
+      sql`SELECT ${DOMAIN} AS domain,
+                 COUNT(*) AS messageCount,
+                 SUM(${BYTES}) AS bytes,
+                 MIN(m.received_at) AS oldestAt,
+                 MAX(m.received_at) AS newestAt
+          FROM messages m
+          WHERE ${where}
+          GROUP BY domain
+          ORDER BY bytes DESC`,
+    ) as RawGroup[]
+  ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
+
+  const totalMessages = all.reduce((n, r) => n + r.messageCount, 0);
+  const totalBytes = all.reduce((n, r) => n + (r.bytes ?? 0), 0);
+  return {
+    slice: 'never-replied',
+    groups: all.slice(0, limit).map(toGroup),
+    truncated: all.length > limit,
+    totalMessages,
+    totalBytes,
+  };
+}
+
+/**
+ * Cold-storage candidates — mail older than `years` whose body lacks the value markers
+ * (invoice/tax/contract, EN+NO) and which isn't protected. The roadmap's deterministic
+ * cold heuristic. Safety-filtered (HARD RULE) and keyword-filtered via the FTS index.
+ */
+export function coldStorageCandidates(years = COLD_YEARS, limit = GROUP_LIMIT): CleanupSliceDto {
+  const cutoff = Date.now() - years * MS_PER_YEAR;
+  const coldMatch = ftsOrMatch(COLD_KEEP_KEYWORDS);
+  const where = sql`${LIVE}
+    AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
+    AND ${notProtected('m')}
+    AND m.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${coldMatch})`;
+  const { groups, truncated } = groupedByDomain(where, limit);
+  return { slice: 'cold-storage', groups, truncated, ...totalsFor(where) };
+}
+
+/** Top-line dashboard figures: total live mail, estimated bytes, and protected count. */
+export function cleanupSummary(): CleanupSummaryDto {
+  const { totalMessages, totalBytes } = totalsFor(LIVE);
+  const prot = db.get(
+    sql`SELECT COUNT(*) AS n FROM messages m
+        WHERE ${LIVE}
+        AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${PROTECTED_MATCH})`,
+  ) as { n: number };
+  return { totalMessages, totalBytes, protectedMessages: prot.n };
+}
