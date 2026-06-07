@@ -833,9 +833,9 @@ export function Settings() {
           )}
           <p className="px-4 pt-2 text-xs text-faint">
             Counts are messages cached locally per folder. This is on-disk size here — archived
-            message sources plus message bodies and any downloaded attachments — not your
-            mailbox’s server-side total. It’s normally far smaller because attachments are fetched
-            on demand, and older mail stays on the server until you open it.
+            message sources plus message bodies and any downloaded attachments — not your mailbox’s
+            server-side total. It’s normally far smaller because attachments are fetched on demand,
+            and older mail stays on the server until you open it.
           </p>
         </section>
 

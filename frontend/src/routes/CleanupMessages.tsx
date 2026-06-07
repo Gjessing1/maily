@@ -114,7 +114,11 @@ export function CleanupMessages() {
                   disabled={loadingMore}
                   className="flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg active:bg-surface-2 disabled:opacity-50"
                 >
-                  {loadingMore ? <Spinner /> : `Load ${Math.min(PAGE_SIZE, total - messages.length)} more`}
+                  {loadingMore ? (
+                    <Spinner />
+                  ) : (
+                    `Load ${Math.min(PAGE_SIZE, total - messages.length)} more`
+                  )}
                 </button>
               </div>
             )}
