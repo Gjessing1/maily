@@ -24,6 +24,13 @@ export type SwipeAction = 'none' | 'read' | 'delete';
  */
 export type ReadingPane = 'none' | 'right' | 'below';
 
+/**
+ * Cleanup aggressiveness preset (ROADMAP Phase 6b.2). A 1-click profile over the
+ * deterministic cleanup slices: how old "cold storage" must be and whether the
+ * never-replied heuristic is surfaced at all. 'strict' keeps the most.
+ */
+export type CleanupPreset = 'strict' | 'balanced' | 'aggressive';
+
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
   blockRemoteImages: boolean;
@@ -78,6 +85,14 @@ export interface Prefs {
    * (e.g. "github.com"). Lowercased host part of the From address. Empty = trust none.
    */
   trustedImageDomains: string[];
+  /** Cleanup Dashboard aggressiveness profile (ROADMAP Phase 6b.2). */
+  cleanupPreset: CleanupPreset;
+  /**
+   * Cleanup action-slice ids the user has dismissed via "Don't suggest this again"
+   * (e.g. "never-replied"). Suppressed slices collapse to a one-line "show again" row
+   * instead of presenting a delete action.
+   */
+  cleanupSuppressed: string[];
 }
 
 const DEFAULTS: Prefs = {
@@ -98,6 +113,8 @@ const DEFAULTS: Prefs = {
   hiddenFolderIds: [],
   collapseAccountsByDefault: false,
   trustedImageDomains: [],
+  cleanupPreset: 'balanced',
+  cleanupSuppressed: [],
 };
 
 const KEY = 'maily.prefs';

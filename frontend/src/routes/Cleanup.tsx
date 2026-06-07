@@ -14,11 +14,28 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CleanupSliceDto, CleanupSummaryDto } from '@maily/shared';
 import { api } from '../api/client';
+import { setPref, usePrefs, type CleanupPreset } from '../state/prefs';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, SparklesIcon } from '../ui/icons';
 
 /** Delete-eligible slice ids (must match the backend's DELETE_ELIGIBLE set). */
 type ActionSlice = 'never-replied' | 'cold-storage';
+
+/**
+ * The 1-click aggressiveness presets (ROADMAP Phase 6b.2). A preset is a profile over
+ * the deterministic slices: `coldYears` is the cold-storage age threshold (smaller =
+ * more aggressive), and `slices` is which action slices it surfaces at all — 'strict'
+ * withholds the never-replied heuristic (a sender being silent is a softer signal than
+ * age, so the cautious profile leaves it out). The backend already honours `years` on
+ * both the preview and execute paths, so the preset is purely a client-side profile.
+ */
+const PRESETS: Record<CleanupPreset, { label: string; coldYears: number; slices: ActionSlice[] }> =
+  {
+    strict: { label: 'Strict', coldYears: 5, slices: ['cold-storage'] },
+    balanced: { label: 'Balanced', coldYears: 2, slices: ['never-replied', 'cold-storage'] },
+    aggressive: { label: 'Aggressive', coldYears: 1, slices: ['never-replied', 'cold-storage'] },
+  };
+const PRESET_ORDER: CleanupPreset[] = ['strict', 'balanced', 'aggressive'];
 
 /** Human-readable byte size (1 KB = 1024 B). */
 function formatBytes(n: number): string {
@@ -150,6 +167,7 @@ function ActionSliceCard({
   slice,
   years,
   onExecuted,
+  onSuppress,
 }: {
   title: string;
   description: string;
@@ -157,6 +175,7 @@ function ActionSliceCard({
   slice: CleanupSliceDto | null;
   years?: number;
   onExecuted: () => void;
+  onSuppress: () => void;
 }) {
   const [mode, setMode] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -258,6 +277,13 @@ function ActionSliceCard({
             </button>
           </div>
           <GroupList slice={slice} />
+          <button
+            type="button"
+            onClick={onSuppress}
+            className="mt-3 text-xs font-medium text-faint underline-offset-2 hover:underline active:text-muted"
+          >
+            Don’t suggest this again
+          </button>
         </>
       ) : (
         // confirm / error
@@ -297,34 +323,61 @@ function ActionSliceCard({
   );
 }
 
+/** Collapsed stand-in for a slice the user dismissed via "Don't suggest this again". */
+function SuppressedRow({ title, onRestore }: { title: string; onRestore: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border px-4 py-3">
+      <span className="text-sm text-faint">“{title}” hidden</span>
+      <button
+        type="button"
+        onClick={onRestore}
+        className="shrink-0 text-xs font-medium text-accent active:opacity-80"
+      >
+        Show again
+      </button>
+    </div>
+  );
+}
+
 export function Cleanup() {
   const navigate = useNavigate();
+  const prefs = usePrefs();
+  const preset = PRESETS[prefs.cleanupPreset] ? prefs.cleanupPreset : 'balanced';
+  const coldYears = PRESETS[preset].coldYears;
+  const suppressed = new Set(prefs.cleanupSuppressed);
+
   const [summary, setSummary] = useState<CleanupSummaryDto | null>(null);
   const [storage, setStorage] = useState<CleanupSliceDto | null>(null);
   const [neverReplied, setNeverReplied] = useState<CleanupSliceDto | null>(null);
   const [cold, setCold] = useState<CleanupSliceDto | null>(null);
   const [error, setError] = useState(false);
 
-  async function load() {
-    try {
-      const [s, st, nr, c] = await Promise.all([
-        api.cleanup.summary(),
-        api.cleanup.storage(),
-        api.cleanup.neverReplied(),
-        api.cleanup.coldStorage(),
-      ]);
-      setSummary(s);
-      setStorage(st);
-      setNeverReplied(nr);
-      setCold(c);
-    } catch {
-      setError(true);
-    }
-  }
-
+  // Mount-only pulls — summary / storage / never-replied don't depend on the preset.
   useEffect(() => {
-    void load();
+    void (async () => {
+      try {
+        const [s, st, nr] = await Promise.all([
+          api.cleanup.summary(),
+          api.cleanup.storage(),
+          api.cleanup.neverReplied(),
+        ]);
+        setSummary(s);
+        setStorage(st);
+        setNeverReplied(nr);
+      } catch {
+        setError(true);
+      }
+    })();
   }, []);
+
+  // Cold-storage depends on the preset's age threshold — refetch when it changes.
+  useEffect(() => {
+    setCold(null);
+    void api.cleanup
+      .coldStorage(coldYears)
+      .then(setCold)
+      .catch(() => setError(true));
+  }, [coldYears]);
 
   // Re-pull the affected slice + headline after a cleanup drains (counts/bytes shift).
   const refresh = () => {
@@ -337,9 +390,49 @@ export function Cleanup() {
       .then(setNeverReplied)
       .catch(() => undefined);
     void api.cleanup
-      .coldStorage()
+      .coldStorage(coldYears)
       .then(setCold)
       .catch(() => undefined);
+  };
+
+  const setSuppressed = (sliceId: ActionSlice, hidden: boolean) => {
+    const next = new Set(prefs.cleanupSuppressed);
+    if (hidden) next.add(sliceId);
+    else next.delete(sliceId);
+    setPref('cleanupSuppressed', [...next]);
+  };
+
+  // An action slice renders as a full card only when the preset surfaces it and the user
+  // hasn't dismissed it; a dismissed-but-in-preset slice collapses to a "show again" row.
+  const renderAction = (
+    sliceId: ActionSlice,
+    title: string,
+    description: string,
+    slice: CleanupSliceDto | null,
+    years?: number,
+  ) => {
+    if (!PRESETS[preset].slices.includes(sliceId)) return null;
+    if (suppressed.has(sliceId)) {
+      return (
+        <SuppressedRow
+          key={sliceId}
+          title={title}
+          onRestore={() => setSuppressed(sliceId, false)}
+        />
+      );
+    }
+    return (
+      <ActionSliceCard
+        key={sliceId}
+        title={title}
+        description={description}
+        sliceId={sliceId}
+        slice={slice}
+        years={years}
+        onExecuted={refresh}
+        onSuppress={() => setSuppressed(sliceId, true)}
+      />
+    );
   };
 
   return (
@@ -382,25 +475,54 @@ export function Cleanup() {
               )}
             </section>
 
+            {/* 1-click aggressiveness preset — a profile over the action slices below. */}
+            <section className="rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-base font-semibold text-fg">Cleanup style</h2>
+              </div>
+              <p className="mt-1 text-sm text-muted">
+                How aggressively to suggest cleanup. You always confirm before anything moves.
+              </p>
+              <div
+                role="radiogroup"
+                aria-label="Cleanup style"
+                className="mt-3 flex gap-1 rounded-full bg-surface-2 p-1"
+              >
+                {PRESET_ORDER.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    role="radio"
+                    aria-checked={preset === p}
+                    onClick={() => setPref('cleanupPreset', p)}
+                    className={`flex-1 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                      preset === p ? 'bg-accent text-white' : 'text-muted active:bg-surface'
+                    }`}
+                  >
+                    {PRESETS[p].label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <InfoSliceCard
               title="Storage by sender"
               description="Which domains take up the most space. Informational — a storage audit, not a delete list."
               slice={storage}
             />
-            <ActionSliceCard
-              title="Never replied to"
-              description="Senders you’ve never written back to — likely newsletters and clutter."
-              sliceId="never-replied"
-              slice={neverReplied}
-              onExecuted={refresh}
-            />
-            <ActionSliceCard
-              title="Cold storage"
-              description="Mail older than 2 years with no invoice, tax or contract — safe to let go."
-              sliceId="cold-storage"
-              slice={cold}
-              onExecuted={refresh}
-            />
+            {renderAction(
+              'never-replied',
+              'Never replied to',
+              'Senders you’ve never written back to — likely newsletters and clutter.',
+              neverReplied,
+            )}
+            {renderAction(
+              'cold-storage',
+              'Cold storage',
+              `Mail older than ${coldYears} year${coldYears === 1 ? '' : 's'} with no invoice, tax or contract — safe to let go.`,
+              cold,
+              coldYears,
+            )}
 
             <p className="px-1 pb-4 text-center text-xs text-faint">
               Reach for this when you want to — nothing here is a task. Cleanup moves mail to Trash
