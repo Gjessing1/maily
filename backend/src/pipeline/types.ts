@@ -22,6 +22,19 @@ import type { EmailAddress } from '@maily/shared';
  */
 export type EnrichmentKind = 'operational' | 'search' | 'analytical';
 
+/**
+ * Scheduling cost of an enricher (ROADMAP Phase 5, the N150 guard). Orthogonal to
+ * `kind` (which gates *side effects* by age): `cost` gates *throughput* by expense.
+ *  - `cheap` — deterministic, sub-millisecond CPU (the Phase-4 enrichers). Drained to
+ *    completion every nudge.
+ *  - `llm`   — an Ollama generation: seconds of CPU, serialised single-flight. Drained
+ *    a small bounded batch per nudge so a deep backlog can never starve the cheap
+ *    pipeline or monopolise the worker against mail sync.
+ * Stored per row so the claim scan can filter by cost in SQL (no starvation: cheap mail
+ * is always claimable independent of however large the LLM backlog is).
+ */
+export type EnrichmentCost = 'cheap' | 'llm';
+
 /** Age-tier of a message (ARCHITECTURE §14). 0 = recent (≤ horizon), 1 = older. */
 export type Tier = 0 | 1 | 2;
 
@@ -88,6 +101,8 @@ export interface Enricher {
   /** Bump to mark all prior rows stale + eligible for re-run (drives reindex). */
   version: number;
   kind: EnrichmentKind;
+  /** Scheduling cost (default `cheap`). `llm` enrichers are drained in bounded batches. */
+  cost?: EnrichmentCost;
   /**
    * Optional gate: return false to skip this message entirely. Evaluated at RUN time
    * (with the full message) — a skipped run is recorded as a no-op success so it is

@@ -755,3 +755,109 @@ test('travel: old mail is suppressed (operational) so no stale flight offers fir
   const names = P.enrichersForTier(1).map((e) => e.name);
   assert.deepEqual(names, [], 'travel does not enqueue for older mail');
 });
+
+// ========================================================================================
+// cost scheduling (Phase 5) — cheap vs llm: bounded batches + per-enricher coverage
+// ========================================================================================
+
+/** A `cheap` deterministic enricher (default cost). */
+const cheapEnricher: Enricher = {
+  name: 'test-cheap',
+  version: 1,
+  kind: 'search',
+  run: () => ({ result: { c: 1 } }),
+};
+
+/** An `analytical`/`llm`-cost enricher standing in for an Ollama enricher. */
+const llmEnricherA: Enricher = {
+  name: 'test-llm',
+  version: 1,
+  kind: 'analytical',
+  cost: 'llm',
+  run: () => ({ result: { s: 1 } }),
+};
+
+test('enqueueMessage stamps the enricher cost onto the ledger row', () => {
+  only(cheapEnricher, llmEnricherA);
+  const acct = seedAccount();
+  const m = seedMessage(acct);
+  P.enqueueMessage(m, new Date());
+
+  assert.equal(oneRow(m, 'test-cheap').cost, 'cheap', 'default cost is cheap');
+  assert.equal(oneRow(m, 'test-llm').cost, 'llm');
+});
+
+test('drainPipeline costs:[cheap] runs only cheap rows; llm rows are left pending', async () => {
+  only(cheapEnricher, llmEnricherA);
+  const acct = seedAccount();
+  const m = seedMessage(acct);
+  P.enqueueMessage(m, new Date());
+
+  const res = await P.drainPipeline({ selfHeal: false, costs: ['cheap'] });
+  assert.equal(res.claimed, 1);
+  assert.equal(res.ok, 1);
+  assert.equal(oneRow(m, 'test-cheap').status, 'ok');
+  assert.equal(oneRow(m, 'test-llm').status, 'pending', 'the llm row is untouched');
+});
+
+test('drainPipeline costs:[llm] with max bounds the batch (the N150 trickle)', async () => {
+  only(llmEnricherA);
+  const acct = seedAccount();
+  for (let i = 0; i < 5; i++) P.enqueueMessage(seedMessage(acct), new Date());
+
+  // Only 2 of the 5 due llm rows run this drain; the rest wait for the next nudge.
+  let res = await P.drainPipeline({ selfHeal: false, costs: ['llm'], max: 2 });
+  assert.equal(res.claimed, 2);
+  assert.equal(res.ok, 2);
+
+  res = await P.drainPipeline({ selfHeal: false, costs: ['llm'], max: 2 });
+  assert.equal(res.ok, 2);
+  res = await P.drainPipeline({ selfHeal: false, costs: ['llm'], max: 2 });
+  assert.equal(res.ok, 1, 'the last row drains on the third nudge');
+});
+
+test('a deep cheap-cost claim window cannot starve a freshly added llm enricher', async () => {
+  // cheap and llm rows are claimed by independent cost-scoped scans, so the cheap drain
+  // never sits in front of the llm work (the starvation the cost column exists to prevent).
+  only(cheapEnricher, llmEnricherA);
+  const acct = seedAccount();
+  const m = seedMessage(acct);
+  P.enqueueMessage(m, new Date());
+
+  await P.drainPipeline({ selfHeal: false, costs: ['cheap'] }); // cheap done
+  const res = await P.drainPipeline({ selfHeal: false, costs: ['llm'] });
+  assert.equal(res.ok, 1);
+  assert.equal(oneRow(m, 'test-llm').status, 'ok');
+});
+
+test('backfillEnricherCoverage enqueues a newly added enricher across existing mail', () => {
+  // A message already carrying one enricher's row (the Phase-4 case) is invisible to
+  // backfillPending (zero-row only); coverage is how a new Phase-5 enricher reaches it.
+  only(cheapEnricher);
+  const acct = seedAccount();
+  const m = seedMessage(acct);
+  P.enqueueMessage(m, new Date());
+  assert.equal(rowsFor(m).length, 1);
+
+  only(cheapEnricher, llmEnricherA); // llm enricher added after the fact
+  const inserted = P.backfillEnricherCoverage(500);
+  assert.equal(inserted, 1);
+  const row = oneRow(m, 'test-llm');
+  assert.equal(row.status, 'pending');
+  assert.equal(row.cost, 'llm');
+});
+
+test('backfillEnricherCoverage horizon-gates operational enrichers off old mail', () => {
+  only(opEnricher); // operational
+  const acct = seedAccount();
+  const now = new Date('2026-06-01T00:00:00Z');
+  const recent = seedMessage(acct, { receivedAt: now });
+  const old = seedMessage(acct, {
+    receivedAt: new Date(now.getTime() - (HORIZON_DAYS + 5) * DAY_MS),
+  });
+
+  const inserted = P.backfillEnricherCoverage(500, now);
+  assert.equal(inserted, 1, 'only the recent message gets an operational row');
+  assert.equal(rowsFor(recent).length, 1);
+  assert.equal(rowsFor(old).length, 0, 'no stale operational work manufactured on old mail');
+});

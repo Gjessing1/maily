@@ -24,6 +24,8 @@ import { budgetRemaining, canDownloadSource } from '../imap/budget.js';
 import { getFolderById, syncFolders } from '../imap/folders.js';
 import { sweepFolderSource, syncContext } from '../imap/sync.js';
 import { drainPipeline } from '../pipeline/index.js';
+import { llmEnabled } from '../llm/index.js';
+import { env } from '../env.js';
 import type { EnrichJob, MainToWorker, SweepJob, WorkerToMain } from './protocol.js';
 
 const log = createLogger('worker');
@@ -87,26 +89,52 @@ async function runSweep(job: SweepJob): Promise<void> {
 }
 
 /**
- * Drain due enrichment work (Phase 4). Loops `drainPipeline` so a single nudge clears
- * the currently-due backlog, bounded so it can't monopolise the worker against sweeps;
- * leftover work continues on the next nudge. Self-heal backfill runs only on the first
- * pass (later passes would re-scan needlessly). Proposals are relayed to the main thread.
+ * Drain due enrichment work in two cost-scoped phases (Phase 4 framework + Phase 5 guard):
+ *
+ *  1. CHEAP — loop `drainPipeline({ costs: ['cheap'] })` so a single nudge clears the
+ *     currently-due deterministic backlog (sub-ms each). Self-heal runs only on the first
+ *     pass (later passes would re-scan needlessly).
+ *  2. LLM — one bounded batch of `drainPipeline({ costs: ['llm'] })` (size
+ *     `pipelineLlmBatch`). Ollama generations are seconds-long and serialised
+ *     single-flight, so they trickle a few per nudge: the slow historical backlog catches
+ *     up over many nudges (the periodic enrich timer keeps nudging when idle) without
+ *     starving cheap mail or monopolising the worker against sync sweeps (the N150 guard).
+ *
+ * Proposals from either phase are relayed to the main thread.
  */
 async function runEnrich(): Promise<void> {
+  const relay = (proposals: { messageId: string; label: string }[]): void => {
+    for (const p of proposals) {
+      post({ type: 'proposal:ready', messageId: p.messageId, label: p.label });
+    }
+  };
+
   const MAX_PASSES = 20;
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     let result;
     try {
-      result = await drainPipeline({ selfHeal: pass === 0 });
+      result = await drainPipeline({ selfHeal: pass === 0, costs: ['cheap'] });
     } catch (err) {
-      post({ type: 'error', message: `enrich drain: ${(err as Error).message}` });
+      post({ type: 'error', message: `enrich drain (cheap): ${(err as Error).message}` });
       break;
     }
-    for (const p of result.proposals) {
-      post({ type: 'proposal:ready', messageId: p.messageId, label: p.label });
-    }
+    relay(result.proposals);
     if (result.claimed === 0) break;
   }
+
+  if (llmEnabled()) {
+    try {
+      const result = await drainPipeline({
+        costs: ['llm'],
+        max: env.pipelineLlmBatch,
+        selfHeal: false,
+      });
+      relay(result.proposals);
+    } catch (err) {
+      post({ type: 'error', message: `enrich drain (llm): ${(err as Error).message}` });
+    }
+  }
+
   post({ type: 'enrich:done' });
 }
 

@@ -113,6 +113,13 @@
       "when": 1780343723894,
       "tag": "0015_message_source_bytes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1780343723895,
+      "tag": "0016_enrichment_cost",
+      "breakpoints": true
     }
   ]
 }

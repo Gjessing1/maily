@@ -8,11 +8,13 @@
  * throwing enricher (failure/dead-letter path) without touching the defaults.
  */
 import type { Enricher, Tier } from './types.js';
+import { llmEnabled } from '../llm/index.js';
 import { factsEnricher } from './enrichers/facts.js';
 import { travelEnricher } from './enrichers/travel.js';
 import { icsEnricher } from './enrichers/ics.js';
 import { packageEnricher } from './enrichers/package.js';
 import { invoiceEnricher } from './enrichers/invoice.js';
+import { summaryEnricher } from './enrichers/summary.js';
 
 const registry = new Map<string, Enricher>();
 
@@ -58,3 +60,8 @@ registerEnricher(travelEnricher);
 registerEnricher(icsEnricher);
 registerEnricher(packageEnricher);
 registerEnricher(invoiceEnricher);
+
+// `summary` is the first LLM enricher (Phase 5) — registered ONLY when Ollama is
+// configured (`OLLAMA_URL`). Without it no `summary` rows are ever enqueued and the
+// pipeline runs exactly as in Phase 4 (privacy-first: no cloud fallback).
+if (llmEnabled()) registerEnricher(summaryEnricher);

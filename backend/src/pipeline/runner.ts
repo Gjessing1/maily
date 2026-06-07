@@ -12,10 +12,10 @@ import { enrichments, proposals } from '../db/schema.js';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import { enricherByName } from './registry.js';
-import { backfillPending } from './enqueue.js';
+import { backfillEnricherCoverage, backfillPending } from './enqueue.js';
 import { loadPipelineMessage } from './load.js';
 import { tierForMessage } from './tiers.js';
-import type { Enricher, EnricherResult, PipelineMessage } from './types.js';
+import type { Enricher, EnricherResult, EnrichmentCost, PipelineMessage } from './types.js';
 
 const log = createLogger('pipeline');
 
@@ -49,8 +49,11 @@ type EnrichmentRow = typeof enrichments.$inferSelect;
 /**
  * Claim up to `limit` rows due for a run: never-attempted (`pending`) or errored-and-
  * retrying (`failed`) rows whose backoff gate has passed. `dead` and `ok` are excluded.
+ * `costs` scopes the claim to one or more cost classes (Phase 5): the worker drains
+ * `['cheap']` to completion, then a small bounded batch of `['llm']`, so a deep LLM
+ * backlog can't sit at the front of the createdAt order and starve cheap mail.
  */
-function claimDue(now: Date, limit: number): EnrichmentRow[] {
+function claimDue(now: Date, limit: number, costs?: EnrichmentCost[]): EnrichmentRow[] {
   return db
     .select()
     .from(enrichments)
@@ -58,6 +61,7 @@ function claimDue(now: Date, limit: number): EnrichmentRow[] {
       and(
         inArray(enrichments.status, ['pending', 'failed']),
         or(isNull(enrichments.nextAttemptAt), lte(enrichments.nextAttemptAt, now)),
+        costs ? inArray(enrichments.cost, costs) : undefined,
       ),
     )
     .orderBy(enrichments.createdAt)
@@ -222,6 +226,12 @@ export interface DrainOptions {
   selfHeal?: boolean;
   /** Self-heal scan size. */
   backfillLimit?: number;
+  /**
+   * Restrict this drain to one or more cost classes (Phase 5). Omitted = all costs
+   * (the default; preserves single-pass behaviour for tests and any non-worker caller).
+   * The worker drains `['cheap']` to completion, then one bounded `['llm']` batch.
+   */
+  costs?: EnrichmentCost[];
 }
 
 /**
@@ -234,11 +244,17 @@ export async function drainPipeline(opts: DrainOptions = {}): Promise<DrainResul
   const now = opts.now ?? new Date();
   const max = opts.max ?? 500;
   const selfHeal = opts.selfHeal ?? true;
+  const costs = opts.costs;
 
-  let rows = claimDue(now, max);
+  let rows = claimDue(now, max, costs);
   if (rows.length === 0 && selfHeal) {
-    backfillPending(opts.backfillLimit ?? 500, now);
-    rows = claimDue(now, max);
+    // Idle: top up coverage. `backfillPending` reaches messages with NO rows at all;
+    // `backfillEnricherCoverage` reaches messages missing a *specific* enricher (how a
+    // newly added LLM enricher catches up on the existing mailbox). Re-claim afterwards.
+    const limit = opts.backfillLimit ?? 500;
+    backfillPending(limit, now);
+    backfillEnricherCoverage(limit, now);
+    rows = claimDue(now, max, costs);
   }
 
   const result: DrainResult = {

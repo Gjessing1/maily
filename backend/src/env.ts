@@ -133,6 +133,15 @@ export const env = {
   pipelineHorizonDays: Number(optional('MAILY_PIPELINE_HORIZON_DAYS', '30')),
   /** Retry cap before a poison enrichment row is parked as dead-letter (status='dead'). */
   pipelineMaxAttempts: Number(optional('MAILY_PIPELINE_MAX_ATTEMPTS', '5')),
+  /**
+   * How many `llm`-cost enrichment rows a single worker nudge processes (ROADMAP Phase 5,
+   * the N150 guard). Ollama generations are serialised single-flight and take seconds, so
+   * we trickle a small batch per nudge — the cheap deterministic pipeline always drains
+   * fully first, and the slow LLM backlog catches up over many nudges without monopolising
+   * the worker against mail sync. Raise it to catch up faster at the cost of longer
+   * sweep-blocking windows.
+   */
+  pipelineLlmBatch: Number(optional('MAILY_PIPELINE_LLM_BATCH', '6')),
   // Read lazily where needed so the app can boot in Phase 0 without them set:
   jwtSecret: () => required('JWT_SECRET'),
   masterPassword: () => required('MASTER_PASSWORD'),

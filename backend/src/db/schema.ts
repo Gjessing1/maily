@@ -274,6 +274,14 @@ export const enrichments = sqliteTable(
     enricherVersion: integer('enricher_version').notNull(),
     /** Classification driving tiering/ordering (ARCHITECTURE §14). */
     kind: text('kind', { enum: ['operational', 'search', 'analytical'] }).notNull(),
+    /**
+     * Scheduling cost (ROADMAP Phase 5): 'cheap' deterministic vs 'llm' Ollama work.
+     * Lets the claim scan filter by cost so a deep LLM backlog never starves cheap mail
+     * or monopolises the worker. Existing rows default to 'cheap' (all deterministic).
+     */
+    cost: text('cost', { enum: ['cheap', 'llm'] })
+      .notNull()
+      .default('cheap'),
     status: text('status', { enum: ['pending', 'ok', 'failed', 'dead'] })
       .notNull()
       .default('pending'),
@@ -293,6 +301,8 @@ export const enrichments = sqliteTable(
   (t) => [
     uniqueIndex('enrichments_message_enricher_uq').on(t.messageId, t.enricher),
     index('enrichments_status_due_idx').on(t.status, t.nextAttemptAt),
+    // Cost-scoped claim scan (Phase 5): drain cheap work fully, LLM work in bounded batches.
+    index('enrichments_cost_status_due_idx').on(t.cost, t.status, t.nextAttemptAt),
     index('enrichments_enricher_version_idx').on(t.enricher, t.enricherVersion),
   ],
 );
