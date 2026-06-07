@@ -28,12 +28,17 @@ const COLD_YEARS = 2;
 const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
 
 /**
- * Per-message byte estimate: parsed body (text + html) plus attachment sizes. A proxy
- * for real disk use computed live from existing columns — attachments dominate. (The
- * complete metric additionally stats the on-disk `.eml`; deferred — see ROADMAP.)
+ * Per-message byte estimate: the archived raw `.eml` size (`source_bytes`, the dominant
+ * true cost — captured at archive time, ROADMAP §3.7.E) plus the parsed body (text + html)
+ * and attachment sizes for any message not yet archived (null `source_bytes`). Computed
+ * live from existing columns; the `.eml` size is read from a column because a SQL aggregate
+ * can't stat a file. For an archived message the body+attachment terms double-count a small
+ * slice already inside the `.eml`, but the `.eml` figure dominates and this stays a fast,
+ * file-stat-free estimate.
  */
 const BYTES = sql`(
-  length(coalesce(m.body_text, '')) + length(coalesce(m.body_html, ''))
+  coalesce(m.source_bytes, 0)
+  + length(coalesce(m.body_text, '')) + length(coalesce(m.body_html, ''))
   + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0)
 )`;
 

@@ -141,10 +141,12 @@ async function downloadBodyParts(ctx: SyncContext, msg: CapturedMessage): Promis
   return { bodyText, bodyHtml, bodyCalendar };
 }
 
-/** A staged full-source capture: the pre-assigned UUID, its `.eml` path, and the body. */
+/** A staged full-source capture: the pre-assigned UUID, its `.eml` path + size, and the body. */
 interface SourceCapture {
   id: string;
   sourcePath: string;
+  /** Bytes written to `sourcePath` — persisted to `source_bytes` for the storage metric. */
+  sourceBytes: number;
   body: DerivedBody;
 }
 
@@ -190,7 +192,7 @@ async function captureFullSource(
   const bytes = await streamSourceToDisk(ctx, msg.uid, sourcePath);
   if (bytes === null) return null;
   const body = await deriveBodyFromSource(sourcePath);
-  return { id, sourcePath, body };
+  return { id, sourcePath, sourceBytes: bytes, body };
 }
 
 /**
@@ -207,7 +209,7 @@ async function archiveSourceForExisting(
   const sourcePath = sourcePathFor(ctx.accountId, messageId);
   const bytes = await streamSourceToDisk(ctx, uid, sourcePath);
   if (bytes === null) return false;
-  setMessageSourcePath(messageId, sourcePath);
+  setMessageSourcePath(messageId, sourcePath, bytes);
   return true;
 }
 
@@ -260,7 +262,13 @@ export async function fetchAndStore(
       // to body-only when the byte budget is spent or the source fetch fails.
       const cap = mode === 'live' ? await captureFullSource(ctx, msg) : null;
       const body = cap ? cap.body : await downloadBodyParts(ctx, msg);
-      const parsed = buildParsedMessage(ctx.caps, msg, body, cap?.sourcePath ?? null);
+      const parsed = buildParsedMessage(
+        ctx.caps,
+        msg,
+        body,
+        cap?.sourcePath ?? null,
+        cap?.sourceBytes ?? null,
+      );
       const result = upsertMessage(
         ctx.accountId,
         folder.id,
@@ -464,7 +472,13 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
         }
         const cap = await captureFullSource(ctx, msg);
         if (cap) {
-          const parsed = buildParsedMessage(ctx.caps, msg, cap.body, cap.sourcePath);
+          const parsed = buildParsedMessage(
+            ctx.caps,
+            msg,
+            cap.body,
+            cap.sourcePath,
+            cap.sourceBytes,
+          );
           const result = upsertMessage(ctx.accountId, folder.id, uid, parsed, folder.role, {
             id: cap.id,
           });

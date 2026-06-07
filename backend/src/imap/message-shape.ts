@@ -62,6 +62,7 @@ export function buildParsedMessage(
   msg: CapturedMessage,
   body: DerivedBody,
   sourcePath: string | null,
+  sourceBytes: number | null = null,
 ): ParsedMessage {
   const structure = extractStructure(msg.bodyStructure);
   const envelope = msg.envelope;
@@ -95,6 +96,7 @@ export function buildParsedMessage(
     bodyHtml: body.bodyHtml,
     bodyCalendar: body.bodyCalendar,
     sourcePath,
+    sourceBytes,
     sentAt: envelope?.date ?? null,
     receivedAt: internalDate,
     flags: flagsFromSet(msg.flags),

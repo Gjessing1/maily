@@ -12,7 +12,8 @@
     "test": "node --import tsx --test 'src/**/*.test.ts'",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:rebuild": "tsx src/db/rebuild.ts"
+    "db:rebuild": "tsx src/db/rebuild.ts",
+    "db:backfill-source-bytes": "tsx src/cleanup/sourceBytesBackfill.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

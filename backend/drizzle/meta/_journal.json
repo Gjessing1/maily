@@ -106,6 +106,13 @@
       "when": 1780343723893,
       "tag": "0014_message_calendar",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1780343723894,
+      "tag": "0015_message_source_bytes",
+      "breakpoints": true
     }
   ]
 }

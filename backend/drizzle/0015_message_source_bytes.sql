@@ -1,0 +1,13 @@
+-- messages.source_bytes: size in bytes of the on-disk raw `.eml` (`source_path`),
+-- recorded at archive time (ROADMAP §3.7.E full-source archive). Additive + nullable
+-- so the migration is safe on the live DB with no required backfill: NULL means "not
+-- yet archived" OR "archived before this column existed" — the latter is healed
+-- idempotently by the source-bytes backfill (stats the file for rows where
+-- source_path IS NOT NULL AND source_bytes IS NULL).
+--
+-- The whole `.eml` is the dominant true byte cost of a message, so the cleanup
+-- storage metric (backend/src/cleanup/slices.ts `BYTES`) adds coalesce(source_bytes,0)
+-- to the body-text/html + attachment sizes for the real on-disk total. We store the
+-- size in a column rather than statting from a SQL aggregate (you can't), mirroring
+-- attachments.size_bytes.
+ALTER TABLE `messages` ADD `source_bytes` integer;

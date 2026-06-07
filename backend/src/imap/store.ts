@@ -198,6 +198,7 @@ export function upsertMessage(
         bodyHtml: parsed.bodyHtml,
         bodyCalendar: parsed.bodyCalendar,
         sourcePath: parsed.sourcePath,
+        sourceBytes: parsed.sourceBytes ?? null,
         sentAt: parsed.sentAt,
         receivedAt: parsed.receivedAt,
         seen: parsed.flags.seen,
@@ -281,9 +282,16 @@ export function sourcePathForMessage(messageId: string): string | null {
   );
 }
 
-/** Mark a message as archived: record the on-disk path of its raw `.eml` (ROADMAP §3.7.E). */
-export function setMessageSourcePath(messageId: string, sourcePath: string): void {
-  db.update(messages).set({ sourcePath }).where(eq(messages.id, messageId)).run();
+/**
+ * Mark a message as archived: record the on-disk path of its raw `.eml` and its byte
+ * size (ROADMAP §3.7.E). The size feeds the cleanup storage metric (slices.ts).
+ */
+export function setMessageSourcePath(
+  messageId: string,
+  sourcePath: string,
+  sourceBytes: number,
+): void {
+  db.update(messages).set({ sourcePath, sourceBytes }).where(eq(messages.id, messageId)).run();
 }
 
 /**

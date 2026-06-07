@@ -107,6 +107,14 @@ export const messages = sqliteTable(
      * FTS / attachment bytes are a rebuildable cache over this file.
      */
     sourcePath: text('source_path'),
+    /**
+     * Size in bytes of the on-disk raw `.eml` (`source_path`), captured at archive
+     * time. Null until the message is archived (or for rows archived before this
+     * column existed — healed by the source-bytes backfill). The dominant true byte
+     * cost of a message, so the cleanup storage metric adds it to body+attachment
+     * sizes for the real total (slices.ts `BYTES`).
+     */
+    sourceBytes: integer('source_bytes'),
     sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
     receivedAt: integer('received_at', { mode: 'timestamp_ms' }),
     seen: integer('seen', { mode: 'boolean' }).notNull().default(false),

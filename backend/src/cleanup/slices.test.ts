@@ -1,6 +1,6 @@
 /**
  * Cleanup slice coverage (ROADMAP Phase 6). Pins the deterministic analytics contract:
- *  - storage audit groups every sender by estimated bytes (body + attachments),
+ *  - storage audit groups every sender by estimated bytes (.eml source + body + attachments),
  *  - never-replied excludes domains the user has written back to + protected mail,
  *  - cold-storage selects old, value-marker-free, non-protected mail,
  *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices.
@@ -71,6 +71,7 @@ function seedMessage(
     receivedAt?: Date;
     toAddresses?: string;
     folderId?: string;
+    sourceBytes?: number;
   },
 ): string {
   const id = randomUUID();
@@ -84,6 +85,7 @@ function seedMessage(
       bodyText: opts.bodyText ?? 'plain body',
       toAddresses: opts.toAddresses ?? null,
       receivedAt: opts.receivedAt ?? new Date(),
+      sourceBytes: opts.sourceBytes ?? null,
     })
     .run();
   if (opts.folderId) {
@@ -110,6 +112,33 @@ test('storageByDomain: groups every domain and counts attachment + body bytes', 
   // body 'hello world' (11) + attachment 1000.
   assert.equal(g!.bytes, 1011);
   assert.equal(slice.totalMessages, 1);
+});
+
+test('storageByDomain: adds the archived .eml source_bytes to the estimate', () => {
+  const acct = seedAccount();
+  const m = seedMessage(acct, {
+    fromAddress: 'a@archived.example',
+    bodyText: 'hello world', // 11 bytes
+    sourceBytes: 5000, // on-disk .eml — the dominant true cost
+  });
+  db.insert(schema.attachments).values({ messageId: m, sizeBytes: 1000 }).run();
+
+  const slice = S.storageByDomain();
+  const g = findGroup(slice, 'archived.example');
+  assert.ok(g, 'archived.example present in storage audit');
+  // source_bytes 5000 + body 11 + attachment 1000.
+  assert.equal(g!.bytes, 6011);
+  assert.equal(slice.totalBytes, 6011);
+});
+
+test('storageByDomain: null source_bytes contributes nothing (un-archived row)', () => {
+  const acct = seedAccount();
+  seedMessage(acct, { fromAddress: 'a@unarchived.example', bodyText: 'hi' }); // sourceBytes omitted → null
+
+  const slice = S.storageByDomain();
+  const g = findGroup(slice, 'unarchived.example');
+  assert.ok(g);
+  assert.equal(g!.bytes, 2, 'just the 2-byte body — null source_bytes coalesces to 0');
 });
 
 test('neverRepliedSenders: excludes replied-to domains and protected mail', () => {

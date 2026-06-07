@@ -478,8 +478,13 @@ test('setMessageSourcePath / sourcePathForMessage round-trip (null until set)', 
   assert.equal(store.sourcePathForMessage(r.id), null, 'body-only row has no source yet');
 
   const path = `/srv/${r.id}/source.eml`;
-  store.setMessageSourcePath(r.id, path);
+  store.setMessageSourcePath(r.id, path, 4096);
   assert.equal(store.sourcePathForMessage(r.id), path);
+  assert.equal(
+    rawDb.select().from(schema.messages).where(eq(schema.messages.id, r.id)).get()?.sourceBytes,
+    4096,
+    'archive byte size persisted alongside the path',
+  );
 });
 
 test('updateMessageContent rewrites derived columns but leaves flags + folder mapping intact', () => {
