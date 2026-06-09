@@ -1,7 +1,7 @@
 # Forgejo Actions equivalent of .github/workflows/docker.yml.
 # Builds the backend image and pushes it to Forgejo's built-in container
 # registry at git.gjessing.io. The deployment host then `docker compose pull`s
-# git.gjessing.io/lars/maily-backend and restarts.
+# git.gjessing.io/gjessing1/maily-backend and restarts.
 #
 # Notes specific to this runner (host-Docker-socket model):
 # - `runs-on: docker` -> catthehacker/ubuntu:act-latest, which has the docker CLI.
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE: git.gjessing.io/lars/maily-backend
+  IMAGE: git.gjessing.io/gjessing1/maily-backend
 
 jobs:
   # Quality gate: formatting, lint, types and unit tests must pass before we build/push.
@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          # No `cache: npm` here: the self-hosted runner bind-mounts a persistent
+          # npm cache at /npm-cache (npm_config_cache, see runner-config.yml in
+          # /home/gjessing/docker/forgejo), which survives across runs and is
+          # faster/more reliable than actions/cache on this single runner.
 
       - run: npm ci
       - run: npm run format:check
@@ -44,7 +47,7 @@ jobs:
     runs-on: docker
     permissions:
       contents: read
-      packages: write          # let the automatic GITHUB_TOKEN push to the registry
+      packages: write # let the automatic GITHUB_TOKEN push to the registry
     steps:
       - uses: actions/checkout@v4
 
