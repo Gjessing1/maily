@@ -1,18 +1,15 @@
 /**
- * Minimal Radicale CalDAV client — a dormant building block for the future calendar
- * integration (ROADMAP Phase 4 follow-up). Hand-rolled over `fetch`, mirroring the lean
+ * Minimal Radicale CalDAV client. Hand-rolled over `fetch`, mirroring the lean
  * CardDAV transport in `../contacts/carddav.ts` (no CalDAV dependency): serialise a
- * VEVENT-shaped draft (`./vevent.ts`) and `PUT` it as `<uid>.ics` into the configured
- * calendar collection.
+ * VEVENT-shaped draft (`./vevent.ts`) and `PUT` it as `<uid>.ics` into the chosen
+ * calendar collection (discovered via `./discover.ts`; picked per event with a
+ * stored default — `./calendars.ts`, the CardDAV pattern).
  *
- * **Human-in-the-loop only** (no auto-RSVP, no auto-add — ROADMAP guardrail). The write
- * is idempotent: the resource path derives from the supplied id, so a retry after a
- * transient failure overwrites in place rather than duplicating.
- *
- * Not wired to anything today (the Action Center that previously called it was removed);
- * `pushCalendarEvent` is kept ready for the calendar integration to come. V1 writes to
- * the single collection at `CALDAV_URL`; multi-calendar discovery + a target picker (the
- * CardDAV pattern) is a deliberate follow-up.
+ * **Human-in-the-loop only** (no auto-RSVP, no auto-add — ROADMAP guardrail): the
+ * only caller is the reader's "Add to calendar" action (`routes/api/calendar.ts`),
+ * always behind an explicit user confirm. The write is idempotent: the resource
+ * path derives from the supplied id, so a retry after a transient failure (or
+ * re-adding the same message) overwrites in place rather than duplicating.
  */
 import type { CalendarEventDraft } from '../pipeline/enrichers/travel.js';
 import { createLogger } from '../logger.js';
@@ -38,9 +35,9 @@ function authHeader(cfg: CalDavConfig): string {
   return `Basic ${Buffer.from(`${cfg.user}:${cfg.password}`).toString('base64')}`;
 }
 
-/** Configured collection URL, guaranteed slash-terminated so event paths append cleanly. */
-function collectionUrl(cfg: CalDavConfig): string {
-  return cfg.url.endsWith('/') ? cfg.url : `${cfg.url}/`;
+/** Collection URL, guaranteed slash-terminated so event paths append cleanly. */
+function collectionUrl(collection: string): string {
+  return collection.endsWith('/') ? collection : `${collection}/`;
 }
 
 /** Absolute (or relative) `/m/:uuid` deep link to the source message for embedding. */
@@ -51,8 +48,7 @@ function deepLink(messageId: string): string {
 
 /**
  * Runtime guard: an opaque value is a usable `CalendarEventDraft`. Defends the write
- * path against a malformed payload (drafts may arrive as stored JSON). Exported for the
- * future calendar integration that drives `pushCalendarEvent`.
+ * path against a malformed payload (drafts may arrive as stored JSON).
  */
 export function isCalendarDraft(p: unknown): p is CalendarEventDraft {
   if (typeof p !== 'object' || p === null) return false;
@@ -65,11 +61,13 @@ export function isCalendarDraft(p: unknown): p is CalendarEventDraft {
 }
 
 /**
- * Serialise + PUT a calendar event to Radicale. The resource name (`<uid>.ics`) and the
- * VEVENT UID both derive from `eventId`, so the write is idempotent across retries.
+ * Serialise + PUT a calendar event into `collection` (a discovered calendar href).
+ * The resource name (`<uid>.ics`) and the VEVENT UID both derive from `eventId`, so
+ * the write is idempotent across retries.
  */
 export async function pushCalendarEvent(
   cfg: CalDavConfig,
+  collection: string,
   eventId: string,
   messageId: string,
   draft: CalendarEventDraft,
@@ -84,7 +82,7 @@ export async function pushCalendarEvent(
     throw err;
   }
 
-  const url = new URL(`${eventId}.ics`, collectionUrl(cfg)).toString();
+  const url = new URL(`${eventId}.ics`, collectionUrl(collection)).toString();
   let res: Response;
   try {
     res = await fetch(url, {

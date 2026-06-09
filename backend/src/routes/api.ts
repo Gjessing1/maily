@@ -15,6 +15,7 @@ import { messageActionRoutes } from './api/message-actions.js';
 import { attachmentRoutes } from './api/attachments.js';
 import { composeRoutes } from './api/compose.js';
 import { contactRoutes } from './api/contacts.js';
+import { calendarRoutes } from './api/calendar.js';
 import { pushRoutes } from './api/push.js';
 import { cleanupRoutes } from './api/cleanup.js';
 import { pipelineRoutes } from './api/pipeline.js';
@@ -31,6 +32,7 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(attachmentRoutes);
   await app.register(composeRoutes);
   await app.register(contactRoutes);
+  await app.register(calendarRoutes);
   await app.register(pushRoutes);
   await app.register(cleanupRoutes);
   await app.register(pipelineRoutes);

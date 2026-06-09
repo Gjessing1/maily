@@ -4,6 +4,7 @@ import type {
   AccountDto,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
+  CalendarSettingsDto,
   EnrichmentStatusDto,
   ServerConfigDto,
 } from '@maily/shared';
@@ -302,6 +303,74 @@ function AddressBooks() {
                 {isDefault ? 'Default' : 'Set default'}
               </button>
             )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * Calendars (calendar integration). Lists the calendars discovered on the CalDAV
+ * server with a default picker — where the reader's "Add to calendar" puts new
+ * events unless another calendar is picked in the form. Stored server-side, so
+ * this manages its own state rather than the client-owned prefs.
+ */
+function Calendars() {
+  const [state, setState] = useState<CalendarSettingsDto | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .calendars()
+      .then((s) => alive && setState(s))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!state) return <p className="px-4 py-3 text-sm text-faint">Loading…</p>;
+  if (state.calendars.length === 0) {
+    return (
+      <p className="px-4 py-3 text-sm text-faint">
+        No calendars found. Configure CalDAV on the server to add events from mail.
+      </p>
+    );
+  }
+
+  // Persist the default; optimistic, reverting on failure.
+  const setDefault = async (href: string) => {
+    const prev = state;
+    setBusy(true);
+    setState({ ...state, default: href });
+    try {
+      setState(await api.setDefaultCalendar(href));
+    } catch {
+      setState(prev);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {state.calendars.map((c) => {
+        const isDefault = state.default === c.href;
+        return (
+          <div key={c.href} className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="min-w-0 truncate text-[15px]">{c.displayName}</span>
+            <button
+              onClick={() => setDefault(c.href)}
+              disabled={busy || isDefault}
+              aria-pressed={isDefault}
+              className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${
+                isDefault ? 'bg-accent text-white' : 'bg-surface-2 text-faint active:bg-surface-3'
+              }`}
+            >
+              {isDefault ? 'Default' : 'Set default'}
+            </button>
           </div>
         );
       })}
@@ -730,6 +799,19 @@ export function Settings() {
           <p className="px-4 pt-2 text-xs text-faint">
             Turn a book on to sync its contacts and show them in the picker. New contacts are saved
             to the default book.
+          </p>
+        </section>
+
+        <section className="mt-6">
+          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+            Calendars
+          </p>
+          <div className="border-y border-border">
+            <Calendars />
+          </div>
+          <p className="px-4 pt-2 text-xs text-faint">
+            “Add to calendar” in the reader saves events to the default calendar unless you pick
+            another one in the form.
           </p>
         </section>
 

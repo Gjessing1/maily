@@ -9,12 +9,14 @@ import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/t
 import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
+import { AddToCalendar } from '../components/AddToCalendar';
 import { ContactEditor } from '../components/ContactEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import {
   ArchiveIcon,
   BackIcon,
+  CalendarIcon,
   ChevronDownIcon,
   ExpandIcon,
   ForwardIcon,
@@ -65,6 +67,8 @@ export function ReaderView({
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Quick-create-from-reply: when set, the contact editor is open seeded with the sender.
   const [addSender, setAddSender] = useState<{ name: string | null; email: string } | null>(null);
+  // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
+  const [addToCalendar, setAddToCalendar] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
 
   // Reflect server flag state once the detail loads; reset the per-message image
@@ -77,6 +81,13 @@ export function ReaderView({
     setShowImages(false);
     setDetailsOpen(false);
   }, [detail]);
+
+  // Close the calendar sheet only when a *different* message opens — keyed on the
+  // id, not `detail`: Dexie re-emits detail on every cache write (the auto-mark-read
+  // above), and that re-emit must not close the sheet while the user is editing.
+  useEffect(() => {
+    setAddToCalendar(false);
+  }, [id]);
 
   // Auto-mark as read on open (optimistic; server is authoritative), honouring the
   // `markReadSeconds` pref: `-1` never, `0` immediately, `>0` after a dwell timer.
@@ -284,6 +295,13 @@ export function ReaderView({
           <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
         </button>
         <button
+          onClick={() => setAddToCalendar(true)}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label="Add to calendar"
+        >
+          <CalendarIcon className="text-fg" />
+        </button>
+        <button
           onClick={archive}
           className="rounded-full p-2 active:bg-surface-2"
           aria-label="Archive"
@@ -444,6 +462,10 @@ export function ReaderView({
         }}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      {addToCalendar && detail && (
+        <AddToCalendar messageId={detail.id} onClose={() => setAddToCalendar(false)} />
+      )}
 
       {addSender && (
         <ContactEditor

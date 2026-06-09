@@ -53,10 +53,10 @@ function carddavConfig(): {
 }
 
 /**
- * Radicale CalDAV config for the (dormant) calendar push in `calendar/caldav.ts`, or null
- * when unset. `url` must point at the **target calendar collection** (events land there
- * directly as `<uid>.ics`); the password is the same Radicale secret as CardDAV. Kept for
- * the future calendar integration — nothing calls `pushCalendarEvent` today.
+ * Radicale CalDAV config for the calendar integration (`calendar/`), or null when unset.
+ * `url` seeds calendar **discovery** (`calendar/discover.ts`) — point it at the server
+ * root, the principal, or one collection; discovery degrades to treating it as a single
+ * calendar. The password is the same Radicale secret as CardDAV.
  */
 function caldavConfig(): { url: string; user: string; password: string } | null {
   const url = process.env.CALDAV_URL;

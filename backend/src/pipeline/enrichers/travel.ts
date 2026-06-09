@@ -60,10 +60,11 @@ export interface CalendarEventDraft {
   description: string | null;
   /**
    * Provenance: what produced this draft. Travel reservations ('flight'|'lodging'|
-   * 'event'); 'invite' is the deterministic ICS enricher (a parsed VEVENT). One
-   * representation, shared so the CalDAV push consumes either without translation.
+   * 'event'); 'invite' is the deterministic ICS enricher (a parsed VEVENT);
+   * 'message' is the bare-message fallback / a user-confirmed form. One
+   * representation, shared so the CalDAV push consumes any without translation.
    */
-  source: TravelReservation['type'] | 'invite';
+  source: TravelReservation['type'] | 'invite' | 'message';
 }
 
 /** Pick the best human name from a schema.org place/airport/airline node. */

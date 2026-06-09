@@ -229,6 +229,48 @@ export interface AddressbookSettingsDto {
   default: string | null;
 }
 
+/** One discovered CalDAV calendar (collection). */
+export interface CalendarDto {
+  /** Collection href — the stable id used to target a calendar. */
+  href: string;
+  /** Human-readable calendar name (CalDAV displayname, or the last path segment). */
+  displayName: string;
+}
+
+/** Discovered calendars + the default target for new events. */
+export interface CalendarSettingsDto {
+  calendars: CalendarDto[];
+  /** Href of the calendar new events land in, or null when none discovered. */
+  default: string | null;
+}
+
+/**
+ * A suggested calendar event extracted from a message — pre-fill for the
+ * "Add to calendar" form. VEVENT-shaped (one representation, ARCHITECTURE §14).
+ */
+export interface EventDraftDto {
+  summary: string;
+  /** ISO 8601: date-only = all-day; trailing Z/offset = zoned; bare = floating. */
+  start: string | null;
+  end: string | null;
+  location: string | null;
+  description: string | null;
+  /** What produced the suggestion (invite/travel enricher, or the bare message). */
+  source: 'invite' | 'flight' | 'lodging' | 'event' | 'message';
+}
+
+/** User-confirmed event to write to the calendar (CalDAV PUT). */
+export interface CalendarEventInput {
+  /** Target calendar href; the server default when omitted. */
+  calendar?: string | null;
+  summary: string;
+  /** ISO 8601 — date-only for all-day, else a (floating) local date-time. */
+  start: string;
+  end?: string | null;
+  location?: string | null;
+  description?: string | null;
+}
+
 /** Per-folder cached sync state for the Settings → Sync view. */
 export interface FolderSyncStatusDto {
   id: string;

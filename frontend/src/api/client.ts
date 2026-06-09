@@ -7,6 +7,8 @@ import type {
   AccountDto,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
+  CalendarEventInput,
+  CalendarSettingsDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
   CleanupMessagesDto,
@@ -18,6 +20,7 @@ import type {
   ContactDto,
   ContactImportResult,
   EnrichmentStatusDto,
+  EventDraftDto,
   FolderDto,
   MessageDetailDto,
   MessageDto,
@@ -262,6 +265,27 @@ export const api = {
   deleteContactCard: (key: string) =>
     request<{ ok: boolean }>(`/api/contacts/cards/${encodeURIComponent(key)}`, {
       method: 'DELETE',
+    }),
+
+  /** Discovered CalDAV calendars + the default event target. */
+  calendars: () => request<CalendarSettingsDto>('/api/calendar/calendars'),
+
+  /** Set the default calendar for new events; returns the new state. */
+  setDefaultCalendar: (def: string | null) =>
+    request<CalendarSettingsDto>('/api/calendar/calendars', {
+      method: 'PUT',
+      body: JSON.stringify({ default: def }),
+    }),
+
+  /** Pre-fill suggestions for "Add to calendar" (invite/reservation drafts, best first). */
+  eventDrafts: (messageId: string) =>
+    request<EventDraftDto[]>(`/api/messages/${messageId}/event-drafts`),
+
+  /** Write one confirmed event to the chosen calendar (server default when omitted). */
+  addToCalendar: (messageId: string, input: CalendarEventInput) =>
+    request<{ ok: boolean; calendar: string }>(`/api/messages/${messageId}/calendar-event`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     }),
 
   /** Import a `.vcf` file (one or many cards) into a book (default when omitted). */
