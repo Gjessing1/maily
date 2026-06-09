@@ -1,0 +1,56 @@
+# Forgejo Actions equivalent of .github/workflows/docker.yml.
+# Builds the backend image and pushes it to Forgejo's built-in container
+# registry at git.gjessing.io. The deployment host then `docker compose pull`s
+# git.gjessing.io/lars/maily-backend and restarts.
+#
+# Notes specific to this runner (host-Docker-socket model):
+# - `runs-on: docker` -> catthehacker/ubuntu:act-latest, which has the docker CLI.
+# - docker build/push run against the HOST daemon, which can only reach the
+#   registry by its public name, so we use git.gjessing.io (HTTPS via Caddy),
+#   not the internal forgejo:3000.
+# - secrets.GITHUB_TOKEN is injected automatically by Forgejo; it can push
+#   packages for this repo's owner, so no credentials are stored anywhere.
+name: docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  IMAGE: git.gjessing.io/lars/maily-backend
+
+jobs:
+  # Quality gate: formatting, lint, types and unit tests must pass before we build/push.
+  verify:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  build-and-push:
+    needs: verify
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to the Forgejo registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login git.gjessing.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          SHA_TAG="${GITHUB_SHA::7}"
+          docker build -f backend/Dockerfile -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$SHA_TAG"
