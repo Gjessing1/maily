@@ -47,12 +47,15 @@ jobs:
     runs-on: docker
     permissions:
       contents: read
-      packages: write # let the automatic GITHUB_TOKEN push to the registry
+      packages: write # not sufficient alone on this instance; push uses REGISTRY_TOKEN (see login step)
     steps:
       - uses: actions/checkout@v4
 
       - name: Log in to the Forgejo registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login git.gjessing.io -u "${{ github.actor }}" --password-stdin
+        # The automatic GITHUB_TOKEN only gets package *read* on this instance, so
+        # blob uploads 401 even with `packages: write`. Use a PAT (write:package)
+        # stored as the REGISTRY_TOKEN repo secret instead.
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.gjessing.io -u gjessing1 --password-stdin
 
       - name: Build and push
         run: |
