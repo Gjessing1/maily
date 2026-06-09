@@ -116,36 +116,73 @@ function tryInlineMarkdown(): boolean {
   return false;
 }
 
+/**
+ * Replace a line container with a block element of `tag`, carrying its content
+ * across (a lone `<br>` placeholder is dropped; an empty line is seeded with a
+ * ZWSP so the caret has somewhere to land). `line` is the direct child of the
+ * editor root holding the caret — a block element (`<div>`/`<p>`) or a bare text
+ * node. Returns the new element. Exported for unit tests.
+ */
+export function replaceLineWithBlock(line: ChildNode, tag: string): HTMLElement {
+  const doc = line.ownerDocument ?? document;
+  const el = doc.createElement(tag);
+  if (line.nodeType === Node.ELEMENT_NODE) {
+    for (const child of Array.from(line.childNodes)) {
+      if (child.nodeName === 'BR') continue;
+      el.appendChild(child);
+    }
+  } else if (line.textContent) {
+    el.appendChild(doc.createTextNode(line.textContent));
+  }
+  if (!el.firstChild) el.appendChild(doc.createTextNode('​'));
+  line.replaceWith(el);
+  return el;
+}
+
+/**
+ * Turn the caret's current line into a `<tag>` block, then drop the caret at the
+ * end of it. Built on plain DOM rather than `execCommand('formatBlock')`, which is
+ * unsupported on iOS WebKit (where `bold`/`italic` work but `formatBlock` silently
+ * no-ops) — so #/##/### and `>` never applied in the installed PWA. ZWSP seeds are
+ * stripped on serialize (htmlText.ts) so they never reach the wire.
+ */
+function setBlock(root: HTMLElement, tag: string): void {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.anchorNode) return;
+  // Climb to the line: the direct child of the editor root containing the caret.
+  let line: ChildNode = sel.anchorNode as ChildNode;
+  while (line.parentNode && line.parentNode !== root) {
+    line = line.parentNode as unknown as ChildNode;
+  }
+  if (line.parentNode !== root) return; // caret escaped the editor — bail
+  const el = replaceLineWithBlock(line, tag);
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 /** Block-level Markdown markers, keyed by the text typed before the triggering Space. */
-function applyBlockMarkdown(marker: string): boolean {
-  // formatBlock's tag arg must be angle-bracketed to work in every engine (Firefox
-  // ignores the bare 'H1' form Chrome tolerates) — pass '<h1>' so #/##/### all apply.
-  //
-  // It also silently no-ops on a truly empty line, which is exactly the state we're
-  // in: the marker text ("#", ">"…) was just removed by deleteBeforeCaret. So seed a
-  // zero-width space first to give formatBlock a non-empty line to wrap; the caret
-  // lands after it inside the new block, and cleanEditorHtml strips ZWSP off the wire.
-  // (List commands wrap an empty line fine, so they don't need the seed.)
-  const formatBlock = (tag: string): void => {
-    exec('insertText', '\u200b');
-    exec('formatBlock', tag);
-  };
+function applyBlockMarkdown(marker: string, root: HTMLElement): boolean {
+  // Headings/blockquote are built by hand (setBlock) so they apply on iOS WebKit;
+  // list commands stay on execCommand, which WebKit does support.
   switch (marker) {
     case '#':
-      formatBlock('<h1>');
+      setBlock(root, 'h1');
       return true;
     case '##':
-      formatBlock('<h2>');
+      setBlock(root, 'h2');
       return true;
     case '###':
-      formatBlock('<h3>');
+      setBlock(root, 'h3');
       return true;
     case '-':
     case '*':
       exec('insertUnorderedList');
       return true;
     case '>':
-      formatBlock('<blockquote>');
+      setBlock(root, 'blockquote');
       return true;
     default:
       if (/^\d+\.$/.test(marker)) {
@@ -236,10 +273,10 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
         const offset = sel.anchorOffset;
         const before = (node.textContent ?? '').slice(0, offset).replace(/\u00a0/g, ' ');
         const m = /^(#{1,3}|[-*>]|\d+\.)$/.exec(before.trimStart());
-        if (m?.[1]) {
+        if (m?.[1] && ref.current) {
           e.preventDefault();
           deleteBeforeCaret(node, offset, before.length);
-          applyBlockMarkdown(m[1]);
+          applyBlockMarkdown(m[1], ref.current);
           emit();
         }
       }
