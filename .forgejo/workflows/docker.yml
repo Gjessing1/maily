@@ -32,11 +32,30 @@ jobs:
         with:
           node-version: 24
           # No `cache: npm` here: the self-hosted runner bind-mounts a persistent
-          # npm cache at /npm-cache (npm_config_cache, see runner-config.yml in
-          # /home/gjessing/docker/forgejo), which survives across runs and is
-          # faster/more reliable than actions/cache on this single runner.
+          # npm *download* cache at /npm-cache (npm_config_cache, see
+          # runner-config.yml in /home/gjessing/docker/forgejo). That eliminates
+          # re-downloads, but `npm ci` still re-extracts every package AND rebuilds
+          # the better-sqlite3 native addon each run — the real cost on this N150.
 
-      - run: npm ci
+      # Cache the installed node_modules themselves (all workspaces), keyed on the
+      # lockfile + Node major. On a hit we skip `npm ci` entirely, so no extraction
+      # and no native rebuild — the dominant cost on this low-power host.
+      - name: Cache node_modules
+        id: nmcache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            shared/node_modules
+            backend/node_modules
+            frontend/node_modules
+          key: nodemods-n24-${{ hashFiles('package-lock.json') }}
+
+      # --no-audit/--no-fund drop a network round-trip (the audit step was even
+      # erroring on this box). --prefer-offline leans on the download cache.
+      - if: steps.nmcache.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund --prefer-offline
+
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
