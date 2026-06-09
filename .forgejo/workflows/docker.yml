@@ -42,6 +42,9 @@ jobs:
   build-and-push:
     needs: verify
     runs-on: docker
+    permissions:
+      contents: read
+      packages: write          # let the automatic GITHUB_TOKEN push to the registry
     steps:
       - uses: actions/checkout@v4
 
