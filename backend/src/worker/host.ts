@@ -8,7 +8,6 @@
 import { Worker } from 'node:worker_threads';
 import type { CurrentEnrichmentDto } from '@maily/shared';
 import { createLogger } from '../logger.js';
-import { emitSignal } from '../events.js';
 import type { MainToWorker, WorkerToMain } from './protocol.js';
 
 const log = createLogger('worker:host');
@@ -58,10 +57,6 @@ function spawn(): Worker {
   w.on('message', (msg: WorkerToMain) => {
     if (msg.type === 'error') {
       log.warn(`worker error${msg.accountId ? ` (${msg.accountId})` : ''}: ${msg.message}`);
-    } else if (msg.type === 'proposal:ready') {
-      // The worker has no socket/bus of its own — relay onto the main-thread bus so
-      // Socket.io (and later Web Push) surface the new Action Center offer (Phase 4).
-      emitSignal({ type: 'action:ready', messageId: msg.messageId, label: msg.label });
     } else if (msg.type === 'enrich:active') {
       currentEnrichment = { enricher: msg.enricher, subject: msg.subject, since: Date.now() };
     } else if (msg.type === 'enrich:done') {

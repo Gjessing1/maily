@@ -1,15 +1,15 @@
 /**
  * Pipeline runner — claims due `pending` enrichment rows, runs the enricher, and
- * persists results / proposals, with retry + backoff + dead-lettering. Runs inside
- * the shared sync worker (`better-sqlite3` is synchronous; keep it off the event
- * loop). The queue lives in SQLite, so this is restart-safe and idempotent: a drain
- * processes a bounded snapshot of due work and returns; periodic nudges continue the
- * backlog. Reindex/version bumps just reset rows to `pending` (the §15 rebuild path).
+ * persists results, with retry + backoff + dead-lettering. Runs inside the shared sync
+ * worker (`better-sqlite3` is synchronous; keep it off the event loop). The queue lives
+ * in SQLite, so this is restart-safe and idempotent: a drain processes a bounded
+ * snapshot of due work and returns; periodic nudges continue the backlog. Reindex/
+ * version bumps just reset rows to `pending` (the §15 rebuild path).
  */
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { EnrichmentCounts } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
-import { enrichments, proposals } from '../db/schema.js';
+import { enrichments } from '../db/schema.js';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import { enricherByName } from './registry.js';
@@ -20,19 +20,12 @@ import type { Enricher, EnricherResult, EnrichmentCost, PipelineMessage } from '
 
 const log = createLogger('pipeline');
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const BACKOFF_BASE_MS = 60_000; // 1 min
 const BACKOFF_CAP_MS = 60 * 60_000; // 1 h
 
 /** Exponential backoff for retry attempt `n` (1-based), capped. */
 export function backoffMs(attempt: number): number {
   return Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1));
-}
-
-/** A proposal surfaced this drain — relayed to the main thread to signal the UI. */
-export interface ProposalReady {
-  messageId: string;
-  label: string;
 }
 
 /** Notification that a claimed row is about to run (Settings "currently working on"). */
@@ -51,7 +44,6 @@ export interface DrainResult {
   dead: number;
   /** Rows whose enricher is no longer registered (left pending, untouched). */
   skipped: number;
-  proposals: ProposalReady[];
 }
 
 type EnrichmentRow = typeof enrichments.$inferSelect;
@@ -79,63 +71,29 @@ function claimDue(now: Date, limit: number, costs?: EnrichmentCost[]): Enrichmen
     .all();
 }
 
-/** Persist a successful run: ok status + result, and replace this enricher's pending proposals. */
+/** Persist a successful run: ok status + result. */
 function persistSuccess(
   row: EnrichmentRow,
   enricher: Enricher,
   out: EnricherResult,
   durationMs: number,
   now: Date,
-): ProposalReady[] {
-  const ready: ProposalReady[] = [];
+): void {
   withWriteRetry('pipeline.persistSuccess', () =>
-    db.transaction(() => {
-      db.update(enrichments)
-        .set({
-          status: 'ok',
-          enricherVersion: enricher.version,
-          result: out.result === undefined ? null : JSON.stringify(out.result),
-          error: null,
-          durationMs,
-          nextAttemptAt: null,
-          updatedAt: now,
-        })
-        .where(eq(enrichments.id, row.id))
-        .run();
-
-      // Replace only this enricher's UN-ACTED proposals so re-runs are idempotent;
-      // never clobber ones the user already approved/dismissed.
-      db.delete(proposals)
-        .where(
-          and(
-            eq(proposals.messageId, row.messageId),
-            eq(proposals.enricher, enricher.name),
-            eq(proposals.status, 'pending'),
-          ),
-        )
-        .run();
-
-      for (const p of out.proposals ?? []) {
-        const expiresAt =
-          p.expiresAt === undefined
-            ? new Date(now.getTime() + env.pipelineHorizonDays * DAY_MS)
-            : p.expiresAt;
-        db.insert(proposals)
-          .values({
-            messageId: row.messageId,
-            enricher: enricher.name,
-            type: p.type,
-            title: p.title ?? null,
-            payload: p.payload === undefined ? null : JSON.stringify(p.payload),
-            status: 'pending',
-            expiresAt,
-          })
-          .run();
-        ready.push({ messageId: row.messageId, label: p.title ?? p.type });
-      }
-    }),
+    db
+      .update(enrichments)
+      .set({
+        status: 'ok',
+        enricherVersion: enricher.version,
+        result: out.result === undefined ? null : JSON.stringify(out.result),
+        error: null,
+        durationMs,
+        nextAttemptAt: null,
+        updatedAt: now,
+      })
+      .where(eq(enrichments.id, row.id))
+      .run(),
   );
-  return ready;
 }
 
 /** Persist a no-op success (enricher's `applies()` gate declined the message). */
@@ -198,19 +156,19 @@ async function processRow(
   row: EnrichmentRow,
   now: Date,
   onRowStart?: (info: RowStartInfo) => void,
-): Promise<{ outcome: 'ok' | 'failed' | 'dead' | 'skipped'; proposals: ProposalReady[] }> {
+): Promise<'ok' | 'failed' | 'dead' | 'skipped'> {
   const enricher = enricherByName(row.enricher);
-  if (!enricher) return { outcome: 'skipped', proposals: [] }; // deregistered → leave pending
+  if (!enricher) return 'skipped'; // deregistered → leave pending
 
   const message = loadPipelineMessage(row.messageId);
   if (!message) {
     persistFailure(row, 'message row not found', 0, now);
-    return { outcome: 'failed', proposals: [] };
+    return 'failed';
   }
 
   if (enricher.applies && !enricher.applies(message)) {
     persistSkipped(row, enricher, now);
-    return { outcome: 'ok', proposals: [] };
+    return 'ok';
   }
 
   // Signal "now working on this" only once we're committed to actually running it
@@ -228,13 +186,12 @@ async function processRow(
   try {
     const out = await enricher.run({ message, tier });
     const durationMs = Date.now() - started;
-    const ready = persistSuccess(row, enricher, out, durationMs, now);
+    persistSuccess(row, enricher, out, durationMs, now);
     indexStage(message, out);
-    return { outcome: 'ok', proposals: ready };
+    return 'ok';
   } catch (err) {
     const durationMs = Date.now() - started;
-    const outcome = persistFailure(row, (err as Error).message, durationMs, now);
-    return { outcome, proposals: [] };
+    return persistFailure(row, (err as Error).message, durationMs, now);
   }
 }
 
@@ -290,18 +247,16 @@ export async function drainPipeline(opts: DrainOptions = {}): Promise<DrainResul
     failed: 0,
     dead: 0,
     skipped: 0,
-    proposals: [],
   };
   for (const row of rows) {
-    const { outcome, proposals: ready } = await processRow(row, now, opts.onRowStart);
+    const outcome = await processRow(row, now, opts.onRowStart);
     result[outcome] += 1;
-    if (ready.length) result.proposals.push(...ready);
   }
 
   if (result.claimed > 0) {
     log.info(
       `drain: ${result.ok} ok, ${result.failed} retry, ${result.dead} dead, ` +
-        `${result.skipped} skipped (${result.proposals.length} proposal(s))`,
+        `${result.skipped} skipped`,
     );
   }
   return result;

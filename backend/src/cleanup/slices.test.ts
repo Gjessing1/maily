@@ -5,7 +5,7 @@
  *  - cold-storage selects old, value-marker-free, non-protected mail,
  *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices.
  *
- * Same bootstrap as proposals.test.ts: point MAILY_DATA_DIR at a throwaway dir BEFORE the
+ * Same bootstrap as pipeline.test.ts: point MAILY_DATA_DIR at a throwaway dir BEFORE the
  * dynamic import so the shared db/env pick it up, then run migrations (creates the FTS5
  * index + triggers the slices depend on).
  */

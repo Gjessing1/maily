@@ -5,18 +5,16 @@
  * hotels and ticketing sites embed in HTML mail as
  * `<script type="application/ld+json">` blocks (the same markup Gmail reads for its
  * trip highlights). We pull `FlightReservation`, `LodgingReservation` and
- * `EventReservation` nodes, normalise them into a small flat shape (the `result`,
- * which feeds the search index + provenance), and emit one `calendar_event`
- * proposal per reservation — an *offer* to add the trip to the calendar, surfaced
- * later by the Action Center and (on approval) PUT to Radicale.
+ * `EventReservation` nodes and normalise them into a small flat shape (the `result`,
+ * which feeds the search index + provenance).
  *
- * Classification: `operational`. The proposals are the operational artifact, so the
- * framework gates this enricher to Tier 0 (recent) mail — a years-deep backfill can
- * never surface a stale "add this flight to your calendar" offer (ARCHITECTURE §14).
- * The proposal payload (`CalendarEventDraft`) is deliberately VEVENT-shaped so the
- * CalDAV push reuses one representation, no translation layer (ROADMAP Phase 4).
+ * Classification: `search` — a passive extractor that indexes reservations on all
+ * tiers (old mail stays searchable). It emits no proposals. The VEVENT-shaped
+ * `CalendarEventDraft` type defined here is the shared calendar representation (also
+ * used by the `ics` enricher and the dormant CalDAV push in `calendar/caldav.ts`),
+ * kept ready for the future calendar integration.
  */
-import type { Enricher, EnricherContext, EnricherResult, ProposalDraft } from '../types.js';
+import type { Enricher, EnricherContext, EnricherResult } from '../types.js';
 import {
   collectJsonLdNodes,
   isObject,
@@ -161,23 +159,10 @@ function extractReservation(node: JsonObject): TravelReservation | null {
   return extractEvent(node, forObj);
 }
 
-/** Build the VEVENT-shaped calendar offer from a reservation. */
-function toCalendarDraft(r: TravelReservation): CalendarEventDraft {
-  const ref = r.reservationNumber ? `Confirmation: ${r.reservationNumber}` : null;
-  return {
-    summary: r.title,
-    start: r.startsAt,
-    end: r.endsAt,
-    location: r.location,
-    description: ref,
-    source: r.type,
-  };
-}
-
 export const travelEnricher: Enricher = {
   name: 'travel',
-  version: 1,
-  kind: 'operational',
+  version: 2,
+  kind: 'search',
   // Cheap gate: only HTML bodies can carry JSON-LD, and the marker must be present.
   applies(message) {
     return Boolean(message.bodyHtml && message.bodyHtml.includes('application/ld+json'));
@@ -191,14 +176,6 @@ export const travelEnricher: Enricher = {
       const r = extractReservation(node);
       if (r) reservations.push(r);
     }
-    if (reservations.length === 0) return { result: { reservations: [] } };
-
-    const proposals: ProposalDraft[] = reservations.map((r) => ({
-      type: 'calendar_event',
-      title: r.title,
-      payload: toCalendarDraft(r),
-    }));
-
-    return { result: { reservations }, proposals };
+    return { result: { reservations } };
   },
 };

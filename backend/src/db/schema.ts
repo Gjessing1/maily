@@ -308,41 +308,6 @@ export const enrichments = sqliteTable(
 );
 
 /**
- * Proposals — the `derived` stage (ARCHITECTURE §15). An *offer* attached to a source
- * message (add-to-calendar, track-package, …), surfaced later by the Action Center.
- * Un-acted proposals silently expire (`expiresAt`) rather than piling into a second
- * inbox (ROADMAP Phase 4 anti-chore guardrail). A rebuildable projection like enrichments.
- */
-export const proposals = sqliteTable(
-  'proposals',
-  {
-    id: uuid(),
-    messageId: text('message_id')
-      .notNull()
-      .references(() => messages.id, { onDelete: 'cascade' }),
-    /** Enricher that produced this proposal (provenance). */
-    enricher: text('enricher').notNull(),
-    /** Proposal kind, e.g. 'calendar_event' | 'package_track' (enricher-defined). */
-    type: text('type').notNull(),
-    /** Human-readable label for the action chip / list row. */
-    title: text('title'),
-    /** JSON detail the approve-flow acts on (e.g. a VEVENT, a tracking URL). */
-    payload: text('payload'),
-    status: text('status', { enum: ['pending', 'approved', 'dismissed', 'expired'] })
-      .notNull()
-      .default('pending'),
-    /** Horizon-bounded silent expiry — an ignored offer ages out without nagging. */
-    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
-    createdAt: now(),
-    resolvedAt: integer('resolved_at', { mode: 'timestamp_ms' }),
-  },
-  (t) => [
-    index('proposals_status_idx').on(t.status),
-    index('proposals_message_idx').on(t.messageId),
-  ],
-);
-
-/**
  * Cleanup trash queue (ROADMAP Phase 6b — execution path). ONE row per message awaiting
  * a rate-limited MOVE-to-Trash, modelled on the `enrichments`-as-queue pattern: a pending
  * row with `nextAttemptAt` is claimed by the trickle runner, MOVEd to the account's Trash

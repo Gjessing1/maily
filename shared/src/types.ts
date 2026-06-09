@@ -307,93 +307,6 @@ export interface EnrichmentStatusDto {
 }
 
 /**
- * A pipeline proposal (the `derived` stage — an *offer*, never a chore) as exposed to
- * the Action Center. `type` drives client-side rendering (a per-type renderer registry)
- * and the backend approve-handler; `payload` is the type-specific detail those consume
- * (e.g. a VEVENT-shaped CalendarEventDraft for `calendar_event`). Kept open-ended so a
- * new enricher/proposal kind needs no DTO change — only a new renderer + handler.
- */
-export interface ProposalDto {
-  id: string;
-  messageId: string;
-  /** Enricher that produced it (provenance). */
-  enricher: string;
-  /** Proposal kind, e.g. 'calendar_event' | 'package_track' (enricher-defined). */
-  type: string;
-  /** Human-readable label for the chip / list row. */
-  title: string | null;
-  /** Type-specific detail the renderer + approve-handler act on (shape varies by type). */
-  payload: unknown;
-  /** Epoch-ms ISO string. */
-  createdAt: string | null;
-  /** When the un-acted offer silently expires (horizon-bounded), ISO string or null. */
-  expiresAt: string | null;
-  /**
-   * Denormalised source-message context for the list row + deep-link to `/m/:messageId`.
-   * Null only if the message vanished (FK cascade normally prevents this).
-   */
-  source: {
-    subject: string | null;
-    fromName: string | null;
-    fromAddress: string | null;
-    receivedAt: string | null;
-  } | null;
-}
-
-/** Outcome of approving/dismissing a proposal. */
-export interface ProposalActionResult {
-  ok: boolean;
-  status: 'approved' | 'dismissed';
-  /**
-   * True when a type-specific approve handler ran a side effect (e.g. CalDAV push).
-   * False = the offer was acknowledged with no external effect (no handler registered).
-   */
-  handled: boolean;
-}
-
-/**
- * One reservation surfaced in the read-only Trip History (ROADMAP Phase 4). A
- * `derived`-stage projection over the `travel` enricher's persisted result — pure
- * *retrieval*, never an "add to calendar" nudge (the operational offer path stays
- * Tier-0-only). Deep-links to its source message by internal UUID (never Message-ID/UID).
- */
-export interface TripReservationDto {
-  type: 'flight' | 'lodging' | 'event';
-  /** Confirmation / booking reference, when present (also a trip-grouping key). */
-  reservationNumber: string | null;
-  /** Human label, e.g. "UA110 SFO→JFK", a hotel name, or an event name. */
-  title: string;
-  /** ISO 8601 start (departure / check-in / event start), or null. */
-  startsAt: string | null;
-  /** ISO 8601 end (arrival / check-out / event end), or null. */
-  endsAt: string | null;
-  /** Free-text place (airport pair, hotel address, venue), or null. */
-  location: string | null;
-  /** Source message UUID for the `/m/:id` deep link. */
-  messageId: string;
-  /** When the source mail arrived (ISO) — fallback ordering for undated reservations. */
-  receivedAt: string | null;
-}
-
-/**
- * A trip — reservations clustered by shared confirmation number + date proximity,
- * newest-first (ROADMAP Phase 4 "Trip History"). A deterministic, rebuildable
- * projection (no persisted entity); it's something the user *browses*, not a chore.
- */
-export interface TripDto {
-  /** Stable content-derived id (first reservation's messageId + its date). */
-  id: string;
-  /** Label derived from the trip's reservations (destination stay/event, else first leg). */
-  title: string;
-  /** Earliest reservation start across the trip (ISO), or null if all undated. */
-  startsAt: string | null;
-  /** Latest reservation end across the trip (ISO), or null. */
-  endsAt: string | null;
-  /** The trip's reservations, chronological. */
-  reservations: TripReservationDto[];
-}
-
-/**
  * One row of a cleanup slice — a sender domain with its preview impact (ROADMAP Phase 6
  * Cleanup Dashboard). Grouping by domain is what lets a future preset say "delete N from
  * <domain>, free X" before any execution.
@@ -508,5 +421,4 @@ export type SocketSignal =
   | { type: 'mail:flags'; accountId: string; messageId: string; seen: boolean; flagged: boolean }
   | { type: 'mail:deleted'; accountId: string; messageId: string }
   | { type: 'mail:archived'; accountId: string; messageId: string }
-  | { type: 'sync:progress'; accountId: string; done: number; total: number }
-  | { type: 'action:ready'; messageId: string; label: string };
+  | { type: 'sync:progress'; accountId: string; done: number; total: number };

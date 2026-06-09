@@ -42,14 +42,13 @@ function run(fields: { bodyText?: string | null; bodyHtml?: string | null }): In
   return (out.result as { invoice: InvoiceFacts | null }).invoice;
 }
 
-test('invoice: classification is passive search-kind with no proposals', () => {
+test('invoice: classification is a passive search-kind extractor', () => {
   assert.equal(invoiceEnricher.kind, 'search');
   const out = invoiceEnricher.run({
     message: msg({ bodyText: 'Faktura — KID: 1234567897, å betale kr 100,00' }),
     tier: 0,
   });
   assert.ok(!(out instanceof Promise));
-  assert.equal(out.proposals, undefined, 'invoice must not emit operational proposals');
 });
 
 test('invoice: valid KID (MOD-10/Luhn) is extracted', () => {

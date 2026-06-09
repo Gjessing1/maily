@@ -53,11 +53,10 @@ function carddavConfig(): {
 }
 
 /**
- * Radicale CalDAV config for calendar push-on-approval (ROADMAP Phase 4), or null when
- * unset. `url` must point at the **target calendar collection** (the events land there
- * directly as `<uid>.ics`); the password is the same Radicale secret as CardDAV. When
- * null the `calendar_event` approve handler is not registered, so approving an offer
- * just acknowledges it with no external write (proposal-handlers.ts).
+ * Radicale CalDAV config for the (dormant) calendar push in `calendar/caldav.ts`, or null
+ * when unset. `url` must point at the **target calendar collection** (events land there
+ * directly as `<uid>.ics`); the password is the same Radicale secret as CardDAV. Kept for
+ * the future calendar integration — nothing calls `pushCalendarEvent` today.
  */
 function caldavConfig(): { url: string; user: string; password: string } | null {
   const url = process.env.CALDAV_URL;

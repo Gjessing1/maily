@@ -69,16 +69,5 @@ export function wirePushNotifications(): void {
       });
       return;
     }
-    // An enricher surfaced an Action Center offer (Phase 4). Deep-link to the source
-    // message — the inline action chip lives there, and the message gives the offer
-    // context. This is a *passive* offer, not a nag: the notification mirrors the
-    // already-emitted socket signal; the offer silently expires if ignored.
-    if (signal.type === 'action:ready') {
-      void broadcast({
-        title: 'Suggested action',
-        body: signal.label,
-        messageId: signal.messageId,
-      });
-    }
   });
 }

@@ -17,7 +17,6 @@ import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
 import {
   ArchiveIcon,
-  BoltIcon,
   CloseIcon,
   MailIcon,
   MailOpenIcon,
@@ -26,7 +25,6 @@ import {
   SearchIcon,
   TrashIcon,
 } from '../ui/icons';
-import { useActionCount } from '../state/actions';
 
 /** Subtle section header dividing the unread/read groups (Gmail-desktop style). */
 function SectionLabel({ children, divider }: { children: string; divider?: boolean }) {
@@ -38,43 +36,6 @@ function SectionLabel({ children, divider }: { children: string; divider?: boole
     >
       {children}
     </div>
-  );
-}
-
-/** Action Center entry with a live offer-count badge (top bar / bottom nav variants). */
-function ActionsNavLink({ variant }: { variant: 'top' | 'bottom' }) {
-  const count = useActionCount();
-  const badge =
-    count > 0 ? (
-      <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white">
-        {count > 9 ? '9+' : count}
-      </span>
-    ) : null;
-
-  if (variant === 'top') {
-    return (
-      <Link
-        to="/actions"
-        className="relative rounded-full p-2 text-fg active:bg-surface-2"
-        aria-label={`Actions${count > 0 ? ` (${count})` : ''}`}
-      >
-        <BoltIcon />
-        {badge}
-      </Link>
-    );
-  }
-  return (
-    <Link
-      to="/actions"
-      className="flex flex-1 flex-col items-center gap-0.5 py-2 text-faint active:text-fg"
-      aria-label={`Actions${count > 0 ? ` (${count})` : ''}`}
-    >
-      <span className="relative">
-        <BoltIcon />
-        {badge}
-      </span>
-      <span className="text-[10px]">Actions</span>
-    </Link>
   );
 }
 
@@ -310,16 +271,13 @@ export function Home() {
             )}
             <h1 className="flex-1 truncate px-2 text-lg font-semibold capitalize">{folderName}</h1>
             {isWide && (
-              <>
-                <ActionsNavLink variant="top" />
-                <Link
-                  to="/search"
-                  className="rounded-full p-2 text-fg active:bg-surface-2"
-                  aria-label="Search"
-                >
-                  <SearchIcon />
-                </Link>
-              </>
+              <Link
+                to="/search"
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Search"
+              >
+                <SearchIcon />
+              </Link>
             )}
           </div>
         )}
@@ -427,7 +385,6 @@ export function Home() {
             <SearchIcon />
             <span className="text-[10px]">Search</span>
           </Link>
-          <ActionsNavLink variant="bottom" />
           <Link
             to="/compose"
             state={{ fresh: true }}

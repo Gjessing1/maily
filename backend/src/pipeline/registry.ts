@@ -8,13 +8,11 @@
  * throwing enricher (failure/dead-letter path) without touching the defaults.
  */
 import type { Enricher, Tier } from './types.js';
-import { llmEnabled } from '../llm/index.js';
 import { factsEnricher } from './enrichers/facts.js';
 import { travelEnricher } from './enrichers/travel.js';
 import { icsEnricher } from './enrichers/ics.js';
 import { packageEnricher } from './enrichers/package.js';
 import { invoiceEnricher } from './enrichers/invoice.js';
-import { summaryEnricher } from './enrichers/summary.js';
 
 const registry = new Map<string, Enricher>();
 
@@ -48,20 +46,14 @@ export function enrichersForTier(tier: Tier): Enricher[] {
 }
 
 // --- Default enrichers ------------------------------------------------------------------
-// `facts` is the framework reference enricher (search-kind, inert). `travel` is the
-// first real deterministic enricher: JSON-LD reservation extraction → calendar offers.
-// `ics` parses the text/calendar invite part (VEVENT) → calendar offers (operational,
-// Tier-0; shares the VEVENT-shaped draft with `travel`). `package` is search-kind
-// shipment tracking (passive: feeds the index, no proposals). `invoice` is search-kind
-// invoice/receipt extraction (KID/IBAN/account/amount/due date, checksum-validated;
-// passive: feeds the index, no proposals).
+// All current enrichers are deterministic, search-kind passive extractors: they feed the
+// index + provenance and emit no proposals. `facts` is the framework reference enricher
+// (inert). `travel` extracts schema.org JSON-LD reservations; `ics` parses the
+// text/calendar invite part (VEVENT) — both shared with a future calendar integration.
+// `package` is shipment tracking; `invoice` is invoice/receipt extraction (KID/IBAN/
+// account/amount/due date, checksum-validated).
 registerEnricher(factsEnricher);
 registerEnricher(travelEnricher);
 registerEnricher(icsEnricher);
 registerEnricher(packageEnricher);
 registerEnricher(invoiceEnricher);
-
-// `summary` is the first LLM enricher (Phase 5) — registered ONLY when Ollama is
-// configured (`OLLAMA_URL`). Without it no `summary` rows are ever enqueued and the
-// pipeline runs exactly as in Phase 4 (privacy-first: no cloud fallback).
-if (llmEnabled()) registerEnricher(summaryEnricher);

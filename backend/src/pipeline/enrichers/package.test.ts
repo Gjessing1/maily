@@ -42,14 +42,13 @@ function run(fields: { bodyText?: string | null; bodyHtml?: string | null }): Pa
   return (out.result as { shipments: PackageShipment[] }).shipments;
 }
 
-test('package: classification is passive search-kind with no proposals', () => {
+test('package: classification is a passive search-kind extractor', () => {
   assert.equal(packageEnricher.kind, 'search');
   const out = packageEnricher.run({
     message: msg({ bodyText: 'Tracking number 1Z999AA10123456784' }),
     tier: 0,
   });
   assert.ok(!(out instanceof Promise));
-  assert.equal(out.proposals, undefined, 'package must not emit operational proposals');
 });
 
 test('package: JSON-LD ParcelDelivery is authoritative (carrier, url, ETA)', () => {

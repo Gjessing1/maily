@@ -2,10 +2,9 @@
  * Enrichment-pipeline contracts (ROADMAP Phase 4; ARCHITECTURE §14/§15).
  *
  * An *enricher* is a pure-ish function over a parsed message that produces a
- * `result` (search tokens / extracted facts to persist on the `enriched` stage)
- * and/or `proposals` (the `derived` stage — offers surfaced later by the Action
- * Center). Every enricher declares a `kind` (its classification) and a `version`;
- * the framework handles queuing, tiering, retries, dead-lettering, persistence and
+ * `result` (search tokens / extracted facts to persist on the `enriched` stage).
+ * Every enricher declares a `kind` (its classification) and a `version`; the
+ * framework handles queuing, tiering, retries, dead-lettering, persistence and
  * reindex around it. Enrichers themselves stay small and side-effect-light — the
  * one exception being `operational` enrichers, which the *framework* gates by tier
  * so a deep backfill can't fire stale side effects.
@@ -14,8 +13,8 @@ import type { EmailAddress } from '@maily/shared';
 
 /**
  * Enrichment classification (ARCHITECTURE §14). Drives tiering + ordering:
- *  - `operational` — has external side effects (Action Center / CalDAV / tasks);
- *    runs only on Tier-0 (recent) mail so a backfill never fires stale actions.
+ *  - `operational` — has external side effects (CalDAV / tasks); runs only on
+ *    Tier-0 (recent) mail so a backfill never fires stale actions.
  *  - `search`      — tags / entities / keywords that feed the search index.
  *  - `analytical`  — summaries / scoring.
  * `search` + `analytical` run on ALL tiers (old mail stays fully searchable).
@@ -65,27 +64,10 @@ export interface PipelineMessage {
   sourcePath: string | null;
 }
 
-/** A proposal an enricher wants to surface against its source message. */
-export interface ProposalDraft {
-  /** Proposal kind, e.g. 'calendar_event' | 'package_track' (enricher-defined). */
-  type: string;
-  /** Human-readable label for the action chip / list row. */
-  title?: string;
-  /** JSON-serialisable detail the approve-flow will act on. */
-  payload?: unknown;
-  /**
-   * When the offer silently expires (anti-"second inbox"). Omit to use the
-   * framework default (horizon-bounded); pass null for no expiry.
-   */
-  expiresAt?: Date | null;
-}
-
-/** What an enricher returns: a persisted result and/or proposals. Both optional. */
+/** What an enricher returns: a persisted result (optional). */
 export interface EnricherResult {
   /** JSON-serialisable output persisted to `enrichments.result` (search tokens, facts). */
   result?: unknown;
-  /** Offers to persist to `proposals` (replaces this enricher's prior proposals). */
-  proposals?: ProposalDraft[];
 }
 
 /** Context handed to an enricher run. */

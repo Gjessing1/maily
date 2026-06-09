@@ -60,16 +60,6 @@ export interface EnrichActiveMsg {
   subject: string | null;
 }
 
-/**
- * An enricher surfaced a proposal (Phase 4). Relayed so the MAIN thread can emit the
- * `action:ready` socket signal + Web Push — the worker has no socket/bus of its own.
- */
-export interface ProposalReadyMsg {
-  type: 'proposal:ready';
-  messageId: string;
-  label: string;
-}
-
 /** A handled failure inside the worker (logged on the main side too). */
 export interface WorkerErrorMsg {
   type: 'error';
@@ -77,9 +67,4 @@ export interface WorkerErrorMsg {
   message: string;
 }
 
-export type WorkerToMain =
-  | SweepDoneMsg
-  | EnrichDoneMsg
-  | EnrichActiveMsg
-  | ProposalReadyMsg
-  | WorkerErrorMsg;
+export type WorkerToMain = SweepDoneMsg | EnrichDoneMsg | EnrichActiveMsg | WorkerErrorMsg;

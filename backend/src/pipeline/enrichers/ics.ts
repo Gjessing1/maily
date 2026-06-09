@@ -5,25 +5,16 @@
  * Calendar, Outlook and friends embed in invite mail — captured at ingest into
  * `messages.body_calendar` (the small-inline-part exception, ARCHITECTURE §4) and
  * exposed here as `message.bodyCalendar`. Each `VEVENT` is normalised to a flat,
- * search-friendly shape (the `result`, for provenance / index) and offered as one
- * `calendar_event` proposal — surfaced later by the Action Center and, on approval,
- * PUT to Radicale.
+ * search-friendly shape (the `result`, for provenance / index).
  *
- * **Format alignment, no translation layer (ROADMAP Phase 4):** the `text/calendar`
- * part *is* iCalendar, exactly what Radicale (CalDAV) stores, so the proposal payload
- * reuses the same VEVENT-shaped `CalendarEventDraft` the `travel` enricher emits —
- * one representation across email-side parse and the future CalDAV push.
- *
- * Classification: `operational` (it emits proposals), so the framework gates it to
- * Tier 0 (recent) mail — a deep backfill never surfaces a stale "add this meeting"
- * offer (ARCHITECTURE §14), and an ignored offer silently expires (proposals.ts).
- * Method discipline: only an actual invite (`REQUEST`/`PUBLISH`, or a part with no
- * `METHOD`) produces an offer — a `CANCEL`/`REPLY`/`COUNTER` never proposes an add.
+ * Classification: `search` — a passive extractor that indexes calendar invites on all
+ * tiers. It emits no proposals; the parsed events (VEVENT shape, the same iCalendar
+ * Radicale stores) are kept ready for the future calendar integration (one
+ * representation shared with `travel` and the dormant CalDAV push, no translation).
  *
  * No LLM, no network: pure deterministic text parsing of the captured part.
  */
-import type { Enricher, EnricherContext, EnricherResult, ProposalDraft } from '../types.js';
-import type { CalendarEventDraft } from './travel.js';
+import type { Enricher, EnricherContext, EnricherResult } from '../types.js';
 
 /** A normalised calendar event parsed from one `VEVENT`. */
 export interface CalendarInvite {
@@ -51,9 +42,6 @@ export interface IcsFacts {
   method: string | null;
   events: CalendarInvite[];
 }
-
-/** METHODs that represent an *invitation* — the only ones we offer to add. */
-const INVITE_METHODS = new Set(['REQUEST', 'PUBLISH']);
 
 interface ContentLine {
   name: string;
@@ -251,30 +239,10 @@ export function parseCalendar(raw: string): IcsFacts {
   return { method, events };
 }
 
-/** Build the VEVENT-shaped calendar offer from a parsed invite. */
-function toCalendarDraft(e: CalendarInvite): CalendarEventDraft {
-  const desc = [e.description, e.organizer ? `Organizer: ${e.organizer}` : null]
-    .filter(Boolean)
-    .join('\n');
-  return {
-    summary: e.summary,
-    start: e.start,
-    end: e.end,
-    location: e.location,
-    description: desc || null,
-    source: 'invite',
-  };
-}
-
-/** An event worth offering carries at least a title or a start time. */
-function hasSubstance(e: CalendarInvite): boolean {
-  return Boolean(e.start) || e.summary !== 'Event';
-}
-
 export const icsEnricher: Enricher = {
   name: 'ics',
-  version: 1,
-  kind: 'operational',
+  version: 2,
+  kind: 'search',
   // Cheap gate: only mail with a captured calendar part carrying a VEVENT applies.
   applies(message) {
     return Boolean(message.bodyCalendar && message.bodyCalendar.includes('BEGIN:VEVENT'));
@@ -282,21 +250,6 @@ export const icsEnricher: Enricher = {
   run(ctx: EnricherContext): EnricherResult {
     const raw = ctx.message.bodyCalendar;
     if (!raw) return {};
-
-    const facts = parseCalendar(raw);
-    // Offer only genuine invitations (or a method-less part); a cancellation/reply
-    // is recorded for provenance but never proposes an add.
-    const offerable =
-      facts.method === null || INVITE_METHODS.has(facts.method)
-        ? facts.events.filter(hasSubstance)
-        : [];
-
-    const proposals: ProposalDraft[] = offerable.map((e) => ({
-      type: 'calendar_event',
-      title: e.summary,
-      payload: toCalendarDraft(e),
-    }));
-
-    return { result: facts, proposals };
+    return { result: parseCalendar(raw) };
   },
 };

@@ -99,16 +99,10 @@ async function runSweep(job: SweepJob): Promise<void> {
  *     single-flight, so they trickle a few per nudge: the slow historical backlog catches
  *     up over many nudges (the periodic enrich timer keeps nudging when idle) without
  *     starving cheap mail or monopolising the worker against sync sweeps (the N150 guard).
- *
- * Proposals from either phase are relayed to the main thread.
+ *     No LLM enrichers ship today; this stays as the seam for future LLM work (the LLM
+ *     client framework is preserved — ROADMAP Phase 5).
  */
 async function runEnrich(): Promise<void> {
-  const relay = (proposals: { messageId: string; label: string }[]): void => {
-    for (const p of proposals) {
-      post({ type: 'proposal:ready', messageId: p.messageId, label: p.label });
-    }
-  };
-
   const MAX_PASSES = 20;
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     let result;
@@ -118,13 +112,12 @@ async function runEnrich(): Promise<void> {
       post({ type: 'error', message: `enrich drain (cheap): ${(err as Error).message}` });
       break;
     }
-    relay(result.proposals);
     if (result.claimed === 0) break;
   }
 
   if (llmEnabled()) {
     try {
-      const result = await drainPipeline({
+      await drainPipeline({
         costs: ['llm'],
         max: env.pipelineLlmBatch,
         selfHeal: false,
@@ -137,7 +130,6 @@ async function runEnrich(): Promise<void> {
             subject: info.subject,
           }),
       });
-      relay(result.proposals);
     } catch (err) {
       post({ type: 'error', message: `enrich drain (llm): ${(err as Error).message}` });
     }

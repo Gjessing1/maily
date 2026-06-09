@@ -1,7 +1,7 @@
 /**
  * Enrichment pipeline — public surface (ROADMAP Phase 4; ARCHITECTURE §14/§15).
  *
- * The framework: `ingest → enrich → index → actions`. A unit of work is a pending
+ * The framework: `ingest → enrich → index`. A unit of work is a pending
  * row in the SQLite `enrichments` ledger (pull/claim queue → restart-safe,
  * reindex-native). `enqueueMessage` (ingest hook) creates the work; the shared
  * worker calls `drainPipeline` to run it. Enrichers register in `registry`.
@@ -10,13 +10,7 @@
  */
 export { enqueueMessage, backfillPending, backfillEnricherCoverage } from './enqueue.js';
 export { drainPipeline, reindex, queueDepth, enrichmentProgress, backoffMs } from './runner.js';
-export type {
-  DrainResult,
-  DrainOptions,
-  ProposalReady,
-  RowStartInfo,
-  ReindexScope,
-} from './runner.js';
+export type { DrainResult, DrainOptions, RowStartInfo, ReindexScope } from './runner.js';
 export {
   registerEnricher,
   unregisterEnricher,
@@ -32,6 +26,5 @@ export type {
   EnrichmentKind,
   EnrichmentCost,
   PipelineMessage,
-  ProposalDraft,
   Tier,
 } from './types.js';

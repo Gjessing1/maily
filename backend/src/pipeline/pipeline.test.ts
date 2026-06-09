@@ -7,8 +7,6 @@
  *     operational side effects on old mail),
  *   - the SQLite-backed pull/claim queue: enqueue (idempotent), self-heal backfill,
  *     claim → run → persist, retry-with-backoff → dead-letter,
- *   - proposals as a rebuildable projection (re-runs replace UN-ACTED offers but
- *     never clobber ones the user already approved),
  *   - reindex / version-bump reset paths (the §15 "drop and rebuild" contract).
  *
  * Every pipeline module reaches for the shared `db`/`env` at import, so we point
@@ -64,8 +62,7 @@ after(() => {
 let registrySnapshot: Enricher[];
 beforeEach(() => {
   registrySnapshot = P.allEnrichers();
-  // FK cascade from messages clears enrichments + proposals; clear all then accounts.
-  db.delete(schema.proposals).run();
+  // FK cascade from messages clears enrichments; clear all then accounts.
   db.delete(schema.enrichments).run();
   db.delete(schema.messages).run();
   db.delete(schema.accounts).run();
@@ -404,72 +401,6 @@ test('a throwing enricher fails with a backoff gate, then dead-letters at the at
 });
 
 // ========================================================================================
-// runner — proposals (the `derived` stage)
-// ========================================================================================
-
-test('an enricher proposal is persisted, returned, and re-runs replace UN-ACTED offers', async () => {
-  let label = 'first offer';
-  const proposer: Enricher = {
-    name: 'test-proposer',
-    version: 1,
-    kind: 'operational',
-    run: () => ({ proposals: [{ type: 'calendar_event', title: label, payload: { v: 1 } }] }),
-  };
-  only(proposer);
-  const acct = seedAccount();
-  const msg = seedMessage(acct);
-  P.enqueueMessage(msg, new Date());
-
-  const res = await P.drainPipeline({ selfHeal: false });
-  assert.equal(res.proposals.length, 1);
-  assert.deepEqual(res.proposals[0], { messageId: msg, label: 'first offer' });
-
-  let props = db.select().from(schema.proposals).where(eq(schema.proposals.messageId, msg)).all();
-  assert.equal(props.length, 1);
-  assert.equal(props[0]!.status, 'pending');
-  assert.equal(props[0]!.type, 'calendar_event');
-  assert.ok(props[0]!.expiresAt, 'a default horizon-bounded expiry was set');
-
-  // Re-run with a fresh label: the prior PENDING proposal is replaced, not duplicated.
-  label = 'second offer';
-  P.reindex({ kind: 'message', messageId: msg });
-  await P.drainPipeline({ selfHeal: false });
-  props = db.select().from(schema.proposals).where(eq(schema.proposals.messageId, msg)).all();
-  assert.equal(props.length, 1, 'replaced, not stacked');
-  assert.equal(props[0]!.title, 'second offer');
-});
-
-test('re-running an enricher never clobbers a proposal the user already approved', async () => {
-  const proposer: Enricher = {
-    name: 'test-proposer2',
-    version: 1,
-    kind: 'operational',
-    run: () => ({ proposals: [{ type: 'package_track', title: 'track it' }] }),
-  };
-  only(proposer);
-  const acct = seedAccount();
-  const msg = seedMessage(acct);
-
-  // Pre-existing APPROVED proposal from this enricher.
-  db.insert(schema.proposals)
-    .values({
-      messageId: msg,
-      enricher: 'test-proposer2',
-      type: 'package_track',
-      title: 'approved one',
-      status: 'approved',
-    })
-    .run();
-
-  P.enqueueMessage(msg, new Date());
-  await P.drainPipeline({ selfHeal: false });
-
-  const props = db.select().from(schema.proposals).where(eq(schema.proposals.messageId, msg)).all();
-  const statuses = props.map((p) => p.status).sort();
-  assert.deepEqual(statuses, ['approved', 'pending'], 'approved survived, new pending added');
-});
-
-// ========================================================================================
 // runner — self-heal, queueDepth, reindex
 // ========================================================================================
 
@@ -622,10 +553,10 @@ const FLIGHT_LD = {
   },
 };
 
-test('travel: the enricher self-registers and is operational (Tier-0 gated)', () => {
+test('travel: the enricher self-registers as a passive search extractor', () => {
   const travel = P.enricherByName('travel');
   assert.ok(travel, 'travel enricher is registered by default');
-  assert.equal(travel.kind, 'operational');
+  assert.equal(travel.kind, 'search');
 });
 
 test('travel: applies() only fires for HTML bodies carrying JSON-LD', () => {
@@ -635,7 +566,7 @@ test('travel: applies() only fires for HTML bodies carrying JSON-LD', () => {
   assert.equal(travel.applies!(pmsg(null)), false);
 });
 
-test('travel: extracts a FlightReservation and emits a VEVENT-shaped calendar offer', async () => {
+test('travel: extracts a FlightReservation into a normalised result', async () => {
   const travel = P.enricherByName('travel')!;
   const out = await travel.run({ message: pmsg(ldHtml(FLIGHT_LD)), tier: 0 });
   const result = out.result as { reservations: Array<Record<string, unknown>> };
@@ -647,18 +578,6 @@ test('travel: extracts a FlightReservation and emits a VEVENT-shaped calendar of
     startsAt: '2099-03-04T20:15:00-08:00',
     endsAt: '2099-03-05T06:30:00-05:00',
     location: 'SFO → JFK',
-  });
-  assert.equal(out.proposals?.length, 1);
-  const p = out.proposals![0]!;
-  assert.equal(p.type, 'calendar_event');
-  assert.equal(p.title, 'UA110 SFO→JFK');
-  assert.deepEqual(p.payload, {
-    summary: 'UA110 SFO→JFK',
-    start: '2099-03-04T20:15:00-08:00',
-    end: '2099-03-05T06:30:00-05:00',
-    location: 'SFO → JFK',
-    description: 'Confirmation: ABC123',
-    source: 'flight',
   });
 });
 
@@ -719,17 +638,16 @@ test('travel: tolerates a malformed JSON-LD block and parses the valid sibling',
   assert.equal((out.result as { reservations: unknown[] }).reservations.length, 1);
 });
 
-test('travel: a non-reservation JSON-LD body yields no reservations and no proposals', async () => {
+test('travel: a non-reservation JSON-LD body yields no reservations', async () => {
   const travel = P.enricherByName('travel')!;
   const out = await travel.run({
     message: pmsg(ldHtml({ '@type': 'Organization', name: 'ACME' })),
     tier: 0,
   });
   assert.deepEqual(out.result, { reservations: [] });
-  assert.equal(out.proposals, undefined);
 });
 
-test('travel: end-to-end drain persists the calendar proposal and signals it', async () => {
+test('travel: end-to-end drain persists the reservation result', async () => {
   only(P.enricherByName('travel')!);
   const acct = seedAccount();
   const msg = seedMessage(acct, { receivedAt: new Date(), bodyHtml: ldHtml(FLIGHT_LD) });
@@ -737,23 +655,20 @@ test('travel: end-to-end drain persists the calendar proposal and signals it', a
 
   const res = await P.drainPipeline({ selfHeal: false });
   assert.equal(res.ok, 1);
-  assert.equal(res.proposals.length, 1, 'a proposal was surfaced this drain');
-  assert.equal(res.proposals[0]!.label, 'UA110 SFO→JFK');
 
-  const prop = db.select().from(schema.proposals).where(eq(schema.proposals.messageId, msg)).get();
-  assert.ok(prop, 'proposal row persisted');
-  assert.equal(prop.type, 'calendar_event');
-  assert.equal(prop.enricher, 'travel');
-  assert.equal(prop.status, 'pending');
-  assert.ok(prop.expiresAt, 'horizon-bounded expiry is set');
+  const row = oneRow(msg, 'travel');
+  assert.equal(row.status, 'ok');
+  const result = JSON.parse(row.result!) as { reservations: Array<{ title: string }> };
+  assert.equal(result.reservations.length, 1);
+  assert.equal(result.reservations[0]!.title, 'UA110 SFO→JFK');
 });
 
-test('travel: old mail is suppressed (operational) so no stale flight offers fire', () => {
-  // enrichersForTier drops operational enrichers on Tier 1 — the framework guarantee
-  // that a deep backfill can never surface a years-old "add this flight" proposal.
+test('travel: search-kind runs on old mail too (no tier suppression)', () => {
+  // travel is a passive extractor now — old mail stays fully indexed (ARCHITECTURE §14:
+  // search/analytical run on all tiers; only operational side effects are Tier-0 gated).
   only(P.enricherByName('travel')!);
   const names = P.enrichersForTier(1).map((e) => e.name);
-  assert.deepEqual(names, [], 'travel does not enqueue for older mail');
+  assert.deepEqual(names, ['travel'], 'travel still enqueues for older mail');
 });
 
 // ========================================================================================

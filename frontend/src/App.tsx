@@ -14,8 +14,6 @@ import { Search } from './routes/Search';
 import { Settings } from './routes/Settings';
 import { Contacts } from './routes/Contacts';
 import { ContactDetail } from './routes/ContactDetail';
-import { Actions } from './routes/Actions';
-import { Trips } from './routes/Trips';
 import { Cleanup } from './routes/Cleanup';
 import { CleanupMessages } from './routes/CleanupMessages';
 
@@ -55,8 +53,6 @@ export function App() {
         <Route path="/m/:id" element={<Reader />} />
         <Route path="/compose" element={<Compose />} />
         <Route path="/search" element={<Search />} />
-        <Route path="/actions" element={<Actions />} />
-        <Route path="/trips" element={<Trips />} />
         <Route path="/cleanup" element={<Cleanup />} />
         <Route path="/cleanup/messages" element={<CleanupMessages />} />
         <Route path="/settings" element={<Settings />} />

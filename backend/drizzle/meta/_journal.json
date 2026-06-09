@@ -120,6 +120,13 @@
       "when": 1780343723895,
       "tag": "0016_enrichment_cost",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1780343723896,
+      "tag": "0017_drop_proposals",
+      "breakpoints": true
     }
   ]
 }

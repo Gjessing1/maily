@@ -9,7 +9,6 @@ import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/t
 import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
-import { MessageActions } from '../components/proposals/MessageActions';
 import { ContactEditor } from '../components/ContactEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
@@ -389,8 +388,6 @@ export function ReaderView({
                 </dl>
               )}
             </div>
-
-            <MessageActions messageId={detail.id} />
 
             <div className="border-t border-border">
               {imagesBlocked && (
