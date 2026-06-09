@@ -11,7 +11,7 @@ import { api } from '../api/client';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, LinkIcon, MailIcon, PencilIcon } from '../ui/icons';
+import { BackIcon, CheckIcon, CopyIcon, LinkIcon, MailIcon, PencilIcon } from '../ui/icons';
 
 /** A line of the address, skipping empty components. */
 function addressLines(a: ContactCardDto['addresses'][number]): string[] {
@@ -102,7 +102,13 @@ export function ContactDetail() {
 
             <div className="px-2 pb-10">
               {card.emails.map((e) => (
-                <ActionRow key={`e-${e}`} label="email" value={e} onClick={() => compose(e)}>
+                <ActionRow
+                  key={`e-${e}`}
+                  label="email"
+                  value={e}
+                  onClick={() => compose(e)}
+                  trailing={<CopyButton value={e} label="email address" />}
+                >
                   <MailIcon className="size-5 text-faint" />
                 </ActionRow>
               ))}
@@ -199,6 +205,7 @@ function ActionRow({
   onClick,
   external,
   multiline,
+  trailing,
   children,
 }: {
   label: string;
@@ -207,6 +214,8 @@ function ActionRow({
   onClick?: () => void;
   external?: boolean;
   multiline?: boolean;
+  /** Optional secondary action (e.g. copy) rendered beside the row, not nested in it. */
+  trailing?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const inner = (
@@ -222,17 +231,44 @@ function ActionRow({
       </span>
     </>
   );
-  const cls = 'flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-left active:bg-surface-2';
-  if (href) {
-    return (
-      <a href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className={cls}>
-        {inner}
-      </a>
-    );
-  }
-  return (
+  // The main row fills the width; a trailing action (copy) sits beside it as a
+  // sibling so its tap never triggers the row's compose/dial/open.
+  const cls =
+    'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2.5 text-left active:bg-surface-2';
+  const main = href ? (
+    <a href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className={cls}>
+      {inner}
+    </a>
+  ) : (
     <button onClick={onClick} className={cls}>
       {inner}
+    </button>
+  );
+  if (!trailing) return main;
+  return (
+    <div className="flex items-center">
+      {main}
+      {trailing}
+    </div>
+  );
+}
+
+/** Copy `value` to the clipboard, flashing a check for confirmation. */
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="flex size-9 shrink-0 items-center justify-center rounded-full text-faint active:bg-surface-2"
+      aria-label={copied ? 'Copied' : `Copy ${label}`}
+    >
+      {copied ? <CheckIcon className="size-5 text-accent" /> : <CopyIcon className="size-5" />}
     </button>
   );
 }

@@ -262,6 +262,13 @@ export const LinkIcon = (p: IconProps) => (
   </Base>
 );
 
+export const CopyIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </Base>
+);
+
 export const ExpandIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
