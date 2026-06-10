@@ -1,9 +1,9 @@
 /**
  * Cleanup Dashboard API (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
  * Read-only deterministic analytics over the local SQLite archive (a storage audit plus the
- * delete-eligible slices — senders never replied to, cold-storage candidates — each with its
- * preview impact) PLUS the Phase 6b execution path: POST /execute queues a slice for trashing
- * and GET /queue reports trickle progress.
+ * delete-eligible slices — senders never replied to, cold-storage candidates, large messages,
+ * unread-and-old, newsletters — each with its preview impact) PLUS the Phase 6b execution
+ * path: POST /execute queues a slice for trashing and GET /queue reports trickle progress.
  *
  * Safety invariants on execute: the client sends only the slice + filters (never a message
  * list), and `sliceMessageIds` re-runs the SAME predicates the preview used — so the HARD
@@ -20,16 +20,18 @@ import type {
 import {
   cleanupSummary,
   coldStorageCandidates,
+  isDeleteSlice,
+  largeMessages,
   neverRepliedSenders,
+  newsletterMessages,
   sliceMessageIds,
   sliceMessages,
   storageByDomain,
+  unreadOldMessages,
 } from '../../cleanup/slices.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
 import { markMessageDeleted } from '../../imap/store.js';
 import { emitSignal } from '../../events.js';
-
-const DELETE_ELIGIBLE = new Set(['never-replied', 'cold-storage']);
 
 /** Parse the shared group-list paging/search query (`q` substring + `offset`). */
 function pageOpts(q: { offset?: string; q?: string }): { q?: string; offset?: number } {
@@ -38,6 +40,12 @@ function pageOpts(q: { offset?: string; q?: string }): { q?: string; offset?: nu
     q: q.q?.trim() ? q.q.trim() : undefined,
     offset: Number.isFinite(off) && off > 0 ? off : undefined,
   };
+}
+
+/** Parse a positive numeric query param, or undefined (slice defaults apply). */
+function posNum(raw: string | undefined): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 type PageQuery = { offset?: string; q?: string };
@@ -59,13 +67,22 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Cold-storage candidates — old mail without value markers (invoice/tax/contract).
   app.get<{ Querystring: PageQuery & { years?: string } }>(
     '/api/cleanup/cold-storage',
-    async (req) => {
-      const years = Number(req.query.years);
-      return coldStorageCandidates(
-        Number.isFinite(years) && years > 0 ? years : undefined,
-        pageOpts(req.query),
-      );
-    },
+    async (req) => coldStorageCandidates(posNum(req.query.years), pageOpts(req.query)),
+  );
+
+  // Large messages — estimated size over the `minMb` threshold (the size angle).
+  app.get<{ Querystring: PageQuery & { minMb?: string } }>('/api/cleanup/large', async (req) =>
+    largeMessages(posNum(req.query.minMb), pageOpts(req.query)),
+  );
+
+  // Unread-and-old — never opened and older than `months` (the attention angle).
+  app.get<{ Querystring: PageQuery & { months?: string } }>('/api/cleanup/unread', async (req) =>
+    unreadOldMessages(posNum(req.query.months), pageOpts(req.query)),
+  );
+
+  // Newsletters / bulk mail — unsubscribe-marker heuristic (the bulk-mail angle).
+  app.get<{ Querystring: PageQuery }>('/api/cleanup/newsletters', async (req) =>
+    newsletterMessages(pageOpts(req.query)),
   );
 
   // Drill a delete-eligible slice down to individual messages (review surface), optionally
@@ -74,23 +91,25 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     Querystring: {
       slice?: string;
       years?: string;
+      minMb?: string;
+      months?: string;
       domain?: string;
       limit?: string;
       offset?: string;
     };
   }>('/api/cleanup/messages', async (req, reply): Promise<CleanupMessagesDto> => {
-    const { slice, years, domain, limit, offset } = req.query;
-    if (!slice || !DELETE_ELIGIBLE.has(slice)) {
+    const { slice, years, minMb, months, domain, limit, offset } = req.query;
+    if (!slice || !isDeleteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not drillable' }) as never;
     }
-    const y = Number(years);
-    const lim = Number(limit);
-    const off = Number(offset);
-    const res = sliceMessages(slice as 'never-replied' | 'cold-storage', {
-      years: Number.isFinite(y) && y > 0 ? y : undefined,
+    const lim = posNum(limit);
+    const res = sliceMessages(slice, {
+      years: posNum(years),
+      minMb: posNum(minMb),
+      months: posNum(months),
       domain: domain || undefined,
-      limit: Number.isFinite(lim) && lim > 0 ? Math.min(lim, 500) : undefined,
-      offset: Number.isFinite(off) && off > 0 ? off : undefined,
+      limit: lim ? Math.min(lim, 500) : undefined,
+      offset: posNum(offset),
     });
     return { slice, domain: domain || null, ...res };
   });
@@ -98,14 +117,21 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
   app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
-    const { slice, years, messageIds, domain, excludeDomains } = req.body ?? {};
-    if (!slice || !DELETE_ELIGIBLE.has(slice)) {
+    const { slice, years, minMb, months, messageIds, domain, excludeDomains } = req.body ?? {};
+    if (!slice || !isDeleteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not delete-eligible' });
     }
 
     // The scope (messageIds/domain/excludeDomains) only narrows the server-resolved eligible
     // set — the HARD safety gate is re-applied inside sliceMessageIds, never trusting the client.
-    const refs = sliceMessageIds(slice, { years, messageIds, domain, excludeDomains });
+    const refs = sliceMessageIds(slice, {
+      years,
+      minMb,
+      months,
+      messageIds,
+      domain,
+      excludeDomains,
+    });
     for (const ref of refs) {
       markMessageDeleted(ref.id);
       emitSignal({ type: 'mail:deleted', accountId: ref.accountId, messageId: ref.id });

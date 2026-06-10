@@ -86,11 +86,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** Cleanup group-list paging/search: a domain substring (`q`) and a page `offset`. */
+/** Cleanup group-list paging/search: a domain substring (`q`), a page `offset`, thresholds. */
 interface GroupPage {
   q?: string;
   offset?: number;
   years?: number;
+  minMb?: number;
+  months?: number;
 }
 
 /** Build the `?q=…&offset=…&years=…` query for a slice request (omitting empty parts). */
@@ -99,6 +101,8 @@ function groupQuery(opts: GroupPage): string {
   if (opts.q?.trim()) p.set('q', opts.q.trim());
   if (opts.offset) p.set('offset', String(opts.offset));
   if (opts.years) p.set('years', String(opts.years));
+  if (opts.minMb) p.set('minMb', String(opts.minMb));
+  if (opts.months) p.set('months', String(opts.months));
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -304,17 +308,27 @@ export const api = {
       request<CleanupSliceDto>(`/api/cleanup/never-replied${groupQuery(opts)}`),
     coldStorage: (years?: number, opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/cold-storage${groupQuery({ ...opts, years })}`),
+    large: (minMb?: number, opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/large${groupQuery({ ...opts, minMb })}`),
+    unread: (months?: number, opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/unread${groupQuery({ ...opts, months })}`),
+    newsletters: (opts: GroupPage = {}) =>
+      request<CleanupSliceDto>(`/api/cleanup/newsletters${groupQuery(opts)}`),
     /** Drill a delete-eligible slice down to messages, optionally scoped to one sender. */
     messages: (opts: {
       slice: string;
       domain?: string;
       years?: number;
+      minMb?: number;
+      months?: number;
       limit?: number;
       offset?: number;
     }) => {
       const q = new URLSearchParams({ slice: opts.slice });
       if (opts.domain) q.set('domain', opts.domain);
       if (opts.years) q.set('years', String(opts.years));
+      if (opts.minMb) q.set('minMb', String(opts.minMb));
+      if (opts.months) q.set('months', String(opts.months));
       if (opts.limit) q.set('limit', String(opts.limit));
       if (opts.offset) q.set('offset', String(opts.offset));
       return request<CleanupMessagesDto>(`/api/cleanup/messages?${q.toString()}`);

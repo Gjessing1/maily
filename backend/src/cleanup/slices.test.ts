@@ -72,6 +72,8 @@ function seedMessage(
     toAddresses?: string;
     folderId?: string;
     sourceBytes?: number;
+    seen?: boolean;
+    flagged?: boolean;
   },
 ): string {
   const id = randomUUID();
@@ -86,6 +88,8 @@ function seedMessage(
       toAddresses: opts.toAddresses ?? null,
       receivedAt: opts.receivedAt ?? new Date(),
       sourceBytes: opts.sourceBytes ?? null,
+      seen: opts.seen ?? false,
+      flagged: opts.flagged ?? false,
     })
     .run();
   if (opts.folderId) {
@@ -199,6 +203,124 @@ test('coldStorageCandidates: old non-protected value-free mail only', () => {
   assert.ok(findGroup(slice, 'promo.example'));
   assert.equal(findGroup(slice, 'shop.example'), undefined, 'value-marker mail kept');
   assert.equal(findGroup(slice, 'bank.example'), undefined, 'protected mail excluded');
+});
+
+test('largeMessages: only messages over the MB threshold, protected mail excluded', () => {
+  const acct = seedAccount();
+  // ~2 MB attachment → over a 1 MB threshold.
+  const big = seedMessage(acct, { fromAddress: 'cam@photos.example', bodyText: 'pics' });
+  db.insert(schema.attachments)
+    .values({ messageId: big, sizeBytes: 2 * 1024 * 1024 })
+    .run();
+  // Small message → under the threshold.
+  seedMessage(acct, { fromAddress: 'a@small.example', bodyText: 'tiny' });
+  // Big but protected (invoice) → the HARD gate keeps it out.
+  const prot = seedMessage(acct, { fromAddress: 'b@bank.example', bodyText: 'your invoice' });
+  db.insert(schema.attachments)
+    .values({ messageId: prot, sizeBytes: 2 * 1024 * 1024 })
+    .run();
+
+  const slice = S.largeMessages(1);
+  assert.equal(slice.totalMessages, 1, 'only the big, unprotected message');
+  assert.ok(findGroup(slice, 'photos.example'));
+  assert.equal(findGroup(slice, 'small.example'), undefined, 'small mail excluded');
+  assert.equal(findGroup(slice, 'bank.example'), undefined, 'protected mail excluded');
+
+  // Resolves to the same message on the execute path.
+  const refs = S.sliceMessageIds('large', { minMb: 1 });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [big],
+  );
+});
+
+test('unreadOldMessages: unread + old only; seen, recent, flagged and protected excluded', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 2 * YEAR);
+
+  const stale = seedMessage(acct, {
+    fromAddress: 'a@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  // Opened → excluded even though old.
+  seedMessage(acct, {
+    fromAddress: 'b@read.example',
+    bodyText: 'sale',
+    receivedAt: old,
+    seen: true,
+  });
+  // Unread but recent → excluded.
+  seedMessage(acct, { fromAddress: 'c@new.example', bodyText: 'sale' });
+  // Unread + old but flagged → deliberately kept.
+  seedMessage(acct, {
+    fromAddress: 'd@starred.example',
+    bodyText: 'sale',
+    receivedAt: old,
+    flagged: true,
+  });
+  // Unread + old but protected (password) → the HARD gate keeps it out.
+  seedMessage(acct, {
+    fromAddress: 'e@bank.example',
+    bodyText: 'password reset',
+    receivedAt: old,
+  });
+
+  const slice = S.unreadOldMessages(12);
+  assert.equal(slice.totalMessages, 1, 'only the unread, old, unflagged, unprotected message');
+  assert.ok(findGroup(slice, 'promo.example'));
+
+  const refs = S.sliceMessageIds('unread', { months: 12 });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [stale],
+  );
+});
+
+test('newsletterMessages: unsubscribe-marker mail only (EN+NO), protected excluded', () => {
+  const acct = seedAccount();
+
+  const en = seedMessage(acct, {
+    fromAddress: 'news@promo.example',
+    bodyText: 'Click here to unsubscribe from this list',
+  });
+  const no = seedMessage(acct, {
+    fromAddress: 'nyhet@avis.example',
+    bodyText: 'Du kan melde deg av vårt nyhetsbrev her',
+  });
+  // Ordinary personal mail → not a newsletter.
+  seedMessage(acct, { fromAddress: 'mum@family.example', bodyText: 'see you sunday' });
+  // Newsletter-marked but protected (invoice) → the HARD gate keeps it out.
+  seedMessage(acct, {
+    fromAddress: 'billing@shop.example',
+    bodyText: 'your invoice — unsubscribe here',
+  });
+
+  const slice = S.newsletterMessages();
+  assert.equal(slice.totalMessages, 2, 'both unsubscribe-marked, unprotected messages');
+  assert.ok(findGroup(slice, 'promo.example'));
+  assert.ok(findGroup(slice, 'avis.example'), 'Norwegian marker matches');
+  assert.equal(findGroup(slice, 'family.example'), undefined, 'personal mail excluded');
+  assert.equal(findGroup(slice, 'shop.example'), undefined, 'protected mail excluded');
+
+  const ids = new Set(S.sliceMessageIds('newsletters').map((r) => r.id));
+  assert.deepEqual(ids, new Set([en, no]));
+});
+
+test('sliceMessages(large): drill-down lists exactly the over-threshold messages', () => {
+  const acct = seedAccount();
+  const big = seedMessage(acct, { fromAddress: 'cam@photos.example', subject: 'Holiday pics' });
+  db.insert(schema.attachments)
+    .values({ messageId: big, sizeBytes: 3 * 1024 * 1024 })
+    .run();
+  seedMessage(acct, { fromAddress: 'a@photos.example', bodyText: 'tiny' });
+
+  const res = S.sliceMessages('large', { minMb: 1, domain: 'photos.example' });
+  assert.deepEqual(
+    res.messages.map((m) => m.id),
+    [big],
+  );
+  assert.equal(res.messages[0]!.subject, 'Holiday pics');
 });
 
 test('sliceMessageIds(cold-storage): resolves to the same messages, safety re-applied', () => {

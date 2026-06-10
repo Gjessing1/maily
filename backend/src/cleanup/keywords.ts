@@ -79,6 +79,22 @@ export const PROTECTED_KEYWORDS: string[] = [
 ];
 
 /**
+ * Newsletter / bulk-mail markers — the deterministic "this is a mailing list blast"
+ * heuristic for the newsletters cleanup slice. A message whose body carries an
+ * unsubscribe affordance is almost always bulk mail; false positives are tolerable
+ * because the slice only *suggests* (the HARD safety gate still applies on top, and
+ * every deletion is user-confirmed). Phrases are allowed — they compile to FTS5
+ * prefix-phrases (`"meld deg av"*`).
+ */
+export const NEWSLETTER_KEYWORDS: string[] = [
+  'unsubscribe',
+  'newsletter',
+  'avmeld',
+  'nyhetsbrev',
+  'meld deg av',
+];
+
+/**
  * Cold-storage "keep" markers — the value terms from the roadmap's cold heuristic
  * (invoice / tax / contract). An old message carrying one of these is kept, not pruned.
  */

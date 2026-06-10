@@ -1,15 +1,17 @@
 /**
  * Deterministic cleanup slices (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
- * Read-only power-user analytics over the local SQLite archive — the slices that ship
- * *first* because they need no enrichment: a storage audit, senders never replied to,
- * and cold-storage candidates. Each returns a **preview impact** (message count + an
- * estimated byte total, grouped by sender domain) so the eventual 1-click presets can
- * always show "delete N, free X" before any execution.
+ * Read-only power-user analytics over the local SQLite archive — slices that need no
+ * enrichment, each a different *angle* on "what could I be tempted to delete":
+ *  - storage audit (informational), senders never replied to, cold-storage candidates,
+ *  - large messages (size angle), unread-and-old (attention angle),
+ *  - newsletters (bulk-mail angle via the FTS unsubscribe heuristic).
+ * Each returns a **preview impact** (message count + an estimated byte total, grouped by
+ * sender domain) so the dashboard can always show "delete N, free X" before any execution.
  *
  * Two invariants:
- *  - **Never delete-eligible without the safety gate.** The destructive slices
- *    (never-replied, cold-storage) AND-in `notProtected` so financial / legal /
- *    account-security / medical mail (EN+NO) can never surface (ROADMAP HARD RULES).
+ *  - **Never delete-eligible without the safety gate.** Every destructive slice
+ *    AND-s in `notProtected` so financial / legal / account-security / medical mail
+ *    (EN+NO) can never surface (ROADMAP HARD RULES).
  *  - **No LIKE-scan.** Keyword matching rides the FTS5 index (ARCHITECTURE §12).
  *
  * This is analytics only — no IMAP, no mutation. Bulk execution (the rate-limited trash
@@ -23,14 +25,20 @@ import type {
   CleanupSummaryDto,
 } from '@maily/shared';
 import { db } from '../db/client.js';
-import { COLD_KEEP_KEYWORDS } from './keywords.js';
+import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
 import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
 const GROUP_LIMIT = 50;
 /** Default cold-storage age threshold (years). */
 const COLD_YEARS = 2;
+/** Default large-message size threshold (MB). */
+const LARGE_MIN_MB = 10;
+/** Default unread-and-old age threshold (months). */
+const UNREAD_MONTHS = 12;
 const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+const MS_PER_MONTH = MS_PER_YEAR / 12;
+const MB = 1024 * 1024;
 
 /**
  * Per-message byte estimate: the archived raw `.eml` size (`source_bytes`, the dominant
@@ -225,6 +233,106 @@ export function coldStorageCandidates(
   return { slice: 'cold-storage', groups, truncated, ...totalsFor(where) };
 }
 
+/**
+ * The large-message predicate: estimated size ≥ `minBytes`, not protected. The size
+ * angle — a single fat message (usually attachments) is the quickest storage win.
+ */
+function largeWhere(minBytes: number): SQL {
+  return sql`${LIVE} AND ${notProtected('m')} AND ${BYTES} >= ${minBytes}`;
+}
+
+/**
+ * The unread-and-old predicate: never opened (`seen = 0`), older than `months`, not a
+ * draft, not flagged (a starred-but-unread message is deliberately kept), not protected.
+ * The attention angle — mail never even opened after this long was never needed.
+ */
+function unreadWhere(months: number): SQL {
+  const cutoff = Date.now() - months * MS_PER_MONTH;
+  return sql`${LIVE}
+    AND m.seen = 0 AND m.draft = 0 AND m.flagged = 0
+    AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
+    AND ${notProtected('m')}`;
+}
+
+/**
+ * The newsletters predicate: the body carries an unsubscribe / newsletter marker (EN+NO)
+ * — the deterministic bulk-mail heuristic, riding the FTS index. The bulk-mail angle.
+ */
+function newslettersWhere(): SQL {
+  const match = ftsOrMatch(NEWSLETTER_KEYWORDS);
+  return sql`${LIVE} AND ${notProtected('m')}
+    AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${match})`;
+}
+
+/** Large messages — estimated size ≥ `minMb` (default {@link LARGE_MIN_MB} MB). */
+export function largeMessages(minMb = LARGE_MIN_MB, opts: GroupPageOpts = {}): CleanupSliceDto {
+  const where = largeWhere(minMb * MB);
+  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
+  return { slice: 'large', groups, truncated, ...totalsFor(where) };
+}
+
+/** Unread-and-old — never opened and older than `months` (default {@link UNREAD_MONTHS}). */
+export function unreadOldMessages(
+  months = UNREAD_MONTHS,
+  opts: GroupPageOpts = {},
+): CleanupSliceDto {
+  const where = unreadWhere(months);
+  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
+  return { slice: 'unread', groups, truncated, ...totalsFor(where) };
+}
+
+/** Newsletters / bulk mail — messages carrying an unsubscribe marker (FTS heuristic). */
+export function newsletterMessages(opts: GroupPageOpts = {}): CleanupSliceDto {
+  const where = newslettersWhere();
+  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
+  return { slice: 'newsletters', groups, truncated, ...totalsFor(where) };
+}
+
+/** The delete-eligible slice ids — every angle except the informational storage audit. */
+export type DeleteSlice = 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
+
+/** Runtime guard for {@link DeleteSlice} — shared by the routes' input validation. */
+export const DELETE_SLICES: ReadonlySet<string> = new Set<DeleteSlice>([
+  'never-replied',
+  'cold-storage',
+  'large',
+  'unread',
+  'newsletters',
+]);
+
+/** Narrow an untrusted slice id to a {@link DeleteSlice}. */
+export function isDeleteSlice(slice: string): slice is DeleteSlice {
+  return DELETE_SLICES.has(slice);
+}
+
+/** Per-slice tunable thresholds (each ignored by the slices it doesn't apply to). */
+export interface SliceThresholds {
+  /** Cold-storage age threshold (years). */
+  years?: number;
+  /** Large-message size threshold (MB). */
+  minMb?: number;
+  /** Unread-and-old age threshold (months). */
+  months?: number;
+}
+
+/**
+ * The shared SQL predicate of a pure-SQL delete-eligible slice (everything except
+ * never-replied, whose reply-set filter runs in JS). Single source of truth so the
+ * preview, drill-down, and execute paths can never drift apart.
+ */
+function sqlSliceWhere(slice: Exclude<DeleteSlice, 'never-replied'>, t: SliceThresholds): SQL {
+  switch (slice) {
+    case 'cold-storage':
+      return coldStorageWhere(t.years ?? COLD_YEARS);
+    case 'large':
+      return largeWhere((t.minMb ?? LARGE_MIN_MB) * MB);
+    case 'unread':
+      return unreadWhere(t.months ?? UNREAD_MONTHS);
+    case 'newsletters':
+      return newslettersWhere();
+  }
+}
+
 /** A single message earmarked for cleanup execution (the trash queue's unit of work). */
 export interface CleanupMessageRef {
   id: string;
@@ -247,20 +355,19 @@ export interface CleanupMessageRef {
  * Only the destructive slices resolve — 'storage' is informational and throws.
  */
 export function sliceMessageIds(
-  slice: 'never-replied' | 'cold-storage',
-  opts: { years?: number; domain?: string; messageIds?: string[]; excludeDomains?: string[] } = {},
+  slice: DeleteSlice,
+  opts: SliceThresholds & {
+    domain?: string;
+    messageIds?: string[];
+    excludeDomains?: string[];
+  } = {},
 ): CleanupMessageRef[] {
   const exclude = new Set((opts.excludeDomains ?? []).map((d) => d.toLowerCase()));
   const only = opts.domain?.toLowerCase();
   const ids = opts.messageIds ? new Set(opts.messageIds) : null;
 
   let rows: { id: string; accountId: string; domain: string }[];
-  if (slice === 'cold-storage') {
-    rows = db.all(
-      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
-          FROM messages m WHERE ${coldStorageWhere(opts.years ?? COLD_YEARS)}`,
-    ) as typeof rows;
-  } else if (slice === 'never-replied') {
+  if (slice === 'never-replied') {
     const replied = repliedDomains();
     rows = (
       db.all(
@@ -268,6 +375,11 @@ export function sliceMessageIds(
             FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
       ) as typeof rows
     ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
+  } else if (DELETE_SLICES.has(slice)) {
+    rows = db.all(
+      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+          FROM messages m WHERE ${sqlSliceWhere(slice, opts)}`,
+    ) as typeof rows;
   } else {
     throw new Error(`slice '${slice as string}' is not delete-eligible`);
   }
@@ -310,17 +422,15 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
  * can paginate. Only the destructive slices drill — 'storage' is informational and throws.
  */
 export function sliceMessages(
-  slice: 'never-replied' | 'cold-storage',
-  opts: { years?: number; domain?: string; limit?: number; offset?: number } = {},
+  slice: DeleteSlice,
+  opts: SliceThresholds & { domain?: string; limit?: number; offset?: number } = {},
 ): { messages: CleanupMessageDto[]; total: number; truncated: boolean } {
   const limit = opts.limit ?? MESSAGE_LIMIT;
   const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
   const domain = opts.domain?.toLowerCase();
 
   const base =
-    slice === 'cold-storage'
-      ? coldStorageWhere(opts.years ?? COLD_YEARS)
-      : sql`${LIVE} AND ${notProtected('m')}`;
+    slice === 'never-replied' ? sql`${LIVE} AND ${notProtected('m')}` : sqlSliceWhere(slice, opts);
   const where = domain ? sql`${base} AND ${DOMAIN} = ${domain}` : base;
 
   const rows = db.all(

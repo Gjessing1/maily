@@ -20,16 +20,29 @@ import { CleanupMessageRow, SLICE_LABELS, formatBytes } from './Cleanup';
 /** Messages fetched per page; "Load more" pulls the next page. */
 const PAGE_SIZE = 100;
 
-/** Delete-eligible slices that this drill-down can execute. */
-const DELETE_ELIGIBLE = new Set(['never-replied', 'cold-storage']);
+/** Delete-eligible slices that this drill-down can execute (backend DELETE_SLICES). */
+const DELETE_ELIGIBLE = new Set([
+  'never-replied',
+  'cold-storage',
+  'large',
+  'unread',
+  'newsletters',
+]);
+
+/** A positive number from a query param, or undefined (server defaults apply). */
+function numParam(raw: string | null): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 export function CleanupMessages() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const slice = params.get('slice') ?? '';
   const domain = params.get('domain') ?? undefined;
-  const yearsRaw = params.get('years');
-  const years = yearsRaw ? Number(yearsRaw) : undefined;
+  const years = numParam(params.get('years'));
+  const minMb = numParam(params.get('minMb'));
+  const months = numParam(params.get('months'));
   const actionable = DELETE_ELIGIBLE.has(slice);
 
   const [messages, setMessages] = useState<CleanupMessageDto[]>([]);
@@ -68,6 +81,8 @@ export function CleanupMessages() {
           slice,
           domain,
           years,
+          minMb,
+          months,
           limit: PAGE_SIZE,
           offset,
         });
@@ -89,8 +104,8 @@ export function CleanupMessages() {
         setLoadingMore(false);
       }
     },
-    // Reloads only when the slice/sender/age change; autoSelect is read fresh inside.
-    [slice, domain, years],
+    // Reloads only when the slice/sender/thresholds change; autoSelect is read fresh inside.
+    [slice, domain, years, minMb, months],
   );
 
   useEffect(() => {
@@ -124,6 +139,8 @@ export function CleanupMessages() {
       const res = await api.cleanup.execute({
         slice: slice as CleanupExecuteRequest['slice'],
         years,
+        minMb,
+        months,
         ...scope,
       });
       setQueued(res.queued);

@@ -2,12 +2,13 @@
  * Cleanup Dashboard (ROADMAP Phase 6 "Master archive & Cleanup Dashboard"). An opt-in
  * power tool over the local SQLite archive — *not* a backlog to clear. It previews the
  * impact (message count + estimated storage, grouped by sender domain) of deterministic
- * cleanup slices, then executes them with an explicit include/select model:
+ * cleanup slices — several *angles* on deletable mail (size, age, attention, sender
+ * behaviour, bulk-mail markers) — then executes them with an explicit include/select model:
  *
- *  - **Clean all N** — a one-tap express path that trashes the whole server-resolved slice
- *    (no truncation pretense: the count is the true total, not the 50 shown).
- *  - **Browse by sender** — a searchable, paginated sender list; drilling into a sender opens
- *    the message screen where individual messages are selected (default all) and trashed.
+ *  - **Move all N to Trash…** — a one-tap express path that trashes the whole server-resolved
+ *    slice (no truncation pretense: the count is the true total, not the 50 shown).
+ *  - **Review all N… / Review by sender** — navigation-only paths into the drill-down screen
+ *    where individual messages are inspected, selected (default all) and trashed.
  *
  * Execution is Trash-only and recoverable: the server re-validates the HARD safety gate
  * (financial / legal / account / medical mail is protected) and **intersects** any client
@@ -28,23 +29,60 @@ import { setPref, usePrefs, type CleanupPreset } from '../state/prefs';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, ChevronDownIcon, SearchIcon, SparklesIcon } from '../ui/icons';
 
-/** Delete-eligible slice ids (must match the backend's DELETE_ELIGIBLE set). */
-type ActionSlice = 'never-replied' | 'cold-storage';
+/** Delete-eligible slice ids (must match the backend's DELETE_SLICES set). */
+type ActionSlice = 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
+
+/** Per-slice tunable thresholds, threaded through preview, drill-down and execute. */
+export interface SliceParams {
+  /** Cold-storage age threshold (years). */
+  years?: number;
+  /** Large-message size threshold (MB). */
+  minMb?: number;
+  /** Unread-and-old age threshold (months). */
+  months?: number;
+}
 
 /**
  * The 1-click aggressiveness presets (ROADMAP Phase 6b.2). A preset is a profile over
- * the deterministic slices: `coldYears` is the cold-storage age threshold (smaller =
- * more aggressive), and `slices` is which action slices it surfaces at all — 'strict'
- * withholds the never-replied heuristic (a sender being silent is a softer signal than
- * age, so the cautious profile leaves it out). The backend already honours `years` on
- * both the preview and execute paths, so the preset is purely a client-side profile.
+ * the deterministic slices: the thresholds (`coldYears` / `largeMinMb` / `unreadMonths`,
+ * smaller or shorter = more aggressive) plus `slices` — which angles it surfaces at all.
+ * 'strict' keeps only the hardest signals (age, raw size) and withholds the behavioural
+ * heuristics (never-replied / never-opened / newsletters). The backend honours the
+ * thresholds on the preview, drill-down and execute paths, so the preset is purely a
+ * client-side profile.
  */
-const PRESETS: Record<CleanupPreset, { label: string; coldYears: number; slices: ActionSlice[] }> =
+const PRESETS: Record<
+  CleanupPreset,
   {
-    strict: { label: 'Strict', coldYears: 5, slices: ['cold-storage'] },
-    balanced: { label: 'Balanced', coldYears: 2, slices: ['never-replied', 'cold-storage'] },
-    aggressive: { label: 'Aggressive', coldYears: 1, slices: ['never-replied', 'cold-storage'] },
-  };
+    label: string;
+    coldYears: number;
+    largeMinMb: number;
+    unreadMonths: number;
+    slices: ActionSlice[];
+  }
+> = {
+  strict: {
+    label: 'Strict',
+    coldYears: 5,
+    largeMinMb: 25,
+    unreadMonths: 24,
+    slices: ['cold-storage', 'large'],
+  },
+  balanced: {
+    label: 'Balanced',
+    coldYears: 2,
+    largeMinMb: 10,
+    unreadMonths: 12,
+    slices: ['never-replied', 'cold-storage', 'large', 'unread', 'newsletters'],
+  },
+  aggressive: {
+    label: 'Aggressive',
+    coldYears: 1,
+    largeMinMb: 5,
+    unreadMonths: 6,
+    slices: ['never-replied', 'cold-storage', 'large', 'unread', 'newsletters'],
+  },
+};
 const PRESET_ORDER: CleanupPreset[] = ['strict', 'balanced', 'aggressive'];
 
 /** Human-readable byte size (1 KB = 1024 B). */
@@ -65,6 +103,9 @@ export const SLICE_LABELS: Record<string, string> = {
   storage: 'Storage by sender',
   'never-replied': 'Never replied to',
   'cold-storage': 'Cold storage',
+  large: 'Large messages',
+  unread: 'Never opened',
+  newsletters: 'Newsletters & bulk mail',
 };
 
 /** Compact absolute date for a message row, e.g. "3 May 2024". */
@@ -135,13 +176,20 @@ export function CleanupMessageRow({
 }
 
 /** What a {@link SenderBrowser} lists, and (for action slices) where a sender row drills to. */
-type BrowseSource =
-  | { slice: 'storage' }
-  | { slice: 'never-replied' }
-  | { slice: 'cold-storage'; years: number };
+type BrowseSource = { slice: 'storage' | ActionSlice; params?: SliceParams };
+
+/** Build the drill-down URL query for a slice (+ optional sender), carrying its thresholds. */
+export function drillQuery(slice: ActionSlice, params: SliceParams = {}, domain?: string): string {
+  const p = new URLSearchParams({ slice });
+  if (domain) p.set('domain', domain);
+  if (params.years) p.set('years', String(params.years));
+  if (params.minMb) p.set('minMb', String(params.minMb));
+  if (params.months) p.set('months', String(params.months));
+  return p.toString();
+}
 
 /**
- * Collapsible "Browse by sender" — a searchable, paginated per-domain list. Owns its own
+ * Collapsible "Review by sender" — a searchable, paginated per-domain list. Owns its own
  * fetching so it can page the long tail (Load more) and filter by a domain substring (the
  * search box) without re-rendering the whole dashboard. For action slices each row navigates
  * to the message drill-down (where messages are selected + trashed); the informational storage
@@ -158,15 +206,26 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
   const [error, setError] = useState(false);
 
   const kind = source.slice;
-  const years = source.slice === 'cold-storage' ? source.years : undefined;
+  const { years, minMb, months } = source.params ?? {};
 
   const fetchPage = useCallback(
     (opts: { q?: string; offset?: number }): Promise<CleanupSliceDto> => {
-      if (kind === 'storage') return api.cleanup.storage(opts);
-      if (kind === 'never-replied') return api.cleanup.neverReplied(opts);
-      return api.cleanup.coldStorage(years, opts);
+      switch (kind) {
+        case 'storage':
+          return api.cleanup.storage(opts);
+        case 'never-replied':
+          return api.cleanup.neverReplied(opts);
+        case 'cold-storage':
+          return api.cleanup.coldStorage(years, opts);
+        case 'large':
+          return api.cleanup.large(minMb, opts);
+        case 'unread':
+          return api.cleanup.unread(months, opts);
+        case 'newsletters':
+          return api.cleanup.newsletters(opts);
+      }
     },
-    [kind, years],
+    [kind, years, minMb, months],
   );
 
   // (Re)load the first page when opened or the (debounced) search term changes.
@@ -212,9 +271,7 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
 
   const drillInto = (domain: string) => {
     if (kind === 'storage') return;
-    const params = new URLSearchParams({ slice: kind, domain });
-    if (years) params.set('years', String(years));
-    navigate(`/cleanup/messages?${params.toString()}`);
+    navigate(`/cleanup/messages?${drillQuery(kind, source.params, domain)}`);
   };
 
   return (
@@ -225,7 +282,7 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
         aria-expanded={open}
         className="text-sm font-medium text-accent active:opacity-80"
       >
-        {open ? 'Hide senders ▴' : 'Browse by sender ▾'}
+        {open ? 'Hide senders ▴' : 'Review by sender ▾'}
       </button>
 
       {open && (
@@ -345,9 +402,12 @@ function InfoSliceCard({
 }
 
 /**
- * A delete-eligible slice card. The express "Clean all N" path trashes the whole
- * server-resolved slice (confirm → background trashing with progress); selective cleanup
- * happens by browsing into a sender and picking messages on the drill-down screen.
+ * A delete-eligible slice card. Three explicit affordances, each named for what it does:
+ *  - **Review all N…** — navigates to the full drill-down (inspect / pick individual
+ *    messages across the whole slice). Never deletes anything by itself.
+ *  - **Review by sender** — the collapsible per-domain browser; a sender row drills down.
+ *  - **Move all N to Trash…** — the express path; the trailing ellipsis signals a confirm
+ *    step before the server-resolved slice is queued for trashing.
  * `onExecuted` lets the parent refresh totals once the queue drains.
  */
 function ActionSliceCard({
@@ -355,7 +415,7 @@ function ActionSliceCard({
   description,
   sliceId,
   slice,
-  years,
+  params,
   onExecuted,
   onSuppress,
 }: {
@@ -363,10 +423,11 @@ function ActionSliceCard({
   description: string;
   sliceId: ActionSlice;
   slice: CleanupSliceDto | null;
-  years?: number;
+  params?: SliceParams;
   onExecuted: () => void;
   onSuppress: () => void;
 }) {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
   const [queued, setQueued] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -382,7 +443,7 @@ function ActionSliceCard({
     if (!slice) return;
     setMode('running');
     try {
-      const res = await api.cleanup.execute({ slice: sliceId, years });
+      const res = await api.cleanup.execute({ slice: sliceId, ...params });
       setQueued(res.queued);
       // Poll the global trash queue until it drains, then refresh the dashboard totals.
       pollRef.current = setInterval(() => {
@@ -443,19 +504,18 @@ function ActionSliceCard({
               onClick={() => setMode('confirm')}
               className="shrink-0 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white active:opacity-80"
             >
-              Clean all…
+              Move all to Trash…
             </button>
           </div>
-          <p className="mt-2 text-xs text-faint">
-            Or browse by sender to review and pick individual messages.
-          </p>
-          <SenderBrowser
-            source={
-              sliceId === 'cold-storage'
-                ? { slice: 'cold-storage', years: years ?? PRESETS.balanced.coldYears }
-                : { slice: 'never-replied' }
-            }
-          />
+          {/* Review paths — navigation only, nothing is deleted from here. */}
+          <button
+            type="button"
+            onClick={() => navigate(`/cleanup/messages?${drillQuery(sliceId, params)}`)}
+            className="mt-3 block text-sm font-medium text-accent active:opacity-80"
+          >
+            Review all {slice.totalMessages.toLocaleString()} messages ›
+          </button>
+          <SenderBrowser source={{ slice: sliceId, params }} />
           <button
             type="button"
             onClick={onSuppress}
@@ -473,7 +533,7 @@ function ActionSliceCard({
           <p className="mt-3 text-sm text-fg">
             Move all <span className="font-medium">{slice.totalMessages.toLocaleString()}</span> to
             Trash and free <span className="font-medium">{formatBytes(slice.totalBytes)}</span>?
-            They’re recoverable from Trash. To spare some, cancel and browse by sender instead.
+            They’re recoverable from Trash. To spare some, cancel and review the messages first.
           </p>
           <div className="mt-3 flex items-center gap-2">
             <button
@@ -517,34 +577,39 @@ export function Cleanup() {
   const navigate = useNavigate();
   const prefs = usePrefs();
   const preset = PRESETS[prefs.cleanupPreset] ? prefs.cleanupPreset : 'balanced';
-  const coldYears = PRESETS[preset].coldYears;
+  const { coldYears, largeMinMb, unreadMonths } = PRESETS[preset];
   const suppressed = new Set(prefs.cleanupSuppressed);
 
   const [summary, setSummary] = useState<CleanupSummaryDto | null>(null);
   const [storage, setStorage] = useState<CleanupSliceDto | null>(null);
   const [neverReplied, setNeverReplied] = useState<CleanupSliceDto | null>(null);
   const [cold, setCold] = useState<CleanupSliceDto | null>(null);
+  const [large, setLarge] = useState<CleanupSliceDto | null>(null);
+  const [unread, setUnread] = useState<CleanupSliceDto | null>(null);
+  const [newsletters, setNewsletters] = useState<CleanupSliceDto | null>(null);
   const [error, setError] = useState(false);
 
-  // Mount-only pulls — summary / storage / never-replied don't depend on the preset.
+  // Mount-only pulls — these don't depend on the preset's thresholds.
   useEffect(() => {
     void (async () => {
       try {
-        const [s, st, nr] = await Promise.all([
+        const [s, st, nr, nl] = await Promise.all([
           api.cleanup.summary(),
           api.cleanup.storage(),
           api.cleanup.neverReplied(),
+          api.cleanup.newsletters(),
         ]);
         setSummary(s);
         setStorage(st);
         setNeverReplied(nr);
+        setNewsletters(nl);
       } catch {
         setError(true);
       }
     })();
   }, []);
 
-  // Cold-storage depends on the preset's age threshold — refetch when it changes.
+  // Threshold-bearing slices refetch when the preset changes their threshold.
   useEffect(() => {
     setCold(null);
     void api.cleanup
@@ -552,21 +617,30 @@ export function Cleanup() {
       .then(setCold)
       .catch(() => setError(true));
   }, [coldYears]);
+  useEffect(() => {
+    setLarge(null);
+    void api.cleanup
+      .large(largeMinMb)
+      .then(setLarge)
+      .catch(() => setError(true));
+  }, [largeMinMb]);
+  useEffect(() => {
+    setUnread(null);
+    void api.cleanup
+      .unread(unreadMonths)
+      .then(setUnread)
+      .catch(() => setError(true));
+  }, [unreadMonths]);
 
-  // Re-pull the affected slice + headline after a cleanup drains (counts/bytes shift).
+  // Re-pull every action slice + headline after a cleanup drains (counts/bytes shift).
   const refresh = () => {
-    void api.cleanup
-      .summary()
-      .then(setSummary)
-      .catch(() => undefined);
-    void api.cleanup
-      .neverReplied()
-      .then(setNeverReplied)
-      .catch(() => undefined);
-    void api.cleanup
-      .coldStorage(coldYears)
-      .then(setCold)
-      .catch(() => undefined);
+    const ignore = () => undefined;
+    void api.cleanup.summary().then(setSummary).catch(ignore);
+    void api.cleanup.neverReplied().then(setNeverReplied).catch(ignore);
+    void api.cleanup.coldStorage(coldYears).then(setCold).catch(ignore);
+    void api.cleanup.large(largeMinMb).then(setLarge).catch(ignore);
+    void api.cleanup.unread(unreadMonths).then(setUnread).catch(ignore);
+    void api.cleanup.newsletters().then(setNewsletters).catch(ignore);
   };
 
   const setSuppressed = (sliceId: ActionSlice, hidden: boolean) => {
@@ -583,7 +657,7 @@ export function Cleanup() {
     title: string,
     description: string,
     slice: CleanupSliceDto | null,
-    years?: number,
+    params?: SliceParams,
   ) => {
     if (!PRESETS[preset].slices.includes(sliceId)) return null;
     if (suppressed.has(sliceId)) {
@@ -602,7 +676,7 @@ export function Cleanup() {
         description={description}
         sliceId={sliceId}
         slice={slice}
-        years={years}
+        params={params}
         onExecuted={refresh}
         onSuppress={() => setSuppressed(sliceId, true)}
       />
@@ -678,15 +752,32 @@ export function Cleanup() {
                 ))}
               </div>
               {/* Spell out what the active style actually surfaces, so the choice isn't opaque. */}
-              <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
-                <span className="font-medium text-fg">{PRESETS[preset].label}</span> suggests mail
-                older than {coldYears} year{coldYears === 1 ? '' : 's'} with no invoice, tax or
-                contract
-                {PRESETS[preset].slices.includes('never-replied')
-                  ? ', plus senders you’ve never replied to'
-                  : ''}
-                . Financial, security, legal and medical mail is always protected.
-              </p>
+              <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+                <p>
+                  <span className="font-medium text-fg">{PRESETS[preset].label}</span> changes which
+                  suggestion cards appear below and their thresholds:
+                </p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  <li>
+                    mail older than {coldYears} year{coldYears === 1 ? '' : 's'} with no invoice,
+                    tax or contract
+                  </li>
+                  <li>messages over {largeMinMb} MB</li>
+                  {PRESETS[preset].slices.includes('unread') && (
+                    <li>mail still unopened after {unreadMonths} months</li>
+                  )}
+                  {PRESETS[preset].slices.includes('never-replied') && (
+                    <li>senders you’ve never replied to</li>
+                  )}
+                  {PRESETS[preset].slices.includes('newsletters') && (
+                    <li>newsletters &amp; bulk mail (unsubscribe link)</li>
+                  )}
+                </ul>
+                <p className="mt-1">
+                  Financial, security, legal and medical mail is always protected, and nothing moves
+                  without your confirmation.
+                </p>
+              </div>
             </section>
 
             <InfoSliceCard
@@ -695,17 +786,37 @@ export function Cleanup() {
               slice={storage}
             />
             {renderAction(
+              'large',
+              'Large messages',
+              `Messages over ${largeMinMb} MB — usually big attachments. The quickest way to free space.`,
+              large,
+              { minMb: largeMinMb },
+            )}
+            {renderAction(
               'never-replied',
               'Never replied to',
               'Senders you’ve never written back to — likely newsletters and clutter.',
               neverReplied,
             )}
             {renderAction(
+              'newsletters',
+              'Newsletters & bulk mail',
+              'Mail carrying an unsubscribe link — newsletters, promotions and other bulk sends.',
+              newsletters,
+            )}
+            {renderAction(
+              'unread',
+              'Never opened',
+              `Unread mail older than ${unreadMonths} months — you never opened it. Flagged mail is spared.`,
+              unread,
+              { months: unreadMonths },
+            )}
+            {renderAction(
               'cold-storage',
               'Cold storage',
               `Mail older than ${coldYears} year${coldYears === 1 ? '' : 's'} with no invoice, tax or contract — safe to let go.`,
               cold,
-              coldYears,
+              { years: coldYears },
             )}
 
             <p className="px-1 pb-4 text-center text-xs text-faint">
