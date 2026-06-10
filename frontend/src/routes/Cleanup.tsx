@@ -1,7 +1,8 @@
 /**
  * Cleanup Dashboard (ROADMAP Phase 6 "Master archive & Cleanup Dashboard"). An opt-in
  * power tool over the local SQLite archive — *not* a backlog to clear. It previews the
- * impact (message count + estimated storage, grouped by sender domain) of deterministic
+ * impact (message count + estimated storage, grouped by sender — domain, or full address
+ * for freemail providers) of deterministic
  * cleanup slices — several *angles* on deletable mail (size, age, attention, sender
  * behaviour, bulk-mail markers) — then executes them with an explicit include/select model:
  *
@@ -752,7 +753,7 @@ export function Cleanup() {
 
             <InfoSliceCard
               title="Storage by sender"
-              description="Which domains take up the most space. Informational — a storage audit, not a delete list."
+              description="Which senders take up the most space — personal-mail providers (gmail, hotmail, …) are split per address. Informational — a storage audit, not a delete list."
               slice={storage}
             />
             {renderAction(

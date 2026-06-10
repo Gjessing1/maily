@@ -538,6 +538,98 @@ test('sliceMessages: limit caps the list and flags truncation', () => {
   assert.equal(res.truncated, true);
 });
 
+test('sender key: freemail domains group per address, corporate domains per domain', () => {
+  const acct = seedAccount();
+  seedMessage(acct, { fromAddress: 'Alice@Gmail.com' });
+  seedMessage(acct, { fromAddress: 'alice@gmail.com' });
+  seedMessage(acct, { fromAddress: 'bob@gmail.com' });
+  seedMessage(acct, { fromAddress: 'far@hotmail.no' }); // country variant via label match
+  seedMessage(acct, { fromAddress: 'a@corp.example' });
+  seedMessage(acct, { fromAddress: 'b@corp.example' });
+
+  const slice = S.storageByDomain();
+  assert.equal(findGroup(slice, 'gmail.com'), undefined, 'no aggregate gmail.com bucket');
+  assert.equal(findGroup(slice, 'alice@gmail.com')!.messageCount, 2, 'case-folded per address');
+  assert.equal(findGroup(slice, 'bob@gmail.com')!.messageCount, 1);
+  assert.ok(findGroup(slice, 'far@hotmail.no'), 'hotmail country variant keys per address');
+  assert.equal(findGroup(slice, 'corp.example')!.messageCount, 2, 'corporate stays per domain');
+});
+
+test('sender key: drill-down and execute scope to a single freemail address', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+  const bobs = seedMessage(acct, {
+    fromAddress: 'bob@gmail.com',
+    subject: 'Old chain letter',
+    bodyText: 'fwd fwd',
+    receivedAt: old,
+  });
+  seedMessage(acct, { fromAddress: 'alice@gmail.com', bodyText: 'sale', receivedAt: old });
+
+  const listed = S.sliceMessages('cold-storage', { years: 2, domain: 'bob@gmail.com' });
+  assert.deepEqual(
+    listed.messages.map((m) => m.id),
+    [bobs],
+    'drill-down scoped to one gmail address, not all of gmail.com',
+  );
+
+  const refs = S.sliceMessageIds('cold-storage', { years: 2, domain: 'bob@gmail.com' });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [bobs],
+    'execute scope matches the same single address',
+  );
+});
+
+test('neverRepliedSenders: replying to one gmail address does not excuse the rest', () => {
+  const acct = seedAccount();
+  const inbox = seedFolder(acct, 'inbox');
+  const sent = seedFolder(acct, 'sent');
+
+  seedMessage(acct, { fromAddress: 'friend@gmail.com', bodyText: 'hi', folderId: inbox });
+  seedMessage(acct, { fromAddress: 'noisy@gmail.com', bodyText: 'chain mail', folderId: inbox });
+  seedMessage(acct, {
+    fromAddress: `${acct}@me.example`,
+    bodyText: 'reply',
+    folderId: sent,
+    toAddresses: JSON.stringify([{ address: 'Friend@gmail.com' }]),
+  });
+
+  const slice = S.neverRepliedSenders();
+  assert.equal(findGroup(slice, 'friend@gmail.com'), undefined, 'replied-to address excluded');
+  assert.ok(findGroup(slice, 'noisy@gmail.com'), 'other gmail senders still candidates');
+});
+
+test('sliceMessages: q filters by subject and sender (case-insensitive)', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+  const hit = seedMessage(acct, {
+    fromAddress: 'shop@promo.example',
+    subject: 'Summer SALE catalogue',
+    bodyText: 'buy',
+    receivedAt: old,
+  });
+  seedMessage(acct, {
+    fromAddress: 'other@promo.example',
+    subject: 'Hello',
+    bodyText: 'buy',
+    receivedAt: old,
+  });
+
+  const bySubject = S.sliceMessages('cold-storage', { years: 2, q: 'sale' });
+  assert.deepEqual(
+    bySubject.messages.map((m) => m.id),
+    [hit],
+  );
+  assert.equal(bySubject.total, 1, 'total reflects the filtered set');
+
+  const bySender = S.sliceMessages('cold-storage', { years: 2, q: 'SHOP@' });
+  assert.deepEqual(
+    bySender.messages.map((m) => m.id),
+    [hit],
+  );
+});
+
 test('cleanupSummary: counts protected mail', () => {
   const acct = seedAccount();
   seedMessage(acct, { fromAddress: 'a@x.example', bodyText: 'invoice attached' });

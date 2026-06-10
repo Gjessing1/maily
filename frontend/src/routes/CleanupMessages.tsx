@@ -14,7 +14,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { CleanupExecuteRequest, CleanupMessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, TrashIcon } from '../ui/icons';
+import { BackIcon, SearchIcon, TrashIcon } from '../ui/icons';
 import { CleanupMessageRow, SLICE_LABELS, formatBytes } from './Cleanup';
 
 /** Messages fetched per page; "Load more" pulls the next page. */
@@ -52,6 +52,15 @@ export function CleanupMessages() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
 
+  // Subject/sender filter — debounced so each keystroke doesn't refetch. The whole-sender
+  // express path is hidden while a filter is active (it would trash beyond what's shown).
+  const [q, setQ] = useState('');
+  const [qDebounced, setQDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQDebounced(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
   // Selection: ids currently checked. `autoSelectRef` keeps newly-loaded pages checked by default
   // (the all-pre-selected default) until the user explicitly deselects all. A ref (not state) so
   // `loadPage` reads the current value without being recreated on every selection change.
@@ -80,6 +89,7 @@ export function CleanupMessages() {
         const res = await api.cleanup.messages({
           slice,
           domain,
+          q: qDebounced || undefined,
           years,
           minMb,
           months,
@@ -104,8 +114,8 @@ export function CleanupMessages() {
         setLoadingMore(false);
       }
     },
-    // Reloads only when the slice/sender/thresholds change; autoSelect is read fresh inside.
-    [slice, domain, years, minMb, months],
+    // Reloads when the slice/sender/thresholds/search change; autoSelect is read fresh inside.
+    [slice, domain, qDebounced, years, minMb, months],
   );
 
   useEffect(() => {
@@ -193,6 +203,22 @@ export function CleanupMessages() {
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
+        {/* Outside the list conditional so the input survives (and keeps focus through) refetches. */}
+        {exec !== 'done' && (
+          <div className="mx-auto max-w-2xl px-3 pt-3">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+              <SearchIcon className="size-4 shrink-0 text-faint" />
+              <input
+                type="search"
+                inputMode="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Filter by subject or sender…"
+                className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
+              />
+            </div>
+          </div>
+        )}
         {exec === 'done' ? (
           <div className="mx-auto max-w-2xl p-4 text-center">
             <p className="rounded-xl bg-surface-2 px-4 py-6 text-sm text-fg">
@@ -213,7 +239,9 @@ export function CleanupMessages() {
             <Spinner />
           </div>
         ) : messages.length === 0 ? (
-          <p className="px-4 py-8 text-center text-muted">No messages here.</p>
+          <p className="px-4 py-8 text-center text-muted">
+            {qDebounced ? 'No messages match the filter.' : 'No messages here.'}
+          </p>
         ) : (
           <div className="mx-auto max-w-2xl p-3 pb-28">
             <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
@@ -292,8 +320,9 @@ export function CleanupMessages() {
                     Move {selected.size > 0 ? `${selected.size.toLocaleString()} ` : ''}to Trash
                   </button>
                 </div>
-                {/* When the sender has more than this page, offer the whole-sender shortcut. */}
-                {domain && total > messages.length && (
+                {/* When the sender has more than this page, offer the whole-sender shortcut —
+                    hidden while a filter is active (it would trash beyond the filtered list). */}
+                {domain && !qDebounced && total > messages.length && (
                   <button
                     type="button"
                     onClick={() => void runTrash({ domain })}

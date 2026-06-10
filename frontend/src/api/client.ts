@@ -318,10 +318,11 @@ export const api = {
       request<CleanupSliceDto>(`/api/cleanup/unread${groupQuery({ ...opts, months })}`),
     newsletters: (opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/newsletters${groupQuery(opts)}`),
-    /** Drill a delete-eligible slice down to messages, optionally scoped to one sender. */
+    /** Drill a delete-eligible slice down to messages, optionally sender-scoped/searched. */
     messages: (opts: {
       slice: string;
       domain?: string;
+      q?: string;
       years?: number;
       minMb?: number;
       months?: number;
@@ -330,6 +331,7 @@ export const api = {
     }) => {
       const q = new URLSearchParams({ slice: opts.slice });
       if (opts.domain) q.set('domain', opts.domain);
+      if (opts.q) q.set('q', opts.q);
       if (opts.years) q.set('years', String(opts.years));
       if (opts.minMb) q.set('minMb', String(opts.minMb));
       if (opts.months) q.set('months', String(opts.months));

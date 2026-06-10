@@ -116,7 +116,8 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Drill a delete-eligible slice down to individual messages (review surface), optionally
-  // scoped to one sender domain. Re-runs the same safety + slice predicates as the preview.
+  // scoped to one sender and/or filtered by a subject/sender search term. Re-runs the same
+  // safety + slice predicates as the preview.
   app.get<{
     Querystring: {
       slice?: string;
@@ -124,11 +125,12 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
       minMb?: string;
       months?: string;
       domain?: string;
+      q?: string;
       limit?: string;
       offset?: string;
     };
   }>('/api/cleanup/messages', async (req, reply): Promise<CleanupMessagesDto> => {
-    const { slice, years, minMb, months, domain, limit, offset } = req.query;
+    const { slice, years, minMb, months, domain, q, limit, offset } = req.query;
     if (!slice || !isDeleteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not drillable' }) as never;
     }
@@ -138,6 +140,7 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
       minMb: posNum(minMb),
       months: posNum(months),
       domain: domain || undefined,
+      q: q || undefined,
       limit: lim ? Math.min(lim, 500) : undefined,
       offset: posNum(offset),
     });

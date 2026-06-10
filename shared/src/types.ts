@@ -349,12 +349,17 @@ export interface EnrichmentStatusDto {
 }
 
 /**
- * One row of a cleanup slice — a sender domain with its preview impact (ROADMAP Phase 6
- * Cleanup Dashboard). Grouping by domain is what lets a future preset say "delete N from
- * <domain>, free X" before any execution.
+ * One row of a cleanup slice — a sender with its preview impact (ROADMAP Phase 6
+ * Cleanup Dashboard). Grouping by sender is what lets a preset say "delete N from
+ * <sender>, free X" before any execution.
  */
 export interface CleanupGroupDto {
-  /** Lowercased sender domain, or '(unknown)' when the address has none. */
+  /**
+   * The sender key (lowercased): the sender's domain, except freemail/consumer providers
+   * (gmail, hotmail, …) which key by full address — one "gmail.com" bucket would lump
+   * thousands of unrelated people into a single fake sender. '(unknown)' when the
+   * address has no domain. Round-trips as the `domain` scope on drill-down and execute.
+   */
   domain: string;
   messageCount: number;
   /** Estimated bytes: parsed body (text+html) + attachment sizes. */
@@ -366,7 +371,7 @@ export interface CleanupGroupDto {
 
 /**
  * A deterministic cleanup slice with its preview impact (count + estimated storage),
- * grouped by sender domain. Read-only analytics — the destructive execution path is
+ * grouped by sender key. Read-only analytics — the destructive execution path is
  * separate. `groups` is capped to the worst offenders; `truncated` flags more below.
  */
 export interface CleanupSliceDto {
@@ -396,13 +401,13 @@ export interface CleanupMessageDto {
 
 /**
  * Drill-down of a delete-eligible slice to individual messages, optionally scoped to one
- * sender domain. Re-runs the SAME safety + slice predicates as the preview/execute paths,
+ * sender key. Re-runs the SAME safety + slice predicates as the preview/execute paths,
  * so what's listed is exactly what would be trashed. `messages` is capped at `limit`;
  * `truncated` flags that `total` exceeds what's returned.
  */
 export interface CleanupMessagesDto {
   slice: string;
-  /** Sender domain this drill-down is scoped to, or null for the whole slice. */
+  /** Sender key this drill-down is scoped to, or null for the whole slice. */
   domain: string | null;
   messages: CleanupMessageDto[];
   /** Total matching messages (before the `limit` cap). */
@@ -456,9 +461,9 @@ export interface CleanupExecuteRequest {
   months?: number;
   /** Explicit message selection — only these ids (∩ the eligible set) are trashed. */
   messageIds?: string[];
-  /** Restrict to a single sender domain (lowercased) — "trash all from this sender". */
+  /** Restrict to a single sender key (lowercased) — "trash all from this sender". */
   domain?: string;
-  /** Sender domains to spare from a whole-slice run (lowercased). */
+  /** Sender keys to spare from a whole-slice run (lowercased). */
   excludeDomains?: string[];
 }
 

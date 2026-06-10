@@ -6,7 +6,8 @@
  *  - large messages (size angle), unread-and-old (attention angle),
  *  - newsletters (bulk-mail angle via the FTS unsubscribe heuristic).
  * Each returns a **preview impact** (message count + an estimated byte total, grouped by
- * sender domain) so the dashboard can always show "delete N, free X" before any execution.
+ * sender — domain, or full address for freemail providers, see senders.ts) so the dashboard
+ * can always show "delete N, free X" before any execution.
  *
  * Two invariants:
  *  - **Never delete-eligible without the safety gate.** Every destructive slice
@@ -27,6 +28,7 @@ import type {
 import { db } from '../db/client.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
 import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
+import { SENDER_KEY, senderKeyOf } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
 const GROUP_LIMIT = 50;
@@ -57,12 +59,6 @@ const BYTES = sql`(
   + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0)
 )`;
 
-/** Sender domain (lowercased); '(unknown)' when the address is missing or domain-less. */
-const DOMAIN = sql`CASE
-  WHEN m.from_address IS NULL OR instr(m.from_address, '@') = 0 THEN '(unknown)'
-  ELSE lower(substr(m.from_address, instr(m.from_address, '@') + 1))
-END`;
-
 interface RawGroup {
   domain: string;
   messageCount: number;
@@ -82,15 +78,18 @@ const toGroup = (r: RawGroup): CleanupGroupDto => ({
 });
 
 /**
- * Run the grouped storage query for a `WHERE` predicate, returning EVERY sender-domain group
- * (bytes-descending). The distinct-domain count is small (hundreds–low thousands), so paging
- * and substring search happen in JS via {@link paginateGroups} — that keeps a sender search
- * able to reach the long tail without a body-scanning `LIKE` (ARCHITECTURE §12 forbids those
- * for message search; this is a tiny domain-label filter, not an FTS bypass).
+ * Run the grouped storage query for a `WHERE` predicate, returning EVERY sender group
+ * (bytes-descending). The group key is {@link SENDER_KEY} — the sender's domain, except
+ * freemail/consumer domains (gmail, hotmail, …) which group by full address (one gmail.com
+ * bucket would lump thousands of unrelated people into a single fake "sender"). The
+ * distinct-key count is small (hundreds–low thousands), so paging and substring search
+ * happen in JS via {@link paginateGroups} — that keeps a sender search able to reach the
+ * long tail without a body-scanning `LIKE` (ARCHITECTURE §12 forbids those for message
+ * search; this is a tiny group-label filter, not an FTS bypass).
  */
 function allGroupsByDomain(where: SQL): CleanupGroupDto[] {
   const rows = db.all(
-    sql`SELECT ${DOMAIN} AS domain,
+    sql`SELECT ${SENDER_KEY} AS domain,
                COUNT(*) AS messageCount,
                SUM(${BYTES}) AS bytes,
                MIN(m.received_at) AS oldestAt,
@@ -105,7 +104,7 @@ function allGroupsByDomain(where: SQL): CleanupGroupDto[] {
 
 /** Group-list paging + search options, shared by every slice. */
 export interface GroupPageOpts {
-  /** Case-insensitive sender-domain substring filter (the "Browse by sender" search box). */
+  /** Case-insensitive sender-key substring filter (the "Review by sender" search box). */
   q?: string;
   /** Page offset into the (filtered) group list. */
   offset?: number;
@@ -185,15 +184,12 @@ export function storageByDomain(opts: GroupPageOpts = {}): CleanupSliceDto {
   return paginateSlice('storage', computeSliceData('storage'), opts);
 }
 
-/** Lowercased domain of an email address, or null if it has none. */
-function domainOf(address: string | null | undefined): string | null {
-  if (!address) return null;
-  const at = address.lastIndexOf('@');
-  return at >= 0 ? address.slice(at + 1).toLowerCase() : null;
-}
-
-/** Collect the set of domains the user has ever sent mail to (To + Cc of Sent mail). */
-function repliedDomains(): Set<string> {
+/**
+ * Collect the sender keys the user has ever sent mail to (To + Cc of Sent mail). Keys, not
+ * domains: for a freemail recipient the key is the full address, so replying to one gmail
+ * friend never excuses every other gmail.com sender from the never-replied slice.
+ */
+function repliedSenderKeys(): Set<string> {
   const rows = db.all(
     sql`SELECT m.to_addresses AS toA, m.cc_addresses AS ccA
         FROM messages m
@@ -202,26 +198,26 @@ function repliedDomains(): Set<string> {
         WHERE f.role = 'sent'`,
   ) as { toA: string | null; ccA: string | null }[];
 
-  const domains = new Set<string>();
+  const keys = new Set<string>();
   for (const row of rows) {
     for (const json of [row.toA, row.ccA]) {
       if (!json) continue;
       try {
         const list = JSON.parse(json) as { address?: string }[];
         for (const a of list) {
-          const d = domainOf(a.address);
-          if (d) domains.add(d);
+          const key = senderKeyOf(a.address);
+          if (key !== '(unknown)') keys.add(key);
         }
       } catch {
         // Tolerate a malformed recipients blob — just skip it.
       }
     }
   }
-  return domains;
+  return keys;
 }
 
 /**
- * Senders never replied to — inbound domains the user has never written back to. A
+ * Senders never replied to — inbound senders the user has never written back to. A
  * passive bulk-unsubscribe / clutter candidate. Safety-filtered (protected mail excluded)
  * and the '(unknown)' bucket dropped (not actionable). Reply set is computed from Sent.
  */
@@ -353,14 +349,14 @@ function sqlSliceWhere(slice: Exclude<DeleteSlice, 'never-replied'>, t: SliceThr
 export type PreviewSlice = 'storage' | DeleteSlice;
 
 /**
- * The single heavy compute behind every slice preview: the full sender-domain group list
- * plus totals for one slice at the given thresholds (defaults applied here). This is what
+ * The single heavy compute behind every slice preview: the full sender group list plus
+ * totals for one slice at the given thresholds (defaults applied here). This is what
  * the cleanup cache memoises; the public per-slice functions and the routes paginate it.
  */
 export function computeSliceData(slice: PreviewSlice, t: SliceThresholds = {}): SliceData {
   if (slice === 'storage') return dataFromGroups(allGroupsByDomain(LIVE));
   if (slice === 'never-replied') {
-    const replied = repliedDomains();
+    const replied = repliedSenderKeys();
     // All candidate groups minus those we've replied to / can't act on ('(unknown)').
     const all = allGroupsByDomain(sql`${LIVE} AND ${notProtected('m')}`).filter(
       (g) => g.domain !== '(unknown)' && !replied.has(g.domain),
@@ -384,10 +380,12 @@ export interface CleanupMessageRef {
  *
  * The optional scope narrows the eligible set without ever widening it — this is what makes
  * client-driven selection safe:
- *  - `domain` (lowercased): restrict to one sender — "trash all from this sender".
+ *  - `domain` (a lowercased sender key — domain, or full address for freemail senders):
+ *    restrict to one sender — "trash all from this sender".
  *  - `messageIds`: an explicit selection; the result is the **intersection** with the eligible
  *    set, so a stale/forged/now-protected id simply isn't in the set and is silently dropped.
- *  - `excludeDomains` (lowercased): spare senders from the whole-slice "Clean all" path.
+ *  - `excludeDomains` (lowercased sender keys): spare senders from the whole-slice
+ *    "Clean all" path.
  *
  * Only the destructive slices resolve — 'storage' is informational and throws.
  */
@@ -405,16 +403,16 @@ export function sliceMessageIds(
 
   let rows: { id: string; accountId: string; domain: string }[];
   if (slice === 'never-replied') {
-    const replied = repliedDomains();
+    const replied = repliedSenderKeys();
     rows = (
       db.all(
-        sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+        sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
             FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
       ) as typeof rows
     ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
   } else if (DELETE_SLICES.has(slice)) {
     rows = db.all(
-      sql`SELECT m.id AS id, m.account_id AS accountId, ${DOMAIN} AS domain
+      sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
           FROM messages m WHERE ${sqlSliceWhere(slice, opts)}`,
     ) as typeof rows;
   } else {
@@ -452,15 +450,18 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
 
 /**
  * Drill a delete-eligible slice down to its individual messages (ROADMAP Phase 6b review
- * surface), optionally scoped to one sender `domain`. Reuses the EXACT slice + safety
- * predicates of the preview/execute paths, so the listed messages are precisely what an
- * execute would trash. Newest-first; returns the `[offset, offset+limit)` page with a
- * `total` count and a `truncated` flag (more rows exist past this page) so the drill-down
- * can paginate. Only the destructive slices drill — 'storage' is informational and throws.
+ * surface), optionally scoped to one sender `domain` (a sender key). Reuses the EXACT
+ * slice + safety predicates of the preview/execute paths, so the listed messages are
+ * precisely what an execute would trash. Newest-first; returns the `[offset, offset+limit)`
+ * page with a `total` count and a `truncated` flag (more rows exist past this page) so the
+ * drill-down can paginate. `q` narrows the list to messages whose subject or sender contains
+ * the term (case-insensitive, filtered in JS over the already-fetched rows — small columns,
+ * not an FTS bypass). Only the destructive slices drill — 'storage' is informational and
+ * throws.
  */
 export function sliceMessages(
   slice: DeleteSlice,
-  opts: SliceThresholds & { domain?: string; limit?: number; offset?: number } = {},
+  opts: SliceThresholds & { domain?: string; q?: string; limit?: number; offset?: number } = {},
 ): { messages: CleanupMessageDto[]; total: number; truncated: boolean } {
   const limit = opts.limit ?? MESSAGE_LIMIT;
   const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
@@ -468,12 +469,12 @@ export function sliceMessages(
 
   const base =
     slice === 'never-replied' ? sql`${LIVE} AND ${notProtected('m')}` : sqlSliceWhere(slice, opts);
-  const where = domain ? sql`${base} AND ${DOMAIN} = ${domain}` : base;
+  const where = domain ? sql`${base} AND ${SENDER_KEY} = ${domain}` : base;
 
   const rows = db.all(
     sql`SELECT m.id AS id, m.subject AS subject, m.from_name AS fromName,
                m.from_address AS fromAddress, m.received_at AS receivedAt,
-               ${BYTES} AS bytes, ${DOMAIN} AS domain
+               ${BYTES} AS bytes, ${SENDER_KEY} AS domain
         FROM messages m
         WHERE ${where}
         ORDER BY m.received_at DESC`,
@@ -482,8 +483,18 @@ export function sliceMessages(
   // never-replied filters the reply set + '(unknown)' bucket in JS (same as the slice/exec).
   let matched = rows;
   if (slice === 'never-replied') {
-    const replied = repliedDomains();
+    const replied = repliedSenderKeys();
     matched = rows.filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
+  }
+
+  const q = opts.q?.trim().toLowerCase();
+  if (q) {
+    matched = matched.filter(
+      (r) =>
+        (r.subject ?? '').toLowerCase().includes(q) ||
+        (r.fromName ?? '').toLowerCase().includes(q) ||
+        (r.fromAddress ?? '').toLowerCase().includes(q),
+    );
   }
 
   return {
