@@ -24,6 +24,16 @@ export interface UpsertResult {
   inserted: boolean;
 }
 
+/**
+ * Byte size of the parsed body (text + html) — kept in `messages.content_bytes` so the
+ * storage aggregates (cleanup slices, Settings per-account size) sum a small integer
+ * instead of length()-scanning every body. Must match migration 0018's backfill
+ * (length(CAST(… AS BLOB)) ≡ UTF-8 byte length).
+ */
+function contentBytesOf(bodyText: string | null, bodyHtml: string | null): number {
+  return Buffer.byteLength(bodyText ?? '') + Buffer.byteLength(bodyHtml ?? '');
+}
+
 /** Split a raw References header into individual Message-IDs. */
 function parseReferences(raw: string | null): string[] {
   if (!raw) return [];
@@ -196,6 +206,7 @@ export function upsertMessage(
         snippet: parsed.snippet,
         bodyText: parsed.bodyText,
         bodyHtml: parsed.bodyHtml,
+        contentBytes: contentBytesOf(parsed.bodyText, parsed.bodyHtml),
         bodyCalendar: parsed.bodyCalendar,
         sourcePath: parsed.sourcePath,
         sourceBytes: parsed.sourceBytes ?? null,
@@ -316,6 +327,7 @@ export function updateMessageContent(messageId: string, c: RebuiltContent): void
       snippet: c.snippet,
       bodyText: c.bodyText,
       bodyHtml: c.bodyHtml,
+      contentBytes: contentBytesOf(c.bodyText, c.bodyHtml),
       bodyCalendar: c.bodyCalendar,
     })
     .where(eq(messages.id, messageId))

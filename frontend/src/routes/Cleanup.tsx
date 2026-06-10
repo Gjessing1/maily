@@ -19,71 +19,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
+  CleanupDashboardDto,
   CleanupGroupDto,
   CleanupMessageDto,
   CleanupSliceDto,
-  CleanupSummaryDto,
 } from '@maily/shared';
 import { api } from '../api/client';
-import { setPref, usePrefs, type CleanupPreset } from '../state/prefs';
+import { setPref, usePrefs } from '../state/prefs';
+import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
+import { PRESETS, PRESET_ORDER, type ActionSlice, type SliceParams } from '../state/cleanupPresets';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, ChevronDownIcon, SearchIcon, SparklesIcon } from '../ui/icons';
 
-/** Delete-eligible slice ids (must match the backend's DELETE_SLICES set). */
-type ActionSlice = 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
-
-/** Per-slice tunable thresholds, threaded through preview, drill-down and execute. */
-export interface SliceParams {
-  /** Cold-storage age threshold (years). */
-  years?: number;
-  /** Large-message size threshold (MB). */
-  minMb?: number;
-  /** Unread-and-old age threshold (months). */
-  months?: number;
-}
-
-/**
- * The 1-click aggressiveness presets (ROADMAP Phase 6b.2). A preset is a profile over
- * the deterministic slices: the thresholds (`coldYears` / `largeMinMb` / `unreadMonths`,
- * smaller or shorter = more aggressive) plus `slices` — which angles it surfaces at all.
- * 'strict' keeps only the hardest signals (age, raw size) and withholds the behavioural
- * heuristics (never-replied / never-opened / newsletters). The backend honours the
- * thresholds on the preview, drill-down and execute paths, so the preset is purely a
- * client-side profile.
- */
-const PRESETS: Record<
-  CleanupPreset,
-  {
-    label: string;
-    coldYears: number;
-    largeMinMb: number;
-    unreadMonths: number;
-    slices: ActionSlice[];
-  }
-> = {
-  strict: {
-    label: 'Strict',
-    coldYears: 5,
-    largeMinMb: 25,
-    unreadMonths: 24,
-    slices: ['cold-storage', 'large'],
-  },
-  balanced: {
-    label: 'Balanced',
-    coldYears: 2,
-    largeMinMb: 10,
-    unreadMonths: 12,
-    slices: ['never-replied', 'cold-storage', 'large', 'unread', 'newsletters'],
-  },
-  aggressive: {
-    label: 'Aggressive',
-    coldYears: 1,
-    largeMinMb: 5,
-    unreadMonths: 6,
-    slices: ['never-replied', 'cold-storage', 'large', 'unread', 'newsletters'],
-  },
-};
-const PRESET_ORDER: CleanupPreset[] = ['strict', 'balanced', 'aggressive'];
+export type { SliceParams } from '../state/cleanupPresets';
 
 /** Human-readable byte size (1 KB = 1024 B). */
 export function formatBytes(n: number): string {
@@ -580,68 +528,67 @@ export function Cleanup() {
   const { coldYears, largeMinMb, unreadMonths } = PRESETS[preset];
   const suppressed = new Set(prefs.cleanupSuppressed);
 
-  const [summary, setSummary] = useState<CleanupSummaryDto | null>(null);
-  const [storage, setStorage] = useState<CleanupSliceDto | null>(null);
-  const [neverReplied, setNeverReplied] = useState<CleanupSliceDto | null>(null);
-  const [cold, setCold] = useState<CleanupSliceDto | null>(null);
-  const [large, setLarge] = useState<CleanupSliceDto | null>(null);
-  const [unread, setUnread] = useState<CleanupSliceDto | null>(null);
-  const [newsletters, setNewsletters] = useState<CleanupSliceDto | null>(null);
+  // Stale-while-revalidate: render the last-known dashboard instantly (prefetched on app
+  // idle / cached from the previous visit), refresh in the background, swap in the result.
+  const [dash, setDash] = useState<CleanupDashboardDto | null>(() =>
+    cachedDashboard({ years: coldYears, minMb: largeMinMb, months: unreadMonths }),
+  );
   const [error, setError] = useState(false);
 
-  // Mount-only pulls — these don't depend on the preset's thresholds.
   useEffect(() => {
-    void (async () => {
-      try {
-        const [s, st, nr, nl] = await Promise.all([
-          api.cleanup.summary(),
-          api.cleanup.storage(),
-          api.cleanup.neverReplied(),
-          api.cleanup.newsletters(),
-        ]);
-        setSummary(s);
-        setStorage(st);
-        setNeverReplied(nr);
-        setNewsletters(nl);
-      } catch {
-        setError(true);
-      }
-    })();
-  }, []);
+    const params = { years: coldYears, minMb: largeMinMb, months: unreadMonths };
+    setDash(cachedDashboard(params));
+    setError(false);
+    let cancelled = false;
+    void loadDashboard(params)
+      .then((d) => {
+        if (!cancelled) setDash(d);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coldYears, largeMinMb, unreadMonths]);
 
-  // Threshold-bearing slices refetch when the preset changes their threshold.
-  useEffect(() => {
-    setCold(null);
-    void api.cleanup
-      .coldStorage(coldYears)
-      .then(setCold)
-      .catch(() => setError(true));
-  }, [coldYears]);
-  useEffect(() => {
-    setLarge(null);
-    void api.cleanup
-      .large(largeMinMb)
-      .then(setLarge)
-      .catch(() => setError(true));
-  }, [largeMinMb]);
-  useEffect(() => {
-    setUnread(null);
-    void api.cleanup
-      .unread(unreadMonths)
-      .then(setUnread)
-      .catch(() => setError(true));
-  }, [unreadMonths]);
+  // Re-pull the whole dashboard after a cleanup drains (counts/bytes shift).
+  const refresh = useCallback(() => {
+    void loadDashboard({ years: coldYears, minMb: largeMinMb, months: unreadMonths })
+      .then(setDash)
+      .catch(() => undefined);
+  }, [coldYears, largeMinMb, unreadMonths]);
 
-  // Re-pull every action slice + headline after a cleanup drains (counts/bytes shift).
-  const refresh = () => {
-    const ignore = () => undefined;
-    void api.cleanup.summary().then(setSummary).catch(ignore);
-    void api.cleanup.neverReplied().then(setNeverReplied).catch(ignore);
-    void api.cleanup.coldStorage(coldYears).then(setCold).catch(ignore);
-    void api.cleanup.large(largeMinMb).then(setLarge).catch(ignore);
-    void api.cleanup.unread(unreadMonths).then(setUnread).catch(ignore);
-    void api.cleanup.newsletters().then(setNewsletters).catch(ignore);
-  };
+  // A trash run can outlive the screen (or the session) — if work is still queued when the
+  // dashboard loads, surface it and keep the figures fresh until the queue drains.
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    setPending(dash?.queue.pending ?? 0);
+  }, [dash]);
+  const draining = pending > 0;
+  useEffect(() => {
+    if (!draining) return;
+    const timer = setInterval(() => {
+      void api.cleanup
+        .queueStatus()
+        .then((status) => {
+          setPending(status.pending);
+          if (status.pending === 0) refresh();
+        })
+        .catch(() => {
+          /* transient — keep polling */
+        });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [draining, refresh]);
+
+  const summary = dash?.summary ?? null;
+  const storage = dash?.storage ?? null;
+  const neverReplied = dash?.neverReplied ?? null;
+  const cold = dash?.coldStorage ?? null;
+  const large = dash?.large ?? null;
+  const unread = dash?.unread ?? null;
+  const newsletters = dash?.newsletters ?? null;
 
   const setSuppressed = (sliceId: ActionSlice, hidden: boolean) => {
     const next = new Set(prefs.cleanupSuppressed);
@@ -697,10 +644,24 @@ export function Cleanup() {
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
-        {error ? (
+        {error && !dash ? (
           <p className="px-4 py-8 text-center text-danger">Couldn’t load cleanup analytics.</p>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
+            {error && (
+              <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+                Couldn’t refresh — showing the last known figures.
+              </p>
+            )}
+            {draining && (
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-fg">
+                <Spinner />
+                <span>
+                  Moving {pending.toLocaleString()} message{pending === 1 ? '' : 's'} to Trash in
+                  the background…
+                </span>
+              </div>
+            )}
             {/* Headline storage figures. */}
             <section className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4">
               <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-2 text-accent">
@@ -719,6 +680,15 @@ export function Cleanup() {
                     {summary.protectedMessages.toLocaleString()} protected from cleanup (financial,
                     security, legal, medical)
                   </p>
+                  {summary.trashedMessages > 0 && (
+                    <p className="text-muted">
+                      Cleanup has freed{' '}
+                      <span className="font-medium text-fg">
+                        {formatBytes(summary.trashedBytes)}
+                      </span>{' '}
+                      so far ({summary.trashedMessages.toLocaleString()} messages moved to Trash)
+                    </p>
+                  )}
                 </div>
               )}
             </section>

@@ -4,6 +4,7 @@ import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { hydratePrefs } from './state/prefs';
+import { prefetchCleanupDashboard } from './state/cleanupDash';
 import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
@@ -28,6 +29,14 @@ export function App() {
   // across devices (the server is the source of truth; local storage is a cache).
   useEffect(() => {
     if (authed) void hydratePrefs();
+  }, [authed]);
+
+  // Once the initial screens have had the network to themselves, warm the Cleanup
+  // Dashboard cache in the background so entering it later renders instantly.
+  useEffect(() => {
+    if (!authed) return;
+    const t = setTimeout(prefetchCleanupDashboard, 4000);
+    return () => clearTimeout(t);
   }, [authed]);
 
   // Reflect the resolved theme onto <html> (drives the CSS token overrides) and

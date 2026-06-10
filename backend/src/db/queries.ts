@@ -164,7 +164,9 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
  * mailbox's server-side total. For an archived message the body terms double-count a
  * small slice already inside the `.eml`, but `source_bytes` dominates — same trade-off
  * as the cleanup storage metric (slices.ts). `length(cast(… as blob))` yields byte
- * length rather than character count.
+ * length rather than character count. The body text/html term reads the precomputed
+ * `content_bytes` column (migration 0018) — length() over the bodies inside the
+ * aggregate would read + decode every body on each Settings visit.
  */
 export function accountContentBytes(accountId: string): number {
   const body = db
@@ -173,8 +175,9 @@ export function accountContentBytes(accountId: string): number {
         coalesce(${messages.sourceBytes}, 0) +
         length(cast(coalesce(${messages.subject}, '') as blob)) +
         length(cast(coalesce(${messages.snippet}, '') as blob)) +
-        length(cast(coalesce(${messages.bodyText}, '') as blob)) +
-        length(cast(coalesce(${messages.bodyHtml}, '') as blob))
+        coalesce(${messages.contentBytes},
+          length(cast(coalesce(${messages.bodyText}, '') as blob)) +
+          length(cast(coalesce(${messages.bodyHtml}, '') as blob)))
       ), 0)`,
     })
     .from(messages)

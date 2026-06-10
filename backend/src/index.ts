@@ -20,6 +20,7 @@ import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
+import { startCleanupCache } from './cleanup/cache.js';
 
 const log = createLogger('maily');
 
@@ -75,6 +76,10 @@ async function main(): Promise<void> {
   // Resume any cleanup trash-queue work left pending from a previous run, and trickle new
   // bulk-cleanup MOVEs to Trash thereafter (Phase 6b — rate-limited, restart-safe).
   startTrashQueue();
+
+  // Precompute the Cleanup Dashboard aggregates (warm at boot, re-warm after mail changes)
+  // so entering the Cleanup screen is served from memory instead of full-table scans.
+  startCleanupCache();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {

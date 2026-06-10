@@ -416,6 +416,26 @@ export interface CleanupSummaryDto {
   totalBytes: number;
   /** Messages caught by the HARD safety filter (protected from any cleanup). */
   protectedMessages: number;
+  /** Messages cleanup has moved to Trash so far (the "freed so far" tally). */
+  trashedMessages: number;
+  /** Estimated bytes those trashed messages were occupying. */
+  trashedBytes: number;
+}
+
+/**
+ * The whole Cleanup Dashboard in one response: headline summary, trash-queue progress and
+ * the first page of every slice. One round-trip instead of seven, served from the backend's
+ * precomputed cache so entering the dashboard is instant.
+ */
+export interface CleanupDashboardDto {
+  summary: CleanupSummaryDto;
+  queue: CleanupQueueStatusDto;
+  storage: CleanupSliceDto;
+  neverReplied: CleanupSliceDto;
+  coldStorage: CleanupSliceDto;
+  large: CleanupSliceDto;
+  unread: CleanupSliceDto;
+  newsletters: CleanupSliceDto;
 }
 
 /**

@@ -115,6 +115,14 @@ export const messages = sqliteTable(
      * sizes for the real total (slices.ts `BYTES`).
      */
     sourceBytes: integer('source_bytes'),
+    /**
+     * Byte size of the parsed body (body_text + body_html), computed at write time
+     * (store.ts) and backfilled by migration 0018. Lets the cleanup / Settings
+     * storage aggregates sum a small integer instead of running length() over every
+     * body — which forces SQLite to read + decode hundreds of MB per scan. Null
+     * (a pre-0018 writer) falls back to the live length() expression: slower, never wrong.
+     */
+    contentBytes: integer('content_bytes'),
     sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
     receivedAt: integer('received_at', { mode: 'timestamp_ms' }),
     seen: integer('seen', { mode: 'boolean' }).notNull().default(false),

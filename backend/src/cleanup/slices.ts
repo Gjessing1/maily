@@ -43,15 +43,17 @@ const MB = 1024 * 1024;
 /**
  * Per-message byte estimate: the archived raw `.eml` size (`source_bytes`, the dominant
  * true cost — captured at archive time, ROADMAP §3.7.E) plus the parsed body (text + html)
- * and attachment sizes for any message not yet archived (null `source_bytes`). Computed
- * live from existing columns; the `.eml` size is read from a column because a SQL aggregate
- * can't stat a file. For an archived message the body+attachment terms double-count a small
- * slice already inside the `.eml`, but the `.eml` figure dominates and this stays a fast,
- * file-stat-free estimate.
+ * and attachment sizes for any message not yet archived (null `source_bytes`). The body
+ * term reads the precomputed `content_bytes` column (migration 0018) — length() over the
+ * body columns inside an aggregate forces SQLite to read + decode every body, measured at
+ * 15-20s per scan on a real mailbox; the NULL fallback keeps pre-0018 writers correct.
+ * For an archived message the body+attachment terms double-count a small slice already
+ * inside the `.eml`, but the `.eml` figure dominates and this stays a fast estimate.
  */
 const BYTES = sql`(
   coalesce(m.source_bytes, 0)
-  + length(coalesce(m.body_text, '')) + length(coalesce(m.body_html, ''))
+  + coalesce(m.content_bytes,
+      length(CAST(coalesce(m.body_text, '') AS BLOB)) + length(CAST(coalesce(m.body_html, '') AS BLOB)))
   + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0)
 )`;
 
@@ -143,12 +145,44 @@ function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
 const LIVE = sql`m.deleted_at IS NULL`;
 
 /**
+ * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice
+ * totals (derived from the groups, which partition the slice, so no second table scan).
+ * This is the unit the cleanup cache stores; paging/search over it is a cheap JS slice.
+ */
+export interface SliceData {
+  groups: CleanupGroupDto[];
+  totalMessages: number;
+  totalBytes: number;
+}
+
+const dataFromGroups = (groups: CleanupGroupDto[]): SliceData => ({
+  groups,
+  totalMessages: groups.reduce((n, g) => n + g.messageCount, 0),
+  totalBytes: groups.reduce((n, g) => n + g.bytes, 0),
+});
+
+/** Page a precomputed {@link SliceData} into the wire DTO (the cache-friendly read path). */
+export function paginateSlice(
+  slice: string,
+  data: SliceData,
+  opts: GroupPageOpts = {},
+): CleanupSliceDto {
+  const { groups, truncated } = paginateGroups(data.groups, opts);
+  return {
+    slice,
+    groups,
+    truncated,
+    totalMessages: data.totalMessages,
+    totalBytes: data.totalBytes,
+  };
+}
+
+/**
  * Storage audit — every sender domain by estimated bytes. Informational, so NOT
  * safety-filtered (a storage audit shows all mail; it never proposes deletion).
  */
 export function storageByDomain(opts: GroupPageOpts = {}): CleanupSliceDto {
-  const { groups, truncated } = paginateGroups(allGroupsByDomain(LIVE), opts);
-  return { slice: 'storage', groups, truncated, ...totalsFor(LIVE) };
+  return paginateSlice('storage', computeSliceData('storage'), opts);
 }
 
 /** Lowercased domain of an email address, or null if it has none. */
@@ -192,17 +226,7 @@ function repliedDomains(): Set<string> {
  * and the '(unknown)' bucket dropped (not actionable). Reply set is computed from Sent.
  */
 export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
-  const replied = repliedDomains();
-  const where = sql`${LIVE} AND ${notProtected('m')}`;
-
-  // All candidate groups minus those we've replied to / can't act on; total over the full set.
-  const all = allGroupsByDomain(where).filter(
-    (g) => g.domain !== '(unknown)' && !replied.has(g.domain),
-  );
-  const totalMessages = all.reduce((n, g) => n + g.messageCount, 0);
-  const totalBytes = all.reduce((n, g) => n + g.bytes, 0);
-  const { groups, truncated } = paginateGroups(all, opts);
-  return { slice: 'never-replied', groups, truncated, totalMessages, totalBytes };
+  return paginateSlice('never-replied', computeSliceData('never-replied'), opts);
 }
 
 /**
@@ -228,9 +252,7 @@ export function coldStorageCandidates(
   years = COLD_YEARS,
   opts: GroupPageOpts = {},
 ): CleanupSliceDto {
-  const where = coldStorageWhere(years);
-  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
-  return { slice: 'cold-storage', groups, truncated, ...totalsFor(where) };
+  return paginateSlice('cold-storage', computeSliceData('cold-storage', { years }), opts);
 }
 
 /**
@@ -266,9 +288,7 @@ function newslettersWhere(): SQL {
 
 /** Large messages — estimated size ≥ `minMb` (default {@link LARGE_MIN_MB} MB). */
 export function largeMessages(minMb = LARGE_MIN_MB, opts: GroupPageOpts = {}): CleanupSliceDto {
-  const where = largeWhere(minMb * MB);
-  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
-  return { slice: 'large', groups, truncated, ...totalsFor(where) };
+  return paginateSlice('large', computeSliceData('large', { minMb }), opts);
 }
 
 /** Unread-and-old — never opened and older than `months` (default {@link UNREAD_MONTHS}). */
@@ -276,16 +296,12 @@ export function unreadOldMessages(
   months = UNREAD_MONTHS,
   opts: GroupPageOpts = {},
 ): CleanupSliceDto {
-  const where = unreadWhere(months);
-  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
-  return { slice: 'unread', groups, truncated, ...totalsFor(where) };
+  return paginateSlice('unread', computeSliceData('unread', { months }), opts);
 }
 
 /** Newsletters / bulk mail — messages carrying an unsubscribe marker (FTS heuristic). */
 export function newsletterMessages(opts: GroupPageOpts = {}): CleanupSliceDto {
-  const where = newslettersWhere();
-  const { groups, truncated } = paginateGroups(allGroupsByDomain(where), opts);
-  return { slice: 'newsletters', groups, truncated, ...totalsFor(where) };
+  return paginateSlice('newsletters', computeSliceData('newsletters'), opts);
 }
 
 /** The delete-eligible slice ids — every angle except the informational storage audit. */
@@ -331,6 +347,27 @@ function sqlSliceWhere(slice: Exclude<DeleteSlice, 'never-replied'>, t: SliceThr
     case 'newsletters':
       return newslettersWhere();
   }
+}
+
+/** Every slice id the dashboard previews — the destructive ones plus the storage audit. */
+export type PreviewSlice = 'storage' | DeleteSlice;
+
+/**
+ * The single heavy compute behind every slice preview: the full sender-domain group list
+ * plus totals for one slice at the given thresholds (defaults applied here). This is what
+ * the cleanup cache memoises; the public per-slice functions and the routes paginate it.
+ */
+export function computeSliceData(slice: PreviewSlice, t: SliceThresholds = {}): SliceData {
+  if (slice === 'storage') return dataFromGroups(allGroupsByDomain(LIVE));
+  if (slice === 'never-replied') {
+    const replied = repliedDomains();
+    // All candidate groups minus those we've replied to / can't act on ('(unknown)').
+    const all = allGroupsByDomain(sql`${LIVE} AND ${notProtected('m')}`).filter(
+      (g) => g.domain !== '(unknown)' && !replied.has(g.domain),
+    );
+    return dataFromGroups(all);
+  }
+  return dataFromGroups(allGroupsByDomain(sqlSliceWhere(slice, t)));
 }
 
 /** A single message earmarked for cleanup execution (the trash queue's unit of work). */
@@ -464,5 +501,17 @@ export function cleanupSummary(): CleanupSummaryDto {
         WHERE ${LIVE}
         AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${PROTECTED_MATCH})`,
   ) as { n: number };
-  return { totalMessages, totalBytes, protectedMessages: prot.n };
+  // "Freed so far" — messages the cleanup queue has finished moving to Trash. The local
+  // tombstones persist, so this is a durable running tally of what cleanup achieved.
+  const trashed = db.get(
+    sql`SELECT COUNT(*) AS n, COALESCE(SUM(${BYTES}), 0) AS b FROM messages m
+        WHERE m.id IN (SELECT message_id FROM cleanup_queue WHERE status = 'done')`,
+  ) as { n: number; b: number };
+  return {
+    totalMessages,
+    totalBytes,
+    protectedMessages: prot.n,
+    trashedMessages: trashed.n,
+    trashedBytes: trashed.b,
+  };
 }

@@ -9,6 +9,7 @@ import type {
   AddressbookSettingsDto,
   CalendarEventInput,
   CalendarSettingsDto,
+  CleanupDashboardDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
   CleanupMessagesDto,
@@ -302,6 +303,9 @@ export const api = {
   // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
+    /** The whole dashboard in one round-trip, served from the backend's precomputed cache. */
+    dashboard: (opts: { years?: number; minMb?: number; months?: number } = {}) =>
+      request<CleanupDashboardDto>(`/api/cleanup/dashboard${groupQuery(opts)}`),
     storage: (opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/storage${groupQuery(opts)}`),
     neverReplied: (opts: GroupPage = {}) =>

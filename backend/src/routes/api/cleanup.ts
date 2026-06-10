@@ -13,22 +13,18 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type {
+  CleanupDashboardDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
   CleanupMessagesDto,
 } from '@maily/shared';
 import {
-  cleanupSummary,
-  coldStorageCandidates,
   isDeleteSlice,
-  largeMessages,
-  neverRepliedSenders,
-  newsletterMessages,
+  paginateSlice,
   sliceMessageIds,
   sliceMessages,
-  storageByDomain,
-  unreadOldMessages,
 } from '../../cleanup/slices.js';
+import { cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
 import { markMessageDeleted } from '../../imap/store.js';
 import { emitSignal } from '../../events.js';
@@ -52,37 +48,71 @@ type PageQuery = { offset?: string; q?: string };
 
 export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Headline figures: total live mail, estimated bytes, protected-from-cleanup count.
-  app.get('/api/cleanup/summary', async () => cleanupSummary());
+  app.get('/api/cleanup/summary', async () => cachedSummary());
+
+  // The whole dashboard in one round-trip (summary + queue + first page of every slice),
+  // served from the precomputed cache so entering the Cleanup screen is instant.
+  app.get<{ Querystring: { years?: string; minMb?: string; months?: string } }>(
+    '/api/cleanup/dashboard',
+    async (req): Promise<CleanupDashboardDto> => {
+      const years = posNum(req.query.years);
+      const minMb = posNum(req.query.minMb);
+      const months = posNum(req.query.months);
+      return {
+        summary: cachedSummary(),
+        queue: queueStatus(),
+        storage: paginateSlice('storage', cachedSliceData('storage')),
+        neverReplied: paginateSlice('never-replied', cachedSliceData('never-replied')),
+        coldStorage: paginateSlice('cold-storage', cachedSliceData('cold-storage', { years })),
+        large: paginateSlice('large', cachedSliceData('large', { minMb })),
+        unread: paginateSlice('unread', cachedSliceData('unread', { months })),
+        newsletters: paginateSlice('newsletters', cachedSliceData('newsletters')),
+      };
+    },
+  );
 
   // Storage audit — every sender domain by estimated bytes (informational, not a preset).
   app.get<{ Querystring: PageQuery }>('/api/cleanup/storage', async (req) =>
-    storageByDomain(pageOpts(req.query)),
+    paginateSlice('storage', cachedSliceData('storage'), pageOpts(req.query)),
   );
 
   // Senders never written back to — a passive bulk-unsubscribe / clutter candidate.
   app.get<{ Querystring: PageQuery }>('/api/cleanup/never-replied', async (req) =>
-    neverRepliedSenders(pageOpts(req.query)),
+    paginateSlice('never-replied', cachedSliceData('never-replied'), pageOpts(req.query)),
   );
 
   // Cold-storage candidates — old mail without value markers (invoice/tax/contract).
   app.get<{ Querystring: PageQuery & { years?: string } }>(
     '/api/cleanup/cold-storage',
-    async (req) => coldStorageCandidates(posNum(req.query.years), pageOpts(req.query)),
+    async (req) =>
+      paginateSlice(
+        'cold-storage',
+        cachedSliceData('cold-storage', { years: posNum(req.query.years) }),
+        pageOpts(req.query),
+      ),
   );
 
   // Large messages — estimated size over the `minMb` threshold (the size angle).
   app.get<{ Querystring: PageQuery & { minMb?: string } }>('/api/cleanup/large', async (req) =>
-    largeMessages(posNum(req.query.minMb), pageOpts(req.query)),
+    paginateSlice(
+      'large',
+      cachedSliceData('large', { minMb: posNum(req.query.minMb) }),
+      pageOpts(req.query),
+    ),
   );
 
   // Unread-and-old — never opened and older than `months` (the attention angle).
   app.get<{ Querystring: PageQuery & { months?: string } }>('/api/cleanup/unread', async (req) =>
-    unreadOldMessages(posNum(req.query.months), pageOpts(req.query)),
+    paginateSlice(
+      'unread',
+      cachedSliceData('unread', { months: posNum(req.query.months) }),
+      pageOpts(req.query),
+    ),
   );
 
   // Newsletters / bulk mail — unsubscribe-marker heuristic (the bulk-mail angle).
   app.get<{ Querystring: PageQuery }>('/api/cleanup/newsletters', async (req) =>
-    newsletterMessages(pageOpts(req.query)),
+    paginateSlice('newsletters', cachedSliceData('newsletters'), pageOpts(req.query)),
   );
 
   // Drill a delete-eligible slice down to individual messages (review surface), optionally
