@@ -68,6 +68,17 @@ function irPredicates(ir: QueryIR): SQL[] {
       sql`EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.is_inline = 0 AND a.size_bytes <= ${ir.maxAttachmentSize})`,
     );
   }
+  if (ir.unread !== undefined) preds.push(sql`m.seen = ${ir.unread ? 0 : 1}`);
+  if (ir.flagged) preds.push(sql`m.flagged = 1`);
+  if (ir.answered) preds.push(sql`m.answered = 1`);
+  if (ir.filename !== undefined) {
+    // A filename LIKE on the small attachments table — same family as the from/to
+    // operator LIKEs above, not a body scan (ARCHITECTURE §12 stays intact).
+    const v = likeContains(ir.filename);
+    preds.push(
+      sql`EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.is_inline = 0 AND a.filename LIKE ${v} ESCAPE '\\')`,
+    );
+  }
   return preds;
 }
 

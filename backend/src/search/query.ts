@@ -11,6 +11,8 @@
  *   since:/after:  before:/until: — date bounds (YYYY-MM-DD or relative 7d/2w/3m/1y)
  *   has:attachment                — only messages with a non-inline attachment
  *   larger:/smaller:  (or size:>/<) — attachment-size bounds (e.g. 500k, 2M)
+ *   is:unread/read  is:flagged/starred  is:answered — message-state filters
+ *   filename:                     — substring match on an attachment filename
  * Anything else is a free-text term, AND-joined into the FTS MATCH.
  */
 
@@ -29,6 +31,14 @@ export interface QueryIR {
   /** Lower/upper bounds on a (non-inline) attachment's size, in bytes. */
   minAttachmentSize?: number;
   maxAttachmentSize?: number;
+  /** Read-state filter: true ⇒ unread only, false ⇒ read only. */
+  unread?: boolean;
+  /** Only flagged/starred messages. */
+  flagged?: boolean;
+  /** Only messages the user has replied to. */
+  answered?: boolean;
+  /** Substring match on a (non-inline) attachment's filename. */
+  filename?: string;
 }
 
 const SIZE_UNITS: Record<string, number> = {
@@ -122,6 +132,31 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
       case 'has':
         if (/^attachments?$/i.test(value)) ir.hasAttachment = true;
         break;
+      case 'is':
+        switch (value.toLowerCase()) {
+          case 'unread':
+            ir.unread = true;
+            break;
+          case 'read':
+            ir.unread = false;
+            break;
+          case 'flagged':
+          case 'starred':
+            ir.flagged = true;
+            break;
+          case 'answered':
+          case 'replied':
+            ir.answered = true;
+            break;
+          default:
+            // Unknown state → keep the whole token as a free-text term.
+            ir.terms.push(token);
+        }
+        break;
+      case 'filename':
+      case 'file':
+        if (value) ir.filename = value;
+        break;
       case 'larger':
       case 'bigger': {
         const n = parseSize(value);
@@ -163,6 +198,10 @@ export function isEmptyQuery(ir: QueryIR): boolean {
     ir.beforeMs === undefined &&
     ir.hasAttachment === undefined &&
     ir.minAttachmentSize === undefined &&
-    ir.maxAttachmentSize === undefined
+    ir.maxAttachmentSize === undefined &&
+    ir.unread === undefined &&
+    ir.flagged === undefined &&
+    ir.answered === undefined &&
+    ir.filename === undefined
   );
 }
