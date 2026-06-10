@@ -56,12 +56,15 @@ function carddavConfig(): {
  * Radicale CalDAV config for the calendar integration (`calendar/`), or null when unset.
  * `url` seeds calendar **discovery** (`calendar/discover.ts`) — point it at the server
  * root, the principal, or one collection; discovery degrades to treating it as a single
- * calendar. The password is the same Radicale secret as CardDAV.
+ * calendar. Radicale serves CardDAV and CalDAV from the same principal with the same
+ * secret, so each field **falls back to its `CARDDAV_*` twin** — a typical deployment
+ * sets only the `CARDDAV_*` vars and gets calendars for free; set `CALDAV_*` only when
+ * the calendar server (or account) differs.
  */
 function caldavConfig(): { url: string; user: string; password: string } | null {
-  const url = process.env.CALDAV_URL;
-  const user = process.env.CALDAV_USER;
-  const password = process.env.CALDAV_PASSWORD;
+  const url = process.env.CALDAV_URL || process.env.CARDDAV_URL;
+  const user = process.env.CALDAV_USER || process.env.CARDDAV_USER;
+  const password = process.env.CALDAV_PASSWORD || process.env.CARDDAV_PASSWORD;
   if (!url || !user || !password) return null;
   return { url, user, password };
 }
