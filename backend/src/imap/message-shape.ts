@@ -35,6 +35,19 @@ export interface CapturedMessage {
   threadId: string | undefined;
 }
 
+/**
+ * Coerce an envelope/internal date to a valid Date, or null. imapflow's types promise a
+ * Date, but a malformed `Date:` header can come through as the raw string (and a parsed
+ * value can still be an Invalid Date). Either poisons the `timestamp_ms` DB write —
+ * `value.getTime is not a function` — and because one bad message aborts a whole sweep
+ * pass at the same UID forever, the sweep wedges and every folder after it starves.
+ */
+function toValidDate(value: Date | string | number | null | undefined): Date | null {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function capture(msg: Exclude<FetchMessage, false>): CapturedMessage {
   return {
     uid: msg.uid,
@@ -73,12 +86,7 @@ export function buildParsedMessage(
     (list ?? [])
       .filter((a): a is typeof a & { address: string } => Boolean(a.address))
       .map((a) => ({ name: a.name || null, address: a.address }));
-  const internalDate =
-    msg.internalDate instanceof Date
-      ? msg.internalDate
-      : msg.internalDate
-        ? new Date(msg.internalDate)
-        : null;
+  const internalDate = toValidDate(msg.internalDate);
 
   return {
     messageId: envelope?.messageId ?? null,
@@ -97,7 +105,7 @@ export function buildParsedMessage(
     bodyCalendar: body.bodyCalendar,
     sourcePath,
     sourceBytes,
-    sentAt: envelope?.date ?? null,
+    sentAt: toValidDate(envelope?.date),
     receivedAt: internalDate,
     flags: flagsFromSet(msg.flags),
     attachments: structure.attachments,

@@ -104,6 +104,36 @@ test('a string internalDate is coerced to a Date (imapflow can hand back either)
   assert.equal(parsed.receivedAt?.toISOString(), '2025-06-01T12:00:05.000Z');
 });
 
+test('malformed dates degrade to null, never a non-Date (the sweep-wedging poison case)', () => {
+  // imapflow passes the raw header string through when the Date header is unparseable;
+  // a non-Date here used to crash the timestamp_ms write ("value.getTime is not a
+  // function") and wedge the full-source sweep at that UID forever.
+  const parsed = buildParsedMessage(
+    capsWith(false),
+    captured({
+      envelope: {
+        date: 'Tirsdag 3. Juni 2014 kl 14:30' as unknown as Date, // unparseable raw header
+      } as unknown as CapturedMessage['envelope'],
+      internalDate: 'garbage' as unknown as Date,
+    }),
+    body,
+    null,
+  );
+  assert.equal(parsed.sentAt, null);
+  assert.equal(parsed.receivedAt, null);
+
+  // A parseable string still becomes a real Date.
+  const ok = buildParsedMessage(
+    capsWith(false),
+    captured({
+      envelope: { date: '2025-06-01T12:00:00Z' as unknown as Date } as CapturedMessage['envelope'],
+    }),
+    body,
+    null,
+  );
+  assert.equal(ok.sentAt?.toISOString(), '2025-06-01T12:00:00.000Z');
+});
+
 test('missing envelope/flags degrade to nulls and false flags, not a throw', () => {
   const parsed = buildParsedMessage(
     capsWith(false),

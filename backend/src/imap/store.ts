@@ -12,7 +12,7 @@
  * arrival orders so out-of-order delivery is back-fillable.
  */
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
@@ -332,6 +332,43 @@ export function updateMessageContent(messageId: string, c: RebuiltContent): void
     })
     .where(eq(messages.id, messageId))
     .run();
+}
+
+/** One live message still lacking its archived `.eml`, via one of its folder mappings. */
+export interface MissingSourceRef {
+  messageId: string;
+  folderId: string;
+  uid: number;
+}
+
+/**
+ * Live messages without an archived source, with every (folder, uid) mapping each one
+ * holds (ROADMAP §3.7.E repair pass). These are rows whose live capture fell back to
+ * body-only (budget exhausted, transient fetch failure) inside a folder the historical
+ * sweep has already completed — the sweep's downward-walking watermark never revisits
+ * those, so they need a targeted re-fetch. Multiple mappings per message are deliberate:
+ * a fetch that fails in one folder (message moved) can succeed via another.
+ */
+export function missingSourceRefs(accountId: string): MissingSourceRef[] {
+  const rows = db
+    .select({
+      messageId: messageFolders.messageId,
+      folderId: messageFolders.folderId,
+      uid: messageFolders.uid,
+    })
+    .from(messageFolders)
+    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        isNull(messages.sourcePath),
+        isNull(messages.deletedAt),
+      ),
+    )
+    .all();
+  // A mapping without a UID (mid-move bookkeeping) can't be fetched — skip it; the
+  // message's other mappings (or a later pass) cover it.
+  return rows.filter((r): r is MissingSourceRef => r.uid !== null);
 }
 
 /** Look up the internal message id owning a given UID in a folder (for flag/expunge events). */

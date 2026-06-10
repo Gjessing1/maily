@@ -597,3 +597,52 @@ test('updateMessageFlags writes the four IMAP flags onto the row', () => {
     .get();
   assert.deepEqual(row, { seen: true, flagged: true, answered: true, draft: false });
 });
+
+test('missingSourceRefs lists body-only live rows with every folder mapping', () => {
+  const { accountId, folder } = seedAccount(['inbox', 'archive']);
+
+  // Body-only in two folders → two refs (a failed fetch in one can succeed via the other).
+  const gap = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    11,
+    makeParsed({ messageId: '<gap@example.com>', gmMsgId: 'gm-gap' }),
+    'inbox',
+  );
+  store.upsertMessage(
+    accountId,
+    folder('archive'),
+    21,
+    makeParsed({ messageId: '<gap@example.com>', gmMsgId: 'gm-gap' }),
+    'archive',
+  );
+  // Already archived → not a gap.
+  const archived = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    12,
+    makeParsed({ messageId: '<ok@example.com>', sourcePath: '/src/x/source.eml' }),
+    'inbox',
+  );
+  // Tombstoned → not a gap (deleted mail is not re-fetched).
+  const deleted = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    13,
+    makeParsed({ messageId: '<gone@example.com>' }),
+    'inbox',
+  );
+  store.markMessageDeleted(deleted.id);
+
+  const refs = store.missingSourceRefs(accountId);
+  assert.deepEqual(
+    refs.map((r) => `${r.messageId}:${r.uid}`).sort(),
+    [`${gap.id}:11`, `${gap.id}:21`].sort(),
+    'only the body-only live row, once per folder mapping',
+  );
+  assert.ok(!refs.some((r) => r.messageId === archived.id));
+
+  // Once the repair archives it, the gap list is empty.
+  store.setMessageSourcePath(gap.id, '/src/y/source.eml', 1234);
+  assert.deepEqual(store.missingSourceRefs(accountId), []);
+});

@@ -23,6 +23,7 @@ import { buildParsedMessage, capture } from './message-shape.js';
 import {
   findExistingId,
   messageIdForUid,
+  missingSourceRefs,
   setMessageSourcePath,
   sourcePathForMessage,
   touchKnownMessage,
@@ -449,46 +450,52 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
         const existingId =
           findExistingId(ctx.accountId, gmMsgId, messageId) ?? messageIdForUid(folder.id, uid);
 
-        if (existingId) {
-          if (sourcePathForMessage(existingId)) {
-            skipped += 1;
-            lowestDone = uid;
-            continue;
-          }
-          if (!canDownloadSource()) {
-            budgetStop = true;
-            break;
-          }
-          if (await archiveSourceForExisting(ctx, existingId, uid)) archived += 1;
-          else skipped += 1;
+        if (existingId && sourcePathForMessage(existingId)) {
+          skipped += 1;
           lowestDone = uid;
           continue;
         }
-
-        // Genuinely new (older than the cache window): insert with full source.
         if (!canDownloadSource()) {
           budgetStop = true;
           break;
         }
-        const cap = await captureFullSource(ctx, msg);
-        if (cap) {
-          const parsed = buildParsedMessage(
-            ctx.caps,
-            msg,
-            cap.body,
-            cap.sourcePath,
-            cap.sourceBytes,
-          );
-          const result = upsertMessage(ctx.accountId, folder.id, uid, parsed, folder.role, {
-            id: cap.id,
-          });
-          if (result.inserted) inserted += 1;
-          else {
-            await discardSource(cap.sourcePath); // dedup race: row appeared meanwhile
-            skipped += 1;
+
+        // A poison message (malformed envelope crashing the insert, etc.) must not wedge
+        // the sweep at this UID forever — that starves every folder after this one. Log,
+        // count it skipped, and let the watermark advance past it.
+        try {
+          if (existingId) {
+            if (await archiveSourceForExisting(ctx, existingId, uid)) archived += 1;
+            else skipped += 1;
+          } else {
+            // Genuinely new (older than the cache window): insert with full source.
+            const cap = await captureFullSource(ctx, msg);
+            if (cap) {
+              const parsed = buildParsedMessage(
+                ctx.caps,
+                msg,
+                cap.body,
+                cap.sourcePath,
+                cap.sourceBytes,
+              );
+              const result = upsertMessage(ctx.accountId, folder.id, uid, parsed, folder.role, {
+                id: cap.id,
+              });
+              if (result.inserted) inserted += 1;
+              else {
+                await discardSource(cap.sourcePath); // dedup race: row appeared meanwhile
+                skipped += 1;
+              }
+            } else {
+              skipped += 1; // transient fetch failure — skip and let the watermark advance
+            }
           }
-        } else {
-          skipped += 1; // transient fetch failure — skip and let the watermark advance
+        } catch (err) {
+          ctx.log.warn(
+            `${folder.path} sweep: uid ${uid} failed, skipping —`,
+            (err as Error).message,
+          );
+          skipped += 1;
         }
         lowestDone = uid;
       }
@@ -506,4 +513,62 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
   } finally {
     lock.release();
   }
+}
+
+/**
+ * Targeted source repair (ROADMAP §3.7.E — the "fully synced" guarantee's third leg).
+ * The live path can fall back to body-only (budget exhausted, transient fetch failure),
+ * and once a folder's historical sweep has finished (watermark at UID 1) its downward
+ * walk never revisits — so such rows would stay body-only forever. This pass queries the
+ * DB for live messages still lacking `source_path`, resolves each through its (folder,
+ * uid) mappings, and archives the raw `.eml` in place. Cheap when there are no gaps
+ * (one indexed query, no IMAP traffic); budget-gated like every source download. A
+ * message whose fetch fails in one folder (moved/expunged there) is retried via its
+ * other mappings; persistent failures are left for the next pass.
+ */
+export async function repairMissingSource(ctx: SyncContext, folders: FolderRow[]): Promise<number> {
+  const refs = missingSourceRefs(ctx.accountId);
+  if (refs.length === 0) return 0;
+
+  const byFolder = new Map<string, { messageId: string; uid: number }[]>();
+  for (const r of refs) {
+    const list = byFolder.get(r.folderId) ?? [];
+    list.push({ messageId: r.messageId, uid: r.uid });
+    byFolder.set(r.folderId, list);
+  }
+
+  const archivedIds = new Set<string>();
+  let archived = 0;
+  for (const folder of folders) {
+    const gaps = byFolder.get(folder.id);
+    if (!gaps?.length) continue;
+    if (!canDownloadSource()) break;
+
+    // A folder that won't cooperate (gone, rename race) must not block the others.
+    let lock;
+    try {
+      lock = await ctx.client.getMailboxLock(folder.path);
+    } catch (err) {
+      ctx.log.warn(`source repair: ${folder.path} did not open —`, (err as Error).message);
+      continue;
+    }
+    try {
+      for (const gap of gaps) {
+        if (!canDownloadSource()) break;
+        // Another mapping (or a concurrent live capture) may have archived it meanwhile.
+        if (archivedIds.has(gap.messageId) || sourcePathForMessage(gap.messageId)) continue;
+        if (await archiveSourceForExisting(ctx, gap.messageId, gap.uid)) {
+          archivedIds.add(gap.messageId);
+          archived += 1;
+        }
+      }
+    } catch (err) {
+      ctx.log.warn(`source repair: ${folder.path} failed —`, (err as Error).message);
+    } finally {
+      lock.release();
+    }
+    if (!canDownloadSource()) break;
+  }
+  if (archived > 0) ctx.log.info(`source repair: archived ${archived} missed message(s)`);
+  return archived;
 }

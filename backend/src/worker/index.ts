@@ -22,7 +22,7 @@ import { createLogger } from '../logger.js';
 import { createClient } from '../imap/connection.js';
 import { budgetRemaining, canDownloadSource } from '../imap/budget.js';
 import { getFolderById, syncFolders } from '../imap/folders.js';
-import { sweepFolderSource, syncContext } from '../imap/sync.js';
+import { repairMissingSource, sweepFolderSource, syncContext } from '../imap/sync.js';
 import { drainPipeline } from '../pipeline/index.js';
 import { llmEnabled } from '../llm/index.js';
 import { env } from '../env.js';
@@ -63,17 +63,30 @@ async function runSweep(job: SweepJob): Promise<void> {
     await client.connect();
     const ctx = syncContext(client, job.accountId, accountLog);
     const folders = await syncFolders(client, job.accountId);
+
+    // Repair first: live rows that missed full-source capture inside already-completed
+    // folders (the sweep watermark never revisits those). Small and budget-gated, so it
+    // keeps recent mail fully archived even while a deep historical walk is in progress.
+    await repairMissingSource(ctx, folders);
+
     for (const folder of folders) {
       if (!canDownloadSource()) break;
       const fresh = getFolderById(folder.id);
       if (!fresh) continue;
-      const r = await sweepFolderSource(ctx, fresh);
-      if (r.archived || r.inserted) {
-        const leftMb = Math.round(budgetRemaining() / 1e6);
-        accountLog.info(
-          `${folder.path} sweep: ↑${r.archived} +${r.inserted}` +
-            `${r.done ? ' (folder complete)' : ''} — ${leftMb}MB budget left`,
-        );
+      try {
+        const r = await sweepFolderSource(ctx, fresh);
+        if (r.archived || r.inserted) {
+          const leftMb = Math.round(budgetRemaining() / 1e6);
+          accountLog.info(
+            `${folder.path} sweep: ↑${r.archived} +${r.inserted}` +
+              `${r.done ? ' (folder complete)' : ''} — ${leftMb}MB budget left`,
+          );
+        }
+      } catch (err) {
+        // One folder's failure (a poison batch, a folder gone mid-pass) must not starve
+        // the folders after it — log it and move on; the next tick retries this folder.
+        accountLog.warn(`${folder.path} sweep failed:`, (err as Error).message);
+        post({ type: 'error', accountId: job.accountId, message: (err as Error).message });
       }
     }
   } catch (err) {
