@@ -366,7 +366,6 @@ function ActionSliceCard({
   slice,
   params,
   onExecuted,
-  onSuppress,
 }: {
   title: string;
   description: string;
@@ -374,7 +373,6 @@ function ActionSliceCard({
   slice: CleanupSliceDto | null;
   params?: SliceParams;
   onExecuted: () => void;
-  onSuppress: () => void;
 }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
@@ -465,13 +463,6 @@ function ActionSliceCard({
             Review all {slice.totalMessages.toLocaleString()} messages ›
           </button>
           <SenderBrowser source={{ slice: sliceId, params }} />
-          <button
-            type="button"
-            onClick={onSuppress}
-            className="mt-3 text-xs font-medium text-faint underline-offset-2 hover:underline active:text-muted"
-          >
-            Don’t suggest this again
-          </button>
         </>
       ) : (
         // confirm / error
@@ -506,28 +497,11 @@ function ActionSliceCard({
   );
 }
 
-/** Collapsed stand-in for a slice the user dismissed via "Don't suggest this again". */
-function SuppressedRow({ title, onRestore }: { title: string; onRestore: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border px-4 py-3">
-      <span className="text-sm text-faint">“{title}” hidden</span>
-      <button
-        type="button"
-        onClick={onRestore}
-        className="shrink-0 text-xs font-medium text-accent active:opacity-80"
-      >
-        Show again
-      </button>
-    </div>
-  );
-}
-
 export function Cleanup() {
   const navigate = useNavigate();
   const prefs = usePrefs();
   const preset = PRESETS[prefs.cleanupPreset] ? prefs.cleanupPreset : 'balanced';
   const { coldYears, largeMinMb, unreadMonths } = PRESETS[preset];
-  const suppressed = new Set(prefs.cleanupSuppressed);
 
   // Stale-while-revalidate: render the last-known dashboard instantly (prefetched on app
   // idle / cached from the previous visit), refresh in the background, swap in the result.
@@ -591,15 +565,7 @@ export function Cleanup() {
   const unread = dash?.unread ?? null;
   const newsletters = dash?.newsletters ?? null;
 
-  const setSuppressed = (sliceId: ActionSlice, hidden: boolean) => {
-    const next = new Set(prefs.cleanupSuppressed);
-    if (hidden) next.add(sliceId);
-    else next.delete(sliceId);
-    setPref('cleanupSuppressed', [...next]);
-  };
-
-  // An action slice renders as a full card only when the preset surfaces it and the user
-  // hasn't dismissed it; a dismissed-but-in-preset slice collapses to a "show again" row.
+  // An action slice renders as a full card only when the active preset surfaces it.
   const renderAction = (
     sliceId: ActionSlice,
     title: string,
@@ -608,15 +574,6 @@ export function Cleanup() {
     params?: SliceParams,
   ) => {
     if (!PRESETS[preset].slices.includes(sliceId)) return null;
-    if (suppressed.has(sliceId)) {
-      return (
-        <SuppressedRow
-          key={sliceId}
-          title={title}
-          onRestore={() => setSuppressed(sliceId, false)}
-        />
-      );
-    }
     return (
       <ActionSliceCard
         key={sliceId}
@@ -626,7 +583,6 @@ export function Cleanup() {
         slice={slice}
         params={params}
         onExecuted={refresh}
-        onSuppress={() => setSuppressed(sliceId, true)}
       />
     );
   };

@@ -87,12 +87,6 @@ export interface Prefs {
   trustedImageDomains: string[];
   /** Cleanup Dashboard aggressiveness profile (ROADMAP Phase 6b.2). */
   cleanupPreset: CleanupPreset;
-  /**
-   * Cleanup action-slice ids the user has dismissed via "Don't suggest this again"
-   * (e.g. "never-replied"). Suppressed slices collapse to a one-line "show again" row
-   * instead of presenting a delete action.
-   */
-  cleanupSuppressed: string[];
 }
 
 const DEFAULTS: Prefs = {
@@ -114,7 +108,6 @@ const DEFAULTS: Prefs = {
   collapseAccountsByDefault: false,
   trustedImageDomains: [],
   cleanupPreset: 'balanced',
-  cleanupSuppressed: [],
 };
 
 const KEY = 'maily.prefs';
