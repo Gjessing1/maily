@@ -259,6 +259,65 @@ export function MessageRow({
                 {name}
               </span>
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                {/* Action icons sit to the LEFT of the date/timestamp. On mobile the
+                    read/unread + delete actions live on the swipe gestures, so only the
+                    star shows; desktop reveals all three on hover (see hoverReveal).
+                    Rendered as role="button" spans (not <button>) so they stay valid
+                    inside the row's <Link> anchor — the avatar uses the same pattern. */}
+                {!selectionMode && isWide && onToggleRead && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onToggleRead(message.id, !message.seen);
+                    }}
+                    className={`cursor-pointer rounded p-0.5 text-faint transition-colors hover:text-fg active:bg-surface-2 ${hoverReveal}`}
+                  >
+                    {message.seen ? (
+                      <MailIcon className="size-5" />
+                    ) : (
+                      <MailOpenIcon className="size-5 text-accent" />
+                    )}
+                  </span>
+                )}
+                {!selectionMode && isWide && onDelete && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Delete"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDelete(message.id);
+                    }}
+                    className={`cursor-pointer rounded p-0.5 text-faint transition-colors hover:text-danger active:bg-surface-2 ${hoverReveal}`}
+                  >
+                    <TrashIcon className="size-5" />
+                  </span>
+                )}
+                {!selectionMode && onToggleFlag && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={message.flagged ? 'Unstar' : 'Star'}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onToggleFlag(message.id, !message.flagged);
+                    }}
+                    className={`cursor-pointer rounded p-0.5 transition-colors active:bg-surface-2 ${
+                      message.flagged ? '' : hoverReveal
+                    }`}
+                  >
+                    <StarIcon
+                      className={`size-5 ${message.flagged ? 'text-accent' : 'text-faint'}`}
+                      fill={message.flagged ? 'currentColor' : 'none'}
+                    />
+                  </span>
+                )}
                 {accountTag && (
                   <span
                     className="max-w-[28vw] truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
@@ -293,53 +352,6 @@ export function MessageRow({
             )}
           </div>
         </Link>
-
-        {/* Trailing action column. On mobile the read/unread + delete actions live on
-            the swipe gestures, so the slot is the star toggle alone; desktop reveals
-            read/unread, delete and star on hover (see hoverReveal). */}
-        {!selectionMode && (onToggleFlag || (isWide && (onToggleRead || onDelete))) && (
-          <div className="flex shrink-0 items-stretch">
-            {isWide && onToggleRead && (
-              <button
-                type="button"
-                onClick={() => onToggleRead(message.id, !message.seen)}
-                className={`flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors active:bg-surface-2 ${hoverReveal}`}
-                aria-label={message.seen ? 'Mark as unread' : 'Mark as read'}
-              >
-                {message.seen ? (
-                  <MailIcon className="size-5" />
-                ) : (
-                  <MailOpenIcon className="size-5 text-accent" />
-                )}
-              </button>
-            )}
-            {isWide && onDelete && (
-              <button
-                type="button"
-                onClick={() => onDelete(message.id)}
-                className={`flex shrink-0 items-center border-b border-border/60 px-3 text-faint transition-colors hover:text-danger active:bg-surface-2 ${hoverReveal}`}
-                aria-label="Delete"
-              >
-                <TrashIcon className="size-5" />
-              </button>
-            )}
-            {onToggleFlag && (
-              <button
-                type="button"
-                onClick={() => onToggleFlag(message.id, !message.flagged)}
-                className={`flex shrink-0 items-center border-b border-border/60 px-3 transition-colors active:bg-surface-2 ${
-                  message.flagged ? '' : hoverReveal
-                }`}
-                aria-label={message.flagged ? 'Unstar' : 'Star'}
-              >
-                <StarIcon
-                  className={`size-5 ${message.flagged ? 'text-accent' : 'text-faint'}`}
-                  fill={message.flagged ? 'currentColor' : 'none'}
-                />
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

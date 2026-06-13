@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Brand-blue rounded square (matches nodecal's flat style) -->
+  <rect width="512" height="512" rx="112" fill="#2563eb"/>
+
+  <!-- Envelope body: bx0..bx1 = 0.17..0.83, by0..by1 = 0.27..0.73 of 512 -->
+  <rect x="87" y="138" width="338" height="236" rx="26" fill="#ffffff"/>
+
+  <!-- Flap: top corners down to a centred apex just past the midline -->
+  <path d="M87 138 H425 L256 265 Z" fill="#1e40af"/>
+</svg>
