@@ -24,6 +24,9 @@ function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
 }
 
+/** How many of the top list rows to warm the body cache for (see prefetch below). */
+const PREFETCH_BODIES = 8;
+
 export function useAccounts(): AccountDto[] | undefined {
   const accounts = useLiveQuery(() => cache.accounts.toArray());
   useEffect(() => {
@@ -42,10 +45,26 @@ export function useFolders(accountId: string | undefined): FolderDto[] | undefin
   );
   useEffect(() => {
     if (!accountId) return;
-    api
-      .folders(accountId)
-      .then(cacheFolders)
-      .catch(() => undefined);
+    const load = () =>
+      api
+        .folders(accountId)
+        .then(cacheFolders)
+        .catch(() => undefined);
+    load();
+    // The drawer stays mounted for the app's lifetime, so this one fetch is the only
+    // chance to populate folders. If it fails (backend restart, network blip, cold
+    // boot) and the IndexedDB cache is empty/evicted (§6, routine on iOS), the drawer
+    // is left with no inbox until a full app restart — the "vanished inbox". Re-pull
+    // whenever the app regains focus or connectivity so the folder list self-heals.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('online', load);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', load);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [accountId]);
   return folders;
 }
@@ -152,6 +171,36 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     setHasMore(true);
     refresh();
   }, [refresh]);
+
+  // Warm the body cache for the top rows so opening one of them is instant: the
+  // reader reads its body straight from Dexie instead of waiting on an HTTP round
+  // trip per tap. Fire-and-forget and sequential so it never competes with a
+  // user-initiated open; skips bodies already cached and bails on the first network
+  // error (a refocus/refresh will retry). Keyed on the id list so it only re-runs
+  // when the head of the folder actually changes, not on every liveQuery tick.
+  const topIdsKey = (messages ?? [])
+    .slice(0, PREFETCH_BODIES)
+    .map((m) => m.id)
+    .join(',');
+  useEffect(() => {
+    if (!topIdsKey) return;
+    const ids = topIdsKey.split(',');
+    let cancelled = false;
+    void (async () => {
+      for (const id of ids) {
+        if (cancelled) return;
+        if (await cache.bodies.get(id)) continue;
+        try {
+          await api.message(id).then(cacheBody);
+        } catch {
+          return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [topIdsKey]);
 
   return {
     messages,
