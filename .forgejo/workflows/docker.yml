@@ -22,51 +22,22 @@ env:
   IMAGE: git.gjessing.io/gjessing1/maily-backend
 
 jobs:
-  # Quality gate: formatting, lint, types and unit tests must pass before we build/push.
-  verify:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          # No `cache: npm` here: the self-hosted runner bind-mounts a persistent
-          # npm *download* cache at /npm-cache (npm_config_cache, see
-          # runner-config.yml in /home/gjessing/docker/forgejo). That eliminates
-          # re-downloads, but `npm ci` still re-extracts every package AND rebuilds
-          # the better-sqlite3 native addon each run — the real cost on this N150.
-
-      # Cache the installed node_modules themselves (all workspaces), keyed on the
-      # lockfile + Node major. On a hit we skip `npm ci` entirely, so no extraction
-      # and no native rebuild — the dominant cost on this low-power host.
-      - name: Cache node_modules
-        id: nmcache
-        uses: actions/cache@v4
-        with:
-          path: |
-            node_modules
-            shared/node_modules
-            backend/node_modules
-            frontend/node_modules
-          key: nodemods-n24-${{ hashFiles('package-lock.json') }}
-
-      # --no-audit/--no-fund drop a network round-trip (the audit step was even
-      # erroring on this box). --prefer-offline leans on the download cache.
-      - if: steps.nmcache.outputs.cache-hit != 'true'
-        run: npm ci --no-audit --no-fund --prefer-offline
-
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-
+  # Single job: the quality gate (format, lint, types, tests) now lives INSIDE the
+  # image build (backend/Dockerfile), so there is no separate `verify` job and the
+  # dependency tree — including the slow better-sqlite3 native compile — is installed
+  # exactly once instead of twice (once here, once in the Dockerfile) per push.
+  #
+  # Caching is handled by the host BuildKit daemon: the `npm ci` layer is reused
+  # whenever package-lock.json is unchanged, and the npm download cache mount in the
+  # Dockerfile survives even a lockfile change. The old actions/cache node_modules
+  # restore (which was unreliable on this instance) is gone.
   build-and-push:
-    needs: verify
     runs-on: docker
     permissions:
       contents: read
       packages: write # not sufficient alone on this instance; push uses REGISTRY_TOKEN (see login step)
+    env:
+      DOCKER_BUILDKIT: '1' # required for the Dockerfile's RUN --mount=type=cache npm cache
     steps:
       - uses: actions/checkout@v4
 
@@ -77,8 +48,11 @@ jobs:
         run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.gjessing.io -u gjessing1 --password-stdin
 
       - name: Build and push
+        # --progress=plain so the verbose npm + better-sqlite3 compile output is
+        # readable in the run log (the default TTY UI collapses it). The build itself
+        # runs the quality gate; a failure here means nothing is pushed.
         run: |
           SHA_TAG="${GITHUB_SHA::7}"
-          docker build -f backend/Dockerfile -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" .
+          docker build --progress=plain -f backend/Dockerfile -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" .
           docker push "$IMAGE:latest"
           docker push "$IMAGE:$SHA_TAG"

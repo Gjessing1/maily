@@ -13,36 +13,10 @@ env:
   IMAGE: ghcr.io/gjessing1/maily-backend
 
 jobs:
-  # Quality gate: formatting, lint, types and unit tests must pass before we build/push an image.
-  verify:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Format check
-        run: npm run format:check
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
+  # Single job: the quality gate (format, lint, types, tests) now runs INSIDE the image
+  # build (backend/Dockerfile), so deps are installed once instead of twice (no separate
+  # `verify` job + `npm ci`). A gate failure fails the build, so nothing is pushed.
   build-and-push:
-    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
