@@ -99,9 +99,19 @@ function vapidConfig(): { publicKey: string; privateKey: string; subject: string
   };
 }
 
+/**
+ * Disable maily's own login when the site is fronted by an external auth layer
+ * (reverse-proxy SSO, mTLS, VPN). With this set the JWT guard is bypassed on every
+ * HTTP route and the Socket.io handshake, and the PWA skips the login screen.
+ * ONLY safe behind a trusted gateway — it removes all in-app authentication.
+ */
+const authDisabled = optional('MAILY_DISABLE_AUTH', 'false') === 'true';
+
 export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   port: Number(optional('PORT', '3000')),
+  /** True when MAILY_DISABLE_AUTH=true — see note above. */
+  disableAuth: authDisabled,
   dataDir,
   dbPath,
   attachmentsDir,
@@ -145,8 +155,12 @@ export const env = {
    */
   pipelineLlmBatch: Number(optional('MAILY_PIPELINE_LLM_BATCH', '6')),
   // Read lazily where needed so the app can boot in Phase 0 without them set:
-  jwtSecret: () => required('JWT_SECRET'),
-  masterPassword: () => required('MASTER_PASSWORD'),
+  // When auth is disabled these are never used to gate access, so fall back to a
+  // constant rather than forcing the operator to set them (see disableAuth above).
+  jwtSecret: () =>
+    authDisabled ? (process.env.JWT_SECRET ?? 'maily-auth-disabled') : required('JWT_SECRET'),
+  masterPassword: () =>
+    authDisabled ? (process.env.MASTER_PASSWORD ?? '') : required('MASTER_PASSWORD'),
   /**
    * Public base URL of the PWA (e.g. https://mail.example.com), used to build absolute
    * `/m/:uuid` deep links embedded in pushed calendar events. Empty → a relative path is

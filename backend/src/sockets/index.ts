@@ -5,6 +5,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { Server } from 'socket.io';
+import { env } from '../env.js';
 import { onSignal } from '../events.js';
 import { createLogger } from '../logger.js';
 
@@ -24,6 +25,8 @@ export function attachSockets(app: FastifyInstance): Server {
   const io = new Server(app.server, { cors: { origin: true } });
 
   io.use((socket, next) => {
+    // External-auth mode: a trusted gateway already gates access (see env.disableAuth).
+    if (env.disableAuth) return next();
     const token = tokenFrom(socket);
     if (!token) return next(new Error('unauthorized'));
     try {

@@ -29,6 +29,8 @@ export function issueToken(app: FastifyInstance): string {
 
 /** preHandler/onRequest hook that rejects requests without a valid JWT. */
 export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  // External-auth mode: a trusted gateway already gates access (see env.disableAuth).
+  if (env.disableAuth) return;
   try {
     await req.jwtVerify();
   } catch {

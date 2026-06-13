@@ -19,7 +19,7 @@ import { Cleanup } from './routes/Cleanup';
 import { CleanupMessages } from './routes/CleanupMessages';
 
 export function App() {
-  const { authed } = useAuth();
+  const { authed, ready } = useAuth();
 
   // Signal handling must live above the routes so flag/new-mail updates land in
   // the cache regardless of which screen is mounted.
@@ -50,6 +50,9 @@ export function App() {
       ?.setAttribute('content', theme === 'light' ? '#ffffff' : '#0b0b0f');
   }, [theme]);
 
+  // Hold the first paint until the auth-config probe resolves so an external-SSO
+  // deployment never flashes the login screen before auto-authing.
+  if (!ready) return null;
   if (!authed) return <Login />;
 
   return (

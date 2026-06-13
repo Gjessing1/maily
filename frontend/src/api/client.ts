@@ -109,6 +109,21 @@ function groupQuery(opts: GroupPage): string {
 }
 
 export const api = {
+  /**
+   * Public probe (no token): whether the backend requires in-app login. Returns
+   * `{ authRequired: false }` when the deployment is fronted by external SSO
+   * (backend MAILY_DISABLE_AUTH), letting the UI skip the login screen.
+   */
+  async authConfig(): Promise<{ authRequired: boolean }> {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/config`);
+      if (!res.ok) return { authRequired: true };
+      return (await res.json()) as { authRequired: boolean };
+    } catch {
+      return { authRequired: true };
+    }
+  },
+
   /** Exchange the master password for a JWT. Does not auto-attach a token. */
   async login(password: string): Promise<string> {
     const res = await fetch(`${API_BASE}/api/auth/login`, {
