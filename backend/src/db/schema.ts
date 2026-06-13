@@ -136,6 +136,12 @@ export const messages = sqliteTable(
      * in a NON-trash folder on resync (undelete / move-race convergence — see store.ts).
      */
     deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
+    /**
+     * User-set "preserve from cleanup" flag (migration 0019). True ⇒ the message never
+     * appears in any delete-eligible cleanup slice (a per-message counterpart of the
+     * keyword safety gate). Purely a cleanup exclusion — normal views/search unaffected.
+     */
+    cleanupKeep: integer('cleanup_keep', { mode: 'boolean' }).notNull().default(false),
     createdAt: now(),
   },
   (t) => [

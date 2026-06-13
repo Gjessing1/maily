@@ -412,6 +412,8 @@ export interface CleanupMessagesDto {
   messages: CleanupMessageDto[];
   /** Total matching messages (before the `limit` cap). */
   total: number;
+  /** Estimated bytes of ALL matching messages (not just the returned page). */
+  totalBytes: number;
   truncated: boolean;
 }
 
@@ -465,12 +467,30 @@ export interface CleanupExecuteRequest {
   domain?: string;
   /** Sender keys to spare from a whole-slice run (lowercased). */
   excludeDomains?: string[];
+  /** Message ids to spare — the "select all, uncheck a few" drill-down path. */
+  excludeMessageIds?: string[];
 }
 
 /** Result of queuing a cleanup execution — how many messages were enqueued for trashing. */
 export interface CleanupExecuteResultDto {
   slice: string;
   queued: number;
+}
+
+/**
+ * Set/clear the per-message "preserve from cleanup" flag (migration 0019). A preserved message
+ * is excluded from every delete-eligible slice — the user's per-message counterpart of the HARD
+ * keyword safety gate, for mail the heuristics can't recognise as worth keeping.
+ */
+export interface CleanupKeepRequest {
+  messageIds: string[];
+  /** true ⇒ preserve (exclude from cleanup); false ⇒ release back into the slices. */
+  keep: boolean;
+}
+
+/** Result of a preserve-from-cleanup toggle — how many message rows changed. */
+export interface CleanupKeepResultDto {
+  updated: number;
 }
 
 /** Trash-queue progress for the dashboard. `failed` = rows that exhausted their retries. */

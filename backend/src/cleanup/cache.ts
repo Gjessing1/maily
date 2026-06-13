@@ -150,6 +150,18 @@ export function cachedSliceData(slice: PreviewSlice, t: SliceThresholds = {}): S
   return data;
 }
 
+/**
+ * Force-invalidate the cache from a writer that emits no mail signal (the preserve-from-cleanup
+ * toggle): bump the version so the next read recomputes, and schedule a debounced re-warm so the
+ * dashboard is hot again. Used by the cleanup "keep" route, whose write changes slice membership
+ * without going through the normal new/flags/deleted/archived signal path.
+ */
+export function bumpCleanupCache(): void {
+  ensureWired();
+  version += 1;
+  scheduleWarm(WARM_DEBOUNCE_MS);
+}
+
 /** Cached dashboard summary (same version discipline as the slices). */
 export function cachedSummary(): CleanupSummaryDto {
   ensureWired();

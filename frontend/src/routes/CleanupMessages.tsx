@@ -47,6 +47,7 @@ export function CleanupMessages() {
 
   const [messages, setMessages] = useState<CleanupMessageDto[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalBytes, setTotalBytes] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -61,11 +62,17 @@ export function CleanupMessages() {
     return () => clearTimeout(t);
   }, [q]);
 
-  // Selection: ids currently checked. `autoSelectRef` keeps newly-loaded pages checked by default
-  // (the all-pre-selected default) until the user explicitly deselects all. A ref (not state) so
-  // `loadPage` reads the current value without being recreated on every selection change.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const autoSelectRef = useRef(true);
+  // Selection model. Two modes so "select all" can mean the WHOLE slice, not just the loaded
+  // page — the point of the server's `excludeMessageIds`:
+  //  - 'all'    : every matching message is selected; `excluded` holds the few the user unchecked.
+  //               With no search filter this trashes the whole (optionally sender-scoped) slice
+  //               minus `excluded` in one call — no need to page through thousands.
+  //  - 'manual' : nothing is selected by default; `included` holds the messages the user picked.
+  // A search filter (`q`) forces explicit ids regardless of mode — the whole-slice express can't
+  // express "matching the filter", so we only ever trash the loaded+checked rows while filtering.
+  const [mode, setMode] = useState<'all' | 'manual'>('all');
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [included, setIncluded] = useState<Set<string>>(new Set());
 
   // Execution lifecycle for the trash action: idle → running (queue draining) → done / error.
   const [exec, setExec] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
@@ -98,15 +105,16 @@ export function CleanupMessages() {
         });
         setMessages((prev) => (offset === 0 ? res.messages : [...prev, ...res.messages]));
         setTotal(res.total);
+        setTotalBytes(res.totalBytes);
         setHasMore(res.truncated);
-        setSelected((prev) => {
-          const auto = autoSelectRef.current;
-          if (offset === 0) return auto ? new Set(res.messages.map((m) => m.id)) : new Set();
-          if (!auto) return prev;
-          const next = new Set(prev);
-          for (const m of res.messages) next.add(m.id);
-          return next;
-        });
+        // A fresh load (slice/sender/thresholds/search change) returns to the all-selected
+        // default; appended pages inherit the mode (no per-page bookkeeping — 'all' covers new
+        // rows implicitly, 'manual' leaves them unchecked).
+        if (offset === 0) {
+          setMode('all');
+          setExcluded(new Set());
+          setIncluded(new Set());
+        }
       } catch {
         setError(true);
       } finally {
@@ -122,28 +130,77 @@ export function CleanupMessages() {
     void loadPage(0);
   }, [loadPage]);
 
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // A message is checked iff it's not excluded ('all' mode) or explicitly included ('manual').
+  const isChecked = (id: string) => (mode === 'all' ? !excluded.has(id) : included.has(id));
+
+  const toggle = (id: string) => {
+    const set = mode === 'all' ? excluded : included;
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    (mode === 'all' ? setExcluded : setIncluded)(next);
+  };
 
   const selectAll = () => {
-    autoSelectRef.current = true;
-    setSelected(new Set(messages.map((m) => m.id)));
+    setMode('all');
+    setExcluded(new Set());
   };
   const deselectAll = () => {
-    autoSelectRef.current = false;
-    setSelected(new Set());
+    setMode('manual');
+    setIncluded(new Set());
   };
 
-  const selectedBytes = messages.reduce((n, m) => (selected.has(m.id) ? n + m.bytes : n), 0);
-  const allLoadedSelected = messages.length > 0 && selected.size === messages.length;
+  // Whether the whole-slice express path applies: 'all' mode and no active search filter. Then
+  // "select all" really means every match (incl. unloaded pages), trashed via `excludeMessageIds`.
+  const qActive = qDebounced.length > 0;
+  const express = mode === 'all' && !qActive;
 
-  // Kick off a trash run for the given scope, then poll the queue until it drains.
-  async function runTrash(scope: Pick<CleanupExecuteRequest, 'messageIds' | 'domain'>) {
+  // Loaded rows currently checked — the explicit-id set used when not in express mode.
+  const checkedLoaded = messages.filter((m) => isChecked(m.id));
+  const excludedLoadedBytes = messages.reduce(
+    (n, m) => (mode === 'all' && excluded.has(m.id) ? n + m.bytes : n),
+    0,
+  );
+
+  // What a trash run would move + its estimated bytes (whole match in express mode, else loaded).
+  const trashCount = express ? Math.max(0, total - excluded.size) : checkedLoaded.length;
+  const trashBytes = express
+    ? Math.max(0, totalBytes - excludedLoadedBytes)
+    : checkedLoaded.reduce((n, m) => n + m.bytes, 0);
+
+  const allChecked =
+    mode === 'all' ? excluded.size === 0 : messages.length > 0 && included.size === messages.length;
+
+  // Preserve a message from cleanup (the per-row shield): mark it kept server-side, then drop it
+  // from the list optimistically (it's no longer a cleanup candidate). On failure, reload.
+  const keepMessage = (id: string) => {
+    const bytes = messages.find((m) => m.id === id)?.bytes ?? 0;
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+    setTotalBytes((b) => Math.max(0, b - bytes));
+    setExcluded((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setIncluded((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    void api.cleanup.keep([id], true).catch(() => void loadPage(0));
+  };
+
+  // Kick off a trash run for the current selection, then poll the queue until it drains. In
+  // express mode the scope is the whole (optionally sender-scoped) slice minus `excluded`;
+  // otherwise it's the explicit checked-and-loaded ids. The server re-validates either way.
+  async function runTrash() {
+    const scope: Pick<CleanupExecuteRequest, 'messageIds' | 'domain' | 'excludeMessageIds'> =
+      express
+        ? { domain, excludeMessageIds: excluded.size ? [...excluded] : undefined }
+        : { messageIds: checkedLoaded.map((m) => m.id) };
     setExec('running');
     try {
       const res = await api.cleanup.execute({
@@ -194,10 +251,10 @@ export function CleanupMessages() {
         {actionable && !loading && messages.length > 0 && exec === 'idle' && (
           <button
             type="button"
-            onClick={allLoadedSelected ? deselectAll : selectAll}
+            onClick={allChecked ? deselectAll : selectAll}
             className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-accent active:bg-surface-2"
           >
-            {allLoadedSelected ? 'Deselect all' : 'Select all'}
+            {allChecked ? 'Deselect all' : 'Select all'}
           </button>
         )}
       </header>
@@ -250,8 +307,9 @@ export function CleanupMessages() {
                   <CleanupMessageRow
                     m={m}
                     selectable={actionable && exec === 'idle'}
-                    selected={selected.has(m.id)}
+                    selected={isChecked(m.id)}
                     onToggle={() => toggle(m.id)}
+                    onKeep={actionable && exec === 'idle' ? () => keepMessage(m.id) : undefined}
                   />
                 </li>
               ))}
@@ -307,29 +365,27 @@ export function CleanupMessages() {
                 )}
                 <div className="flex items-center gap-3">
                   <span className="min-w-0 flex-1 truncate text-sm text-muted">
-                    {selected.size.toLocaleString()} selected
-                    {selected.size > 0 && ` · ${formatBytes(selectedBytes)}`}
+                    {trashCount.toLocaleString()} selected
+                    {trashCount > 0 && ` · ${formatBytes(trashBytes)}`}
                   </span>
                   <button
                     type="button"
-                    disabled={selected.size === 0}
-                    onClick={() => void runTrash({ messageIds: [...selected] })}
+                    disabled={trashCount === 0}
+                    onClick={() => void runTrash()}
                     className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <TrashIcon className="size-4" />
-                    Move {selected.size > 0 ? `${selected.size.toLocaleString()} ` : ''}to Trash
+                    Move {trashCount > 0 ? `${trashCount.toLocaleString()} ` : ''}to Trash
                   </button>
                 </div>
-                {/* When the sender has more than this page, offer the whole-sender shortcut —
-                    hidden while a filter is active (it would trash beyond the filtered list). */}
-                {domain && !qDebounced && total > messages.length && (
-                  <button
-                    type="button"
-                    onClick={() => void runTrash({ domain })}
-                    className="text-center text-xs font-medium text-faint underline-offset-2 active:text-muted hover:underline"
-                  >
-                    Trash all {total.toLocaleString()} from {domain}
-                  </button>
+                {/* In express mode "select all" reaches beyond the loaded page — make that explicit
+                    so a one-tap trash of thousands is never a surprise. */}
+                {express && total > messages.length && (
+                  <p className="text-center text-xs text-faint">
+                    Selecting all {total.toLocaleString()}
+                    {domain ? ` from ${domain}` : ' in this slice'} — including{' '}
+                    {(total - messages.length).toLocaleString()} not shown.
+                  </p>
                 )}
               </div>
             )}

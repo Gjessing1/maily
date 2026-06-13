@@ -250,6 +250,21 @@ export function markMessageDeleted(messageId: string): void {
 }
 
 /**
+ * Set/clear the per-message "preserve from cleanup" flag (migration 0019). A preserved
+ * message is excluded from every delete-eligible cleanup slice (the {@link ELIGIBLE}
+ * predicate in cleanup/slices.ts) — a user-set counterpart of the keyword safety gate for
+ * mail the heuristics can't recognise as valuable. Cleanup-only: normal folder views and
+ * search are unaffected, so no IMAP propagation is needed. Returns the rows changed.
+ */
+export function setCleanupKeep(messageIds: string[], keep: boolean): number {
+  if (messageIds.length === 0) return 0;
+  const res = withWriteRetry('setCleanupKeep', () =>
+    db.update(messages).set({ cleanupKeep: keep }).where(inArray(messages.id, messageIds)).run(),
+  );
+  return res.changes;
+}
+
+/**
  * Replace ALL of a message's folder mappings with a single mapping into `folderId`.
  * Used after an interactive MOVE-to-Trash: on Gmail the server strips every other
  * label, on generic IMAP the one source folder is vacated — either way the local

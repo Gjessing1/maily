@@ -82,6 +82,14 @@ export const StarIcon = (p: IconProps) => (
   </Base>
 );
 
+/** Shield with a check — "preserved / protected from cleanup". */
+export const ShieldIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6l-7-3Z" />
+    <path d="m9 12 2 2 4-4" />
+  </Base>
+);
+
 export const ChevronDownIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="m6 9 6 6 6-6" />

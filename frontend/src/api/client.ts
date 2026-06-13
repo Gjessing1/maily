@@ -12,6 +12,7 @@ import type {
   CleanupDashboardDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
+  CleanupKeepResultDto,
   CleanupMessagesDto,
   CleanupQueueStatusDto,
   CleanupSliceDto,
@@ -359,6 +360,12 @@ export const api = {
       request<CleanupExecuteResultDto>('/api/cleanup/execute', {
         method: 'POST',
         body: JSON.stringify(body),
+      }),
+    /** Preserve (keep=true) or release (keep=false) messages from every cleanup slice. */
+    keep: (messageIds: string[], keep: boolean) =>
+      request<CleanupKeepResultDto>('/api/cleanup/keep', {
+        method: 'POST',
+        body: JSON.stringify({ messageIds, keep }),
       }),
     /** Trash-queue progress for the "Moving N to Trash…" readout. */
     queueStatus: () => request<CleanupQueueStatusDto>('/api/cleanup/queue'),

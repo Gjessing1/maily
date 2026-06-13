@@ -30,7 +30,7 @@ import { setPref, usePrefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import { PRESETS, PRESET_ORDER, type ActionSlice, type SliceParams } from '../state/cleanupPresets';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ChevronDownIcon, SearchIcon, SparklesIcon } from '../ui/icons';
+import { BackIcon, ChevronDownIcon, SearchIcon, ShieldIcon, SparklesIcon } from '../ui/icons';
 
 export type { SliceParams } from '../state/cleanupPresets';
 
@@ -71,18 +71,21 @@ export function formatMsgDate(iso: string | null): string {
  * One drill-down message row — subject + sender/date + size. Shared by the dedicated
  * drill-down screen. When `selectable`, a leading checkbox reflects/toggles selection and the
  * row no longer links to the reader (tapping toggles); otherwise it deep-links to the reader
- * (the internal UUID) so a message can be inspected before it's trashed.
+ * (the internal UUID) so a message can be inspected before it's trashed. When `onKeep` is given,
+ * a trailing shield button preserves the message from cleanup (sibling, not nested, button).
  */
 export function CleanupMessageRow({
   m,
   selectable = false,
   selected = false,
   onToggle,
+  onKeep,
 }: {
   m: CleanupMessageDto;
   selectable?: boolean;
   selected?: boolean;
   onToggle?: () => void;
+  onKeep?: () => void;
 }) {
   const body = (
     <>
@@ -96,24 +99,39 @@ export function CleanupMessageRow({
     </>
   );
 
+  const keepButton = onKeep && (
+    <button
+      type="button"
+      onClick={onKeep}
+      aria-label="Keep — never clean up"
+      title="Keep — exclude from cleanup"
+      className="shrink-0 rounded-full p-2 text-faint active:bg-surface-2 active:text-accent"
+    >
+      <ShieldIcon className="size-5" />
+    </button>
+  );
+
   if (selectable) {
     return (
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left active:bg-surface-2"
-        aria-pressed={selected}
-      >
-        <input
-          type="checkbox"
-          checked={selected}
-          readOnly
-          tabIndex={-1}
-          aria-hidden
-          className="size-4 shrink-0 accent-accent"
-        />
-        {body}
-      </button>
+      <div className="flex w-full items-center active:bg-surface-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 text-left"
+          aria-pressed={selected}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            readOnly
+            tabIndex={-1}
+            aria-hidden
+            className="size-4 shrink-0 accent-accent"
+          />
+          {body}
+        </button>
+        {keepButton ?? <span className="pr-3" />}
+      </div>
     );
   }
 

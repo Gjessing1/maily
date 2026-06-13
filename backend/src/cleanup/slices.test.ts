@@ -74,6 +74,7 @@ function seedMessage(
     sourceBytes?: number;
     seen?: boolean;
     flagged?: boolean;
+    cleanupKeep?: boolean;
   },
 ): string {
   const id = randomUUID();
@@ -90,6 +91,7 @@ function seedMessage(
       sourceBytes: opts.sourceBytes ?? null,
       seen: opts.seen ?? false,
       flagged: opts.flagged ?? false,
+      cleanupKeep: opts.cleanupKeep ?? false,
     })
     .run();
   if (opts.folderId) {
@@ -408,6 +410,75 @@ test('sliceMessageIds(never-replied): messageIds intersect the eligible set', ()
     'only the selected, eligible id resolves; the unknown id is ignored',
   );
   assert.ok(!refs.some((r) => r.id === b), 'the unselected eligible message is left alone');
+});
+
+test('cleanup_keep: a preserved message drops out of slices, previews and execute', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+
+  const cold = seedMessage(acct, {
+    fromAddress: 'a@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  // Same slice-eligible shape, but user-preserved → excluded everywhere a delete could reach it.
+  const kept = seedMessage(acct, {
+    fromAddress: 'b@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+    cleanupKeep: true,
+  });
+
+  const slice = S.coldStorageCandidates(2);
+  assert.equal(slice.totalMessages, 1, 'only the non-preserved message counts');
+  assert.equal(
+    findGroup(slice, 'b@promo.example'),
+    undefined,
+    'preserved sender absent from slice',
+  );
+
+  const listed = S.sliceMessages('cold-storage', { years: 2 });
+  assert.deepEqual(
+    listed.messages.map((m) => m.id),
+    [cold],
+    'the drill-down never lists a preserved message',
+  );
+
+  // Even an explicit selection of the preserved id resolves to nothing.
+  const refs = S.sliceMessageIds('cold-storage', { years: 2, messageIds: [cold, kept] });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [cold],
+    'preserve wins over an explicit selection, like the safety gate',
+  );
+});
+
+test('sliceMessageIds: excludeMessageIds spares ids from a whole-slice run', () => {
+  const acct = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+
+  const a = seedMessage(acct, {
+    fromAddress: 'a@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  const b = seedMessage(acct, {
+    fromAddress: 'b@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+  const c = seedMessage(acct, {
+    fromAddress: 'c@promo.example',
+    bodyText: 'sale',
+    receivedAt: old,
+  });
+
+  const refs = S.sliceMessageIds('cold-storage', { years: 2, excludeMessageIds: [b] });
+  assert.deepEqual(
+    new Set(refs.map((r) => r.id)),
+    new Set([a, c]),
+    'the whole slice minus the unchecked id (the select-all-uncheck-a-few path)',
+  );
 });
 
 test('sliceMessageIds(cold-storage): a protected id passed in is dropped (safety wins)', () => {

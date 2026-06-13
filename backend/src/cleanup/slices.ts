@@ -144,6 +144,14 @@ function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
 const LIVE = sql`m.deleted_at IS NULL`;
 
 /**
+ * The base predicate of every DELETE-ELIGIBLE slice: live AND not user-preserved.
+ * `cleanup_keep` is the per-message "preserve from cleanup" flag (migration 0019) — a
+ * user-set counterpart of the keyword safety gate. The informational storage audit and
+ * the summary totals deliberately stay on {@link LIVE} (preserved mail still occupies bytes).
+ */
+const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0`;
+
+/**
  * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice
  * totals (derived from the groups, which partition the slice, so no second table scan).
  * This is the unit the cleanup cache stores; paging/search over it is a cheap JS slice.
@@ -233,7 +241,7 @@ export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
 function coldStorageWhere(years: number): SQL {
   const cutoff = Date.now() - years * MS_PER_YEAR;
   const coldMatch = ftsOrMatch(COLD_KEEP_KEYWORDS);
-  return sql`${LIVE}
+  return sql`${ELIGIBLE}
     AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
     AND ${notProtected('m')}
     AND m.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${coldMatch})`;
@@ -256,7 +264,7 @@ export function coldStorageCandidates(
  * angle — a single fat message (usually attachments) is the quickest storage win.
  */
 function largeWhere(minBytes: number): SQL {
-  return sql`${LIVE} AND ${notProtected('m')} AND ${BYTES} >= ${minBytes}`;
+  return sql`${ELIGIBLE} AND ${notProtected('m')} AND ${BYTES} >= ${minBytes}`;
 }
 
 /**
@@ -266,7 +274,7 @@ function largeWhere(minBytes: number): SQL {
  */
 function unreadWhere(months: number): SQL {
   const cutoff = Date.now() - months * MS_PER_MONTH;
-  return sql`${LIVE}
+  return sql`${ELIGIBLE}
     AND m.seen = 0 AND m.draft = 0 AND m.flagged = 0
     AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
     AND ${notProtected('m')}`;
@@ -278,7 +286,7 @@ function unreadWhere(months: number): SQL {
  */
 function newslettersWhere(): SQL {
   const match = ftsOrMatch(NEWSLETTER_KEYWORDS);
-  return sql`${LIVE} AND ${notProtected('m')}
+  return sql`${ELIGIBLE} AND ${notProtected('m')}
     AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${match})`;
 }
 
@@ -328,12 +336,27 @@ export interface SliceThresholds {
 }
 
 /**
- * The shared SQL predicate of a pure-SQL delete-eligible slice (everything except
- * never-replied, whose reply-set filter runs in JS). Single source of truth so the
- * preview, drill-down, and execute paths can never drift apart.
+ * The never-replied predicate, fully in SQL: an actionable sender key (not '(unknown)')
+ * the user has never written to. The reply set is computed in JS from Sent recipients
+ * (JSON address blobs) and handed to SQLite as ONE bound JSON array via `json_each` —
+ * keeping the predicate composable with COUNT/LIMIT pagination without a bound-variable
+ * per key.
  */
-function sqlSliceWhere(slice: Exclude<DeleteSlice, 'never-replied'>, t: SliceThresholds): SQL {
+function neverRepliedWhere(): SQL {
+  const replied = JSON.stringify([...repliedSenderKeys()]);
+  return sql`${ELIGIBLE} AND ${notProtected('m')}
+    AND ${SENDER_KEY} <> '(unknown)'
+    AND ${SENDER_KEY} NOT IN (SELECT value FROM json_each(${replied}))`;
+}
+
+/**
+ * The shared SQL predicate of a delete-eligible slice — the single source of truth used
+ * by the preview, drill-down, and execute paths, so the three can never drift apart.
+ */
+function sliceWhere(slice: DeleteSlice, t: SliceThresholds): SQL {
   switch (slice) {
+    case 'never-replied':
+      return neverRepliedWhere();
     case 'cold-storage':
       return coldStorageWhere(t.years ?? COLD_YEARS);
     case 'large':
@@ -355,15 +378,7 @@ export type PreviewSlice = 'storage' | DeleteSlice;
  */
 export function computeSliceData(slice: PreviewSlice, t: SliceThresholds = {}): SliceData {
   if (slice === 'storage') return dataFromGroups(allGroupsByDomain(LIVE));
-  if (slice === 'never-replied') {
-    const replied = repliedSenderKeys();
-    // All candidate groups minus those we've replied to / can't act on ('(unknown)').
-    const all = allGroupsByDomain(sql`${LIVE} AND ${notProtected('m')}`).filter(
-      (g) => g.domain !== '(unknown)' && !replied.has(g.domain),
-    );
-    return dataFromGroups(all);
-  }
-  return dataFromGroups(allGroupsByDomain(sqlSliceWhere(slice, t)));
+  return dataFromGroups(allGroupsByDomain(sliceWhere(slice, t)));
 }
 
 /** A single message earmarked for cleanup execution (the trash queue's unit of work). */
@@ -386,6 +401,8 @@ export interface CleanupMessageRef {
  *    set, so a stale/forged/now-protected id simply isn't in the set and is silently dropped.
  *  - `excludeDomains` (lowercased sender keys): spare senders from the whole-slice
  *    "Clean all" path.
+ *  - `excludeMessageIds`: spare individual messages — the drill-down's "select all,
+ *    uncheck a few" path (subtracted last, after every narrowing scope).
  *
  * Only the destructive slices resolve — 'storage' is informational and throws.
  */
@@ -395,34 +412,27 @@ export function sliceMessageIds(
     domain?: string;
     messageIds?: string[];
     excludeDomains?: string[];
+    excludeMessageIds?: string[];
   } = {},
 ): CleanupMessageRef[] {
+  if (!DELETE_SLICES.has(slice)) {
+    throw new Error(`slice '${slice as string}' is not delete-eligible`);
+  }
   const exclude = new Set((opts.excludeDomains ?? []).map((d) => d.toLowerCase()));
   const only = opts.domain?.toLowerCase();
   const ids = opts.messageIds ? new Set(opts.messageIds) : null;
+  const spared = new Set(opts.excludeMessageIds ?? []);
 
-  let rows: { id: string; accountId: string; domain: string }[];
-  if (slice === 'never-replied') {
-    const replied = repliedSenderKeys();
-    rows = (
-      db.all(
-        sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
-            FROM messages m WHERE ${LIVE} AND ${notProtected('m')}`,
-      ) as typeof rows
-    ).filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
-  } else if (DELETE_SLICES.has(slice)) {
-    rows = db.all(
-      sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
-          FROM messages m WHERE ${sqlSliceWhere(slice, opts)}`,
-    ) as typeof rows;
-  } else {
-    throw new Error(`slice '${slice as string}' is not delete-eligible`);
-  }
+  const rows = db.all(
+    sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
+        FROM messages m WHERE ${sliceWhere(slice, opts)}`,
+  ) as { id: string; accountId: string; domain: string }[];
 
   return rows
     .filter((r) => !exclude.has(r.domain))
     .filter((r) => !only || r.domain === only)
     .filter((r) => !ids || ids.has(r.id))
+    .filter((r) => !spared.has(r.id))
     .map((r) => ({ id: r.id, accountId: r.accountId }));
 }
 
@@ -453,54 +463,64 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
  * surface), optionally scoped to one sender `domain` (a sender key). Reuses the EXACT
  * slice + safety predicates of the preview/execute paths, so the listed messages are
  * precisely what an execute would trash. Newest-first; returns the `[offset, offset+limit)`
- * page with a `total` count and a `truncated` flag (more rows exist past this page) so the
- * drill-down can paginate. `q` narrows the list to messages whose subject or sender contains
- * the term (case-insensitive, filtered in JS over the already-fetched rows — small columns,
- * not an FTS bypass). Only the destructive slices drill — 'storage' is informational and
- * throws.
+ * page with `total`/`totalBytes` over the whole match and a `truncated` flag (more rows
+ * exist past this page). `q` narrows to messages whose subject or sender contains the term
+ * (an `instr` over the small header columns, not an FTS bypass).
+ *
+ * Pagination is pushed into SQL: one aggregate (COUNT + byte SUM) plus one page query whose
+ * inner subquery selects just the page's ids — so the per-row {@link BYTES} estimate (a
+ * correlated attachments sub-select) is only evaluated for the rows actually returned,
+ * instead of materialising the entire slice on every page/filter request (the old path,
+ * which made the drill-down feel slow on big slices). Only the destructive slices drill —
+ * 'storage' is informational and throws.
  */
 export function sliceMessages(
   slice: DeleteSlice,
   opts: SliceThresholds & { domain?: string; q?: string; limit?: number; offset?: number } = {},
-): { messages: CleanupMessageDto[]; total: number; truncated: boolean } {
+): { messages: CleanupMessageDto[]; total: number; totalBytes: number; truncated: boolean } {
   const limit = opts.limit ?? MESSAGE_LIMIT;
   const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
   const domain = opts.domain?.toLowerCase();
 
-  const base =
-    slice === 'never-replied' ? sql`${LIVE} AND ${notProtected('m')}` : sqlSliceWhere(slice, opts);
-  const where = domain ? sql`${base} AND ${SENDER_KEY} = ${domain}` : base;
+  let where = sliceWhere(slice, opts);
+  if (domain) where = sql`${where} AND ${SENDER_KEY} = ${domain}`;
+  const q = opts.q?.trim();
+  if (q) {
+    // Case-insensitive contains over the header columns. SQLite's lower() folds ASCII
+    // only, so also try the raw term — exact-case matches for non-ASCII still hit.
+    const lowered = q.toLowerCase();
+    where = sql`${where} AND (
+      instr(lower(coalesce(m.subject, '')), ${lowered}) > 0
+      OR instr(coalesce(m.subject, ''), ${q}) > 0
+      OR instr(lower(coalesce(m.from_name, '')), ${lowered}) > 0
+      OR instr(coalesce(m.from_name, ''), ${q}) > 0
+      OR instr(lower(coalesce(m.from_address, '')), ${lowered}) > 0
+    )`;
+  }
+
+  const agg = db.get(
+    sql`SELECT COUNT(*) AS total, COALESCE(SUM(${BYTES}), 0) AS totalBytes
+        FROM messages m WHERE ${where}`,
+  ) as { total: number; totalBytes: number };
 
   const rows = db.all(
     sql`SELECT m.id AS id, m.subject AS subject, m.from_name AS fromName,
                m.from_address AS fromAddress, m.received_at AS receivedAt,
                ${BYTES} AS bytes, ${SENDER_KEY} AS domain
         FROM messages m
-        WHERE ${where}
+        WHERE m.id IN (
+          SELECT m.id FROM messages m WHERE ${where}
+          ORDER BY m.received_at DESC
+          LIMIT ${limit} OFFSET ${offset}
+        )
         ORDER BY m.received_at DESC`,
   ) as RawMessage[];
 
-  // never-replied filters the reply set + '(unknown)' bucket in JS (same as the slice/exec).
-  let matched = rows;
-  if (slice === 'never-replied') {
-    const replied = repliedSenderKeys();
-    matched = rows.filter((r) => r.domain !== '(unknown)' && !replied.has(r.domain));
-  }
-
-  const q = opts.q?.trim().toLowerCase();
-  if (q) {
-    matched = matched.filter(
-      (r) =>
-        (r.subject ?? '').toLowerCase().includes(q) ||
-        (r.fromName ?? '').toLowerCase().includes(q) ||
-        (r.fromAddress ?? '').toLowerCase().includes(q),
-    );
-  }
-
   return {
-    messages: matched.slice(offset, offset + limit).map(toMessage),
-    total: matched.length,
-    truncated: offset + limit < matched.length,
+    messages: rows.map(toMessage),
+    total: agg.total,
+    totalBytes: agg.totalBytes,
+    truncated: offset + limit < agg.total,
   };
 }
 

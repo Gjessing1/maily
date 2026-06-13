@@ -16,6 +16,8 @@ import type {
   CleanupDashboardDto,
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
+  CleanupKeepRequest,
+  CleanupKeepResultDto,
   CleanupMessagesDto,
 } from '@maily/shared';
 import {
@@ -24,9 +26,9 @@ import {
   sliceMessageIds,
   sliceMessages,
 } from '../../cleanup/slices.js';
-import { cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
+import { bumpCleanupCache, cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
-import { markMessageDeleted } from '../../imap/store.js';
+import { markMessageDeleted, setCleanupKeep } from '../../imap/store.js';
 import { emitSignal } from '../../events.js';
 
 /** Parse the shared group-list paging/search query (`q` substring + `offset`). */
@@ -150,13 +152,16 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
   app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
-    const { slice, years, minMb, months, messageIds, domain, excludeDomains } = req.body ?? {};
+    const { slice, years, minMb, months, messageIds, domain, excludeDomains, excludeMessageIds } =
+      req.body ?? {};
     if (!slice || !isDeleteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not delete-eligible' });
     }
 
-    // The scope (messageIds/domain/excludeDomains) only narrows the server-resolved eligible
-    // set — the HARD safety gate is re-applied inside sliceMessageIds, never trusting the client.
+    // The scope (messageIds/domain/excludeDomains/excludeMessageIds) only narrows the
+    // server-resolved eligible set — the HARD safety gate is re-applied inside sliceMessageIds,
+    // never trusting the client. `excludeMessageIds` is the "select all, uncheck a few" path:
+    // trash the whole (optionally sender-scoped) slice except the spared ids.
     const refs = sliceMessageIds(slice, {
       years,
       minMb,
@@ -164,6 +169,7 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
       messageIds,
       domain,
       excludeDomains,
+      excludeMessageIds,
     });
     for (const ref of refs) {
       markMessageDeleted(ref.id);
@@ -173,6 +179,21 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     if (queued > 0) nudgeTrashQueue();
 
     const result: CleanupExecuteResultDto = { slice, queued };
+    return result;
+  });
+
+  // Preserve (or release) individual messages from cleanup: sets the per-message `cleanup_keep`
+  // flag so a preserved message drops out of every delete-eligible slice — the user's per-message
+  // counterpart of the HARD safety gate. Cleanup-only (no IMAP propagation); invalidates the
+  // analytics cache so the dashboard/slice totals reflect the change on the next read.
+  app.post<{ Body: CleanupKeepRequest }>('/api/cleanup/keep', async (req, reply) => {
+    const { messageIds, keep } = req.body ?? {};
+    if (!Array.isArray(messageIds) || typeof keep !== 'boolean') {
+      return reply.code(400).send({ error: 'messageIds[] and keep are required' });
+    }
+    const updated = setCleanupKeep(messageIds, keep);
+    if (updated > 0) bumpCleanupCache();
+    const result: CleanupKeepResultDto = { updated };
     return result;
   });
 
