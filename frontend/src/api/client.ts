@@ -40,6 +40,23 @@ const TOKEN_KEY = 'maily.token';
 let token: string | null = localStorage.getItem(TOKEN_KEY);
 const unauthorizedListeners = new Set<() => void>();
 
+// True once the auth-config probe reports that maily's own login is disabled, i.e.
+// the deployment is fronted by an external auth gateway (tinyauth). In that mode a
+// 401 can only mean the gateway expired the session, so we re-auth through it rather
+// than showing maily's (unusable) login screen.
+let externalAuthGateway = false;
+
+/**
+ * Hard-navigate the document through the external auth gateway so it can show its
+ * login and bounce us back to a freshly-authed app shell. Going via an /api path is
+ * deliberate: the service worker serves the app shell from cache (so a plain reload
+ * never reaches the gateway), but passes /api straight to the network, where the
+ * gateway intercepts the expired session. See backend GET /api/auth/relogin.
+ */
+function gatewayRelogin(): void {
+  window.location.assign(`${API_BASE}/api/auth/relogin`);
+}
+
 export function getToken(): string | null {
   return token;
 }
@@ -76,6 +93,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
 
   if (res.status === 401) {
+    // Gateway-fronted deployment: the 401 is the external gateway, not maily.
+    // Bounce through it to re-auth instead of dropping to maily's login screen.
+    if (externalAuthGateway) {
+      gatewayRelogin();
+      throw new ApiError(401, 'reauthenticating');
+    }
     setToken(null);
     unauthorizedListeners.forEach((l) => l());
     throw new ApiError(401, 'unauthorized');
@@ -118,11 +141,27 @@ export const api = {
   async authConfig(): Promise<{ authRequired: boolean }> {
     try {
       const res = await fetch(`${API_BASE}/api/auth/config`);
-      if (!res.ok) return { authRequired: true };
-      return (await res.json()) as { authRequired: boolean };
+      if (res.ok) {
+        const cfg = (await res.json()) as { authRequired: boolean };
+        externalAuthGateway = !cfg.authRequired;
+        return cfg;
+      }
+      // A 401/403 (or a redirect to a login page) on this PUBLIC endpoint can only
+      // come from an external auth gateway — maily's own auth never gates it. So the
+      // session expired at the gateway: bounce through it rather than show maily's
+      // login. Other failures (5xx) fall through to the maily-login fallback, which
+      // also avoids a redirect loop when the backend itself is down.
+      if (res.status === 401 || res.status === 403 || res.redirected) {
+        externalAuthGateway = true;
+        gatewayRelogin();
+        return { authRequired: false }; // navigating away; the value is moot
+      }
     } catch {
-      return { authRequired: true };
+      // Network/CORS error (incl. a blocked cross-origin gateway redirect). Can't tell
+      // a logged-out gateway from a dead backend here, so fall through rather than risk
+      // a reload loop.
     }
+    return { authRequired: true };
   },
 
   /** Exchange the master password for a JWT. Does not auto-attach a token. */
