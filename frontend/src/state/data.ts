@@ -213,6 +213,37 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   };
 }
 
+/**
+ * Reactive thread membership for the conversation reader. Reads the cached rows that
+ * share `threadId` (so per-message flag/delete updates reflect live) while fetching
+ * the authoritative whole thread — which spans folders, e.g. Sent replies — from the
+ * backend and caching it. Returns the members oldest-first; the reader orders them.
+ */
+export function useThread(
+  messageId: string | undefined,
+  threadId: string | null | undefined,
+): CachedMessage[] {
+  const members = useLiveQuery(async () => {
+    if (!messageId) return [];
+    // No thread id (or not loaded yet) → the message is its own one-message thread.
+    if (!threadId) {
+      const m = await cache.messages.get(messageId);
+      return m ? [m] : [];
+    }
+    return cache.messages.where('threadId').equals(threadId).toArray();
+  }, [messageId, threadId]);
+
+  useEffect(() => {
+    if (!messageId) return;
+    api
+      .thread(messageId)
+      .then(cacheMessages)
+      .catch(() => undefined);
+  }, [messageId]);
+
+  return (members ?? []).slice().sort((a, b) => receivedMs(a) - receivedMs(b));
+}
+
 interface DetailResult {
   detail: MessageDetailDto | undefined;
   loading: boolean;

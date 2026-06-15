@@ -39,6 +39,8 @@ export function MessageRow({
   onContextMenu: onContextMenuOpen,
   showRecipient = false,
   accountTag,
+  threadCount,
+  displayName,
 }: {
   message: MessageDto;
   onDelete?: (id: string) => void;
@@ -70,6 +72,10 @@ export function MessageRow({
   showRecipient?: boolean;
   /** Unified-inbox source-account badge (coloured label pill); omitted elsewhere. */
   accountTag?: { label: string; hue: number };
+  /** Conversation size — renders a "N" pill beside the name when > 1. */
+  threadCount?: number;
+  /** Override the computed party name (e.g. a conversation's participant list). */
+  displayName?: string;
 }) {
   // In outgoing folders the sender is always the account owner, so the useful
   // identity is the recipient. Fall back to the sender when there are no parsed
@@ -80,7 +86,7 @@ export function MessageRow({
   const partyName = recipient ? recipient.name : message.fromName;
   const partyAddress = recipient ? recipient.address : message.fromAddress;
   const baseName = senderName(partyName, partyAddress);
-  const name = extraRecipients > 0 ? `${baseName} +${extraRecipients}` : baseName;
+  const name = displayName ?? (extraRecipients > 0 ? `${baseName} +${extraRecipients}` : baseName);
   const hue = avatarHue(partyAddress ?? baseName);
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
@@ -258,6 +264,11 @@ export function MessageRow({
               >
                 {name}
               </span>
+              {threadCount != null && threadCount > 1 && (
+                <span className="shrink-0 text-xs font-medium tabular-nums text-faint">
+                  {threadCount}
+                </span>
+              )}
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
                 {/* Action icons sit to the LEFT of the date/timestamp. On mobile the
                     read/unread + delete actions live on the swipe gestures, so only the

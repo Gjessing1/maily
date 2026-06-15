@@ -98,6 +98,29 @@ export function listMessages(folderId: string, limit: number, beforeMs?: number)
     .all();
 }
 
+/**
+ * Every non-tombstoned message in one conversation, oldest-first — the input set for
+ * the threaded conversation reader (ARCHITECTURE §11). Scoped by `accountId` because a
+ * thread id (Gmail X-GM-THRID, or a `References`-derived hash) is only unique within an
+ * account, never across them. Spans folders deliberately: a conversation includes its
+ * Sent replies, not just the inbox copies. Chronological so the client can order it
+ * either way without a second sort key.
+ */
+export function listThread(accountId: string, threadId: string): MessageRow[] {
+  return db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        eq(messages.threadId, threadId),
+        isNull(messages.deletedAt),
+      ),
+    )
+    .orderBy(messages.receivedAt)
+    .all();
+}
+
 /** Roles that have a meaningful cross-account merged view (e.g. "All inboxes"). */
 export type UnifiedRole = 'inbox' | 'drafts' | 'sent' | 'junk' | 'trash';
 

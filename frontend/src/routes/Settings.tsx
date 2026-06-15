@@ -501,7 +501,7 @@ export function Settings() {
   const navigate = useNavigate();
   const accounts = useAccounts();
   const { logout } = useAuth();
-  const { signature, readingPane } = usePrefs();
+  const { signature, readingPane, conversationView } = usePrefs();
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
@@ -634,6 +634,18 @@ export function Settings() {
               hint="Float unread messages above read ones in lists."
               prefKey="unreadAtTop"
             />
+            <ToggleRow
+              label="Conversation view"
+              hint="Group a message and its replies into one conversation, in lists and the reader."
+              prefKey="conversationView"
+            />
+            {conversationView && (
+              <ToggleRow
+                label="Newest message on top"
+                hint="Show the most recent message at the top of a conversation (off = oldest first)."
+                prefKey="newestMessageFirst"
+              />
+            )}
             <SelectRow
               label="Mark as read on open"
               hint="When opening a message should it count as read."

@@ -36,6 +36,17 @@ export interface Prefs {
   blockRemoteImages: boolean;
   /** Sort unread above read in list views (secondary to newest-first). */
   unreadAtTop: boolean;
+  /**
+   * Group a message and its replies into a single conversation, both in list views
+   * (one row per thread) and in the reader (stacked, collapsible messages). Off =
+   * every message is its own row, the classic flat list.
+   */
+  conversationView: boolean;
+  /**
+   * Within a conversation, order the most recent message first (top). Off puts the
+   * oldest first (chronological, Gmail-style). Only relevant with conversationView on.
+   */
+  newestMessageFirst: boolean;
   /** Date display format for list/reader timestamps. */
   dateFormat: DateFormat;
   /** Colour theme; 'system' tracks the OS preference live. */
@@ -92,6 +103,8 @@ export interface Prefs {
 const DEFAULTS: Prefs = {
   blockRemoteImages: false,
   unreadAtTop: true,
+  conversationView: true,
+  newestMessageFirst: true,
   dateFormat: 'system',
   theme: 'system',
   pageSize: 100,

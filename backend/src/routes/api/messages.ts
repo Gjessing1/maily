@@ -10,6 +10,7 @@ import {
   getMessage,
   listArchived,
   listMessages,
+  listThread,
   listUnifiedByRole,
   listUnifiedInbox,
   type MessageRow,
@@ -73,6 +74,15 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return toListDtos(listArchived(req.params.accountId, limit, before));
     },
   );
+
+  // Whole conversation for a message (threaded reader): every message sharing this
+  // one's account + thread id, oldest-first and light (MessageDto — bodies stay lazy,
+  // fetched per-card on expand). A message with no thread id is its own conversation.
+  app.get<{ Params: { id: string } }>('/api/messages/:id/thread', async (req, reply) => {
+    const m = getMessage(req.params.id);
+    if (!m) return reply.code(404).send({ error: 'not found' });
+    return toListDtos(m.threadId ? listThread(m.accountId, m.threadId) : [m]);
+  });
 
   app.get<{ Params: { id: string } }>('/api/messages/:id', async (req, reply) => {
     const m = getMessage(req.params.id);

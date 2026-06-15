@@ -232,6 +232,9 @@ export const api = {
 
   message: (id: string) => request<MessageDetailDto>(`/api/messages/${id}`),
 
+  /** Whole conversation (thread) for a message — light rows, oldest-first. */
+  thread: (id: string) => request<MessageDto[]>(`/api/messages/${id}/thread`),
+
   setFlags: (id: string, flags: { seen?: boolean; flagged?: boolean }) =>
     request<{ ok: boolean; seen: boolean; flagged: boolean }>(`/api/messages/${id}/flags`, {
       method: 'PATCH',

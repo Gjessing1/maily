@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { patchCachedFlags, removeCachedMessage } from '../db/cache';
-import { requestDelete } from '../state/undo';
-import { useAccounts, useFolders, useMessageDetail } from '../state/data';
+import { requestDeleteMany } from '../state/undo';
+import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
+import { ConversationThread } from '../components/ConversationThread';
 import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { plainTextToHtml } from '../ui/htmlText';
@@ -59,7 +60,7 @@ export function ReaderView({
   const navigate = useNavigate();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
-  const { blockRemoteImages, markReadSeconds, trustedImageDomains } = usePrefs();
+  const { blockRemoteImages, conversationView, markReadSeconds, trustedImageDomains } = usePrefs();
   const [flagged, setFlagged] = useState(false);
   const [seen, setSeen] = useState(false);
   const [showImages, setShowImages] = useState(false);
@@ -70,6 +71,13 @@ export function ReaderView({
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
   const [addToCalendar, setAddToCalendar] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
+
+  // Whole conversation for this message. When conversation view is on and the thread
+  // has more than one message, the body area becomes a stacked thread and the header
+  // actions (delete/archive/mark-read) fan out over every message in it.
+  const threadMembers = useThread(id, detail?.threadId);
+  const threaded = conversationView && threadMembers.length > 1;
+  const threadIds = threadMembers.map((m) => m.id);
 
   // Reflect server flag state once the detail loads; reset the per-message image
   // override so a newly opened message starts blocked again (when blocking is on).
@@ -127,12 +135,11 @@ export function ReaderView({
     if (!detail) return;
     const next = !seen;
     setSeen(next);
-    void patchCachedFlags(detail.id, { seen: next });
-    try {
-      await api.setFlags(detail.id, { seen: next });
-    } catch {
-      setSeen(!next); // revert on failure
-      void patchCachedFlags(detail.id, { seen: !next });
+    // In a conversation, mark every message; otherwise just this one.
+    const ids = threaded ? threadIds : [detail.id];
+    for (const mid of ids) {
+      void patchCachedFlags(mid, { seen: next });
+      api.setFlags(mid, { seen: next }).catch(() => void patchCachedFlags(mid, { seen: !next }));
     }
   }
 
@@ -185,17 +192,20 @@ export function ReaderView({
     if (!detail) return;
     // Stage with an undo window (app-level snackbar persists past this navigation),
     // then leave the reader. The Trash move commits server-side once it elapses.
-    void requestDelete(detail.id);
+    // A conversation trashes every message in the thread behind one undo window.
+    void requestDeleteMany(threaded ? threadIds : [detail.id]);
     onClose();
   }
 
   function archive() {
     if (!detail) return;
-    // Optimistic: drop locally + leave; the server moves the inbox copy to Archive
+    // Optimistic: drop locally + leave; the server moves each copy to Archive
     // out-of-band (non-destructive, no confirm). Re-syncs into Archive when viewed.
-    void removeCachedMessage(detail.id);
     onClose();
-    api.archiveMessage(detail.id).catch(() => undefined);
+    for (const mid of threaded ? threadIds : [detail.id]) {
+      void removeCachedMessage(mid);
+      api.archiveMessage(mid).catch(() => undefined);
+    }
   }
 
   function forward() {
@@ -357,6 +367,17 @@ export function ReaderView({
           </div>
         ) : error && !detail ? (
           <p className="px-4 py-8 text-center text-danger">Couldn’t load this message.</p>
+        ) : detail && threaded ? (
+          <article>
+            <div className="px-4 pb-3 pt-3">
+              <h1 className="text-xl font-semibold leading-snug">
+                {detail.subject || '(no subject)'}
+              </h1>
+              <p className="mt-1 text-xs text-faint">{threadMembers.length} messages</p>
+            </div>
+            <ConversationThread members={threadMembers} openId={id} accounts={accounts ?? []} />
+            <div className="h-12" />
+          </article>
         ) : detail ? (
           <article>
             <div className="px-4 pb-4 pt-3">

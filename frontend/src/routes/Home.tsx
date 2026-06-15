@@ -4,7 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
-import { requestDelete, requestDeleteMany } from '../state/undo';
+import { requestDeleteMany } from '../state/undo';
+import { groupConversations } from '../state/threads';
 import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
@@ -121,36 +122,75 @@ export function Home() {
 
   const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
 
+  // Fold the loaded rows into conversations (one row per thread) when conversation
+  // view is on; otherwise each message is its own conversation. groupConversations
+  // returns them fully ordered (newest-first, unread floated up when enabled).
+  const conversations = useMemo(
+    () =>
+      groupConversations(messages ?? [], {
+        enabled: prefs.conversationView,
+        unreadAtTop: prefs.unreadAtTop,
+      }),
+    [messages, prefs.conversationView, prefs.unreadAtTop],
+  );
+
+  // Representative (latest) id → every message id in its conversation. Thread-aware
+  // actions (delete/read/archive) fan out over these so acting on a row acts on the
+  // whole conversation, mirroring Gmail.
+  const groupIds = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const c of conversations) map.set(c.latest.id, c.ids);
+    return map;
+  }, [conversations]);
+  const expandIds = useCallback((id: string) => groupIds.get(id) ?? [id], [groupIds]);
+
   // Gmail-style unread/read section break: only when "unread at top" is on and the
-  // list actually straddles both groups. `unreadCount` is also the index of the
-  // first read row, since useMessages sorts all unread ahead of read.
-  const unreadCount = prefs.unreadAtTop ? (messages?.filter((m) => !m.seen).length ?? 0) : 0;
+  // list actually straddles both groups. `unreadCount` is also the index of the first
+  // read conversation, since groupConversations floats unread threads ahead of read.
+  const unreadCount = prefs.unreadAtTop ? conversations.filter((c) => c.anyUnread).length : 0;
   const showSections =
-    prefs.unreadAtTop && !!messages && unreadCount > 0 && unreadCount < messages.length;
+    prefs.unreadAtTop &&
+    conversations.length > 0 &&
+    unreadCount > 0 &&
+    unreadCount < conversations.length;
 
-  // Swipe-to-delete: stage the delete with an undo window (drops the row locally
-  // now, commits the Trash move server-side after the snackbar elapses).
-  const handleDelete = useCallback((id: string) => {
-    void requestDelete(id);
-  }, []);
+  // Swipe-to-delete: stage the whole conversation behind one undo window (drops the
+  // rows locally now, commits the Trash move server-side after the snackbar elapses).
+  const handleDelete = useCallback(
+    (id: string) => {
+      void requestDeleteMany(expandIds(id));
+    },
+    [expandIds],
+  );
 
-  // Optimistic swipe-to-toggle-read: flip the flag locally, reconcile on the server.
-  const handleToggleRead = useCallback((id: string, seen: boolean) => {
-    void patchCachedFlags(id, { seen });
-    api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
-  }, []);
+  // Optimistic toggle-read across the conversation: flip locally, reconcile per message.
+  const handleToggleRead = useCallback(
+    (id: string, seen: boolean) => {
+      for (const mid of expandIds(id)) {
+        void patchCachedFlags(mid, { seen });
+        api.setFlags(mid, { seen }).catch(() => void patchCachedFlags(mid, { seen: !seen }));
+      }
+    },
+    [expandIds],
+  );
 
-  // Optimistic star toggle: flip locally, reconcile on the server (revert on failure).
+  // Star toggle stays per-message (the representative/latest), Gmail-style — flip
+  // locally, reconcile on the server (revert on failure).
   const handleToggleFlag = useCallback((id: string, flagged: boolean) => {
     void patchCachedFlags(id, { flagged });
     api.setFlags(id, { flagged }).catch(() => void patchCachedFlags(id, { flagged: !flagged }));
   }, []);
 
-  // Single archive (context menu): drop locally, move the inbox copy server-side.
-  const handleArchive = useCallback((id: string) => {
-    void removeCachedMessage(id);
-    api.archiveMessage(id).catch(() => undefined);
-  }, []);
+  // Archive the whole conversation (context menu): drop locally, move each copy server-side.
+  const handleArchive = useCallback(
+    (id: string) => {
+      for (const mid of expandIds(id)) {
+        void removeCachedMessage(mid);
+        api.archiveMessage(mid).catch(() => undefined);
+      }
+    },
+    [expandIds],
+  );
 
   // ── Right-click context menu (desktop) ──────────────────────────────────────
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -177,29 +217,35 @@ export function Home() {
   }, []);
   const clearSelect = useCallback(() => setSelectedIds(new Set()), []);
 
+  // Bulk actions select conversations (by representative id); each fans out to every
+  // message in its thread so "mark read"/"archive"/"delete" hit whole conversations.
   const bulkMarkRead = useCallback(
     (seen: boolean) => {
       for (const id of selectedIds) {
-        void patchCachedFlags(id, { seen });
-        api.setFlags(id, { seen }).catch(() => void patchCachedFlags(id, { seen: !seen }));
+        for (const mid of expandIds(id)) {
+          void patchCachedFlags(mid, { seen });
+          api.setFlags(mid, { seen }).catch(() => void patchCachedFlags(mid, { seen: !seen }));
+        }
       }
       clearSelect();
     },
-    [selectedIds, clearSelect],
+    [selectedIds, expandIds, clearSelect],
   );
   const bulkArchive = useCallback(() => {
     for (const id of selectedIds) {
-      void removeCachedMessage(id);
-      api.archiveMessage(id).catch(() => undefined);
+      for (const mid of expandIds(id)) {
+        void removeCachedMessage(mid);
+        api.archiveMessage(mid).catch(() => undefined);
+      }
     }
     clearSelect();
-  }, [selectedIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect]);
   const bulkDelete = useCallback(() => {
     // Stage the whole selection behind one undo window (snapshots + optimistic
     // removal), mirroring swipe-to-delete so a bulk delete is just as recoverable.
-    void requestDeleteMany([...selectedIds]);
+    void requestDeleteMany([...selectedIds].flatMap(expandIds));
     clearSelect();
-  }, [selectedIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect]);
 
   // Infinite scroll sentinel.
   const sentinel = useRef<HTMLDivElement>(null);
@@ -290,34 +336,47 @@ export function Home() {
           <div className="flex justify-center py-16">
             <Spinner />
           </div>
-        ) : messages && messages.length > 0 ? (
+        ) : conversations.length > 0 ? (
           <>
-            {messages.map((m, i) => (
-              <Fragment key={m.id}>
-                {showSections && i === 0 && <SectionLabel>Unread</SectionLabel>}
-                {showSections && i === unreadCount && (
-                  <SectionLabel divider>Everything else</SectionLabel>
-                )}
-                <MessageRow
-                  message={m}
-                  onDelete={handleDelete}
-                  onToggleRead={handleToggleRead}
-                  onToggleFlag={handleToggleFlag}
-                  isWide={isWide}
-                  swipeRight={prefs.swipeRight}
-                  swipeLeft={prefs.swipeLeft}
-                  to={splitMode ? selectTo(m.id) : undefined}
-                  selected={splitMode && m.id === selectedId}
-                  selectionMode={selectionMode}
-                  checked={selectedIds.has(m.id)}
-                  onEnterSelect={enterSelect}
-                  onToggleSelect={toggleSelect}
-                  onContextMenu={openMenu}
-                  showRecipient={showRecipient}
-                  accountTag={accountTagFor(m.accountId)}
-                />
-              </Fragment>
-            ))}
+            {conversations.map((c, i) => {
+              // Render the latest message as the conversation row, but reflect the
+              // whole thread's state: unread if ANY member is unread, flagged if any
+              // is flagged. Multi-sender threads show the participant list as the name.
+              const repr = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
+              const id = c.latest.id;
+              const displayName =
+                !showRecipient && c.count > 1 && c.participants.length > 1
+                  ? c.participants.join(', ')
+                  : undefined;
+              return (
+                <Fragment key={id}>
+                  {showSections && i === 0 && <SectionLabel>Unread</SectionLabel>}
+                  {showSections && i === unreadCount && (
+                    <SectionLabel divider>Everything else</SectionLabel>
+                  )}
+                  <MessageRow
+                    message={repr}
+                    onDelete={handleDelete}
+                    onToggleRead={handleToggleRead}
+                    onToggleFlag={handleToggleFlag}
+                    isWide={isWide}
+                    swipeRight={prefs.swipeRight}
+                    swipeLeft={prefs.swipeLeft}
+                    to={splitMode ? selectTo(id) : undefined}
+                    selected={splitMode && !!selectedId && c.ids.includes(selectedId)}
+                    selectionMode={selectionMode}
+                    checked={selectedIds.has(id)}
+                    onEnterSelect={enterSelect}
+                    onToggleSelect={toggleSelect}
+                    onContextMenu={openMenu}
+                    showRecipient={showRecipient}
+                    accountTag={accountTagFor(c.latest.accountId)}
+                    threadCount={c.count}
+                    displayName={displayName}
+                  />
+                </Fragment>
+              );
+            })}
             <div ref={sentinel} className="flex justify-center py-6">
               {refreshing && hasMore && <Spinner />}
             </div>
