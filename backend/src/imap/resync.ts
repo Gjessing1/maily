@@ -17,26 +17,42 @@ import { flagsFromSet } from './parse.js';
 import {
   clearFolderUids,
   knownUids,
+  messageFlags,
   messageIdForUid,
   unlinkUids,
   updateMessageFlags,
 } from './store.js';
 import { fetchAndStore, fullSyncFolder, type SyncContext } from './sync.js';
 
+/** A seen/flagged change detected during resync — emitted as a live `mail:flags` signal. */
+export interface FlagChange {
+  messageId: string;
+  seen: boolean;
+  flagged: boolean;
+}
+
 export interface ResyncResult {
   /** Internal ids of newly inserted messages (for live new-mail signals). */
   insertedIds: string[];
   updated: number;
   expunged: number;
+  /** Messages whose seen/flagged actually changed (for live `mail:flags` signals). */
+  flagChanges: FlagChange[];
   mode: 'full' | 'incremental';
 }
 
-/** Apply CONDSTORE flag changes since the last stored MODSEQ to cached messages. */
+/**
+ * Apply CONDSTORE flag changes since the last stored MODSEQ to cached messages, and
+ * return the ones that actually changed. Capturing the change set lets the engine push
+ * live `mail:flags` signals so read/unread set on another device (or the provider's
+ * webmail) propagates to foreground clients instead of waiting for their next refetch.
+ */
 async function resyncFlags(
   ctx: SyncContext,
   folder: FolderRow,
   sinceModseq: number,
-): Promise<void> {
+): Promise<FlagChange[]> {
+  const changes: FlagChange[] = [];
   for await (const msg of ctx.client.fetch(
     '1:*',
     { uid: true, flags: true },
@@ -45,8 +61,15 @@ async function resyncFlags(
     // New messages also surface here (higher MODSEQ) but have no mapping yet —
     // they are picked up by the new-UID fetch below, which parses + stores them.
     const id = messageIdForUid(folder.id, msg.uid);
-    if (id) updateMessageFlags(id, flagsFromSet(msg.flags));
+    if (!id) continue;
+    const flags = flagsFromSet(msg.flags);
+    const before = messageFlags(id);
+    updateMessageFlags(id, flags);
+    if (!before || before.seen !== flags.seen || before.flagged !== flags.flagged) {
+      changes.push({ messageId: id, seen: flags.seen, flagged: flags.flagged });
+    }
   }
+  return changes;
 }
 
 /** Detect and unlink messages expunged from the folder by diffing the live UID set. */
@@ -92,12 +115,15 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
         highestModseq,
         uidNext: mb.uidNext,
       });
-      return { ...counts, expunged: 0, mode: 'full' };
+      // A full rebuild remaps everything; clients reload the folder, so no per-message
+      // flag signals are needed (and the before-state is unknown anyway).
+      return { ...counts, expunged: 0, flagChanges: [], mode: 'full' };
     }
 
     // Incremental: flags (fast path), new mail, then expunges.
+    let flagChanges: FlagChange[] = [];
     if (ctx.caps.condstore && folder.highestModseq) {
-      await resyncFlags(ctx, folder, folder.highestModseq);
+      flagChanges = await resyncFlags(ctx, folder, folder.highestModseq);
     }
 
     const fromUid = folder.lastUid ?? 1;
@@ -119,7 +145,7 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
       highestModseq,
       lastUid: mb.uidNext,
     });
-    return { ...counts, expunged, mode: 'incremental' };
+    return { ...counts, expunged, flagChanges, mode: 'incremental' };
   } finally {
     lock.release();
   }

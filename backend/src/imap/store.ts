@@ -284,6 +284,17 @@ export function relinkMessageToFolder(
   );
 }
 
+/** A message's current seen/flagged state, or undefined if the row is gone. Used to
+ * detect whether a resync flag reconciliation actually changed anything (so a live
+ * `mail:flags` signal is only emitted on a real change). */
+export function messageFlags(messageId: string): { seen: boolean; flagged: boolean } | undefined {
+  return db
+    .select({ seen: messages.seen, flagged: messages.flagged })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get();
+}
+
 /** Update just the IMAP flags for a message (resync / IDLE flag events). */
 export function updateMessageFlags(
   messageId: string,

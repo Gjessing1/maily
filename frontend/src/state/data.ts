@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { AccountDto, FolderDto, MessageDetailDto } from '@maily/shared';
 import { api } from '../api/client';
+import { onSocketReconnect } from '../api/socket';
 import { usePrefs } from './prefs';
 import {
   cache,
@@ -181,6 +182,25 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   useEffect(() => {
     setHasMore(true);
     refresh();
+  }, [refresh]);
+
+  // Self-heal stale read/unread (and other flag) state: a client that was backgrounded
+  // or briefly disconnected misses the live socket signals, so reconcile the head of the
+  // folder with the backend whenever the app regains focus/connectivity or the socket
+  // reconnects. The backend is the source of truth (§6), so this keeps the desktop app,
+  // phone PWA and browser in agreement without polling.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    const offReconnect = onSocketReconnect(refresh);
+    return () => {
+      window.removeEventListener('online', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+      offReconnect();
+    };
   }, [refresh]);
 
   // Warm the body cache for the top rows so opening one of them is instant: the

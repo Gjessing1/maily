@@ -189,7 +189,18 @@ export class AccountEngine {
       }
       // New mail was enqueued for enrichment by the ingest hook — wake the worker now.
       if (result.insertedIds.length) enqueueEnrichPass();
-      // Flag/expunge changes have no per-message id here; nudge clients to refresh.
+      // Read/unread (or star) changed on another device/webmail → push the precise new
+      // state so foreground clients update live instead of waiting for a refetch.
+      for (const c of result.flagChanges) {
+        emitSignal({
+          type: 'mail:flags',
+          accountId: this.id,
+          messageId: c.messageId,
+          seen: c.seen,
+          flagged: c.flagged,
+        });
+      }
+      // Re-sight/expunge churn has no per-message id here; nudge clients to refresh.
       if (result.updated || result.expunged) {
         const changed = result.updated + result.expunged;
         emitSignal({ type: 'sync:progress', accountId: this.id, done: changed, total: changed });
@@ -232,6 +243,17 @@ export class AccountEngine {
         if (!fresh) continue;
         const result = await resyncFolder(ctx, fresh);
         if (result.insertedIds.length) enqueueEnrichPass();
+        // Push read/unread (or star) changes detected on other devices so foreground
+        // clients update live — same as the INBOX path, but for the cron-reconciled folders.
+        for (const c of result.flagChanges) {
+          emitSignal({
+            type: 'mail:flags',
+            accountId: this.id,
+            messageId: c.messageId,
+            seen: c.seen,
+            flagged: c.flagged,
+          });
+        }
         if (result.insertedIds.length || result.updated || result.expunged) {
           this.log.info(
             `${folder.path} cron (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
