@@ -30,7 +30,14 @@ import { setPref, usePrefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import { PRESETS, PRESET_ORDER, type ActionSlice, type SliceParams } from '../state/cleanupPresets';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ChevronDownIcon, SearchIcon, ShieldIcon, SparklesIcon } from '../ui/icons';
+import {
+  BackIcon,
+  ChevronDownIcon,
+  MailOpenIcon,
+  SearchIcon,
+  ShieldIcon,
+  SparklesIcon,
+} from '../ui/icons';
 
 export type { SliceParams } from '../state/cleanupPresets';
 
@@ -70,9 +77,10 @@ export function formatMsgDate(iso: string | null): string {
 /**
  * One drill-down message row — subject + sender/date + size. Shared by the dedicated
  * drill-down screen. When `selectable`, a leading checkbox reflects/toggles selection and the
- * row no longer links to the reader (tapping toggles); otherwise it deep-links to the reader
- * (the internal UUID) so a message can be inspected before it's trashed. When `onKeep` is given,
- * a trailing shield button preserves the message from cleanup (sibling, not nested, button).
+ * row's checkbox toggles selection, but a trailing "open" button still deep-links to the
+ * reader so the actual email (body, attachments) can be inspected when subject + sender
+ * aren't enough to judge it; otherwise the whole row deep-links to the reader. When `onKeep`
+ * is given, a trailing shield button preserves the message from cleanup.
  */
 export function CleanupMessageRow({
   m,
@@ -130,6 +138,16 @@ export function CleanupMessageRow({
           />
           {body}
         </button>
+        {/* Open the real email — subject + sender alone often aren't enough to judge a
+            large attachment, so this deep-links into the reader without toggling selection. */}
+        <Link
+          to={`/m/${m.id}`}
+          aria-label="Open message"
+          title="Open message"
+          className="shrink-0 rounded-full p-2 text-faint active:bg-surface-2 active:text-accent"
+        >
+          <MailOpenIcon className="size-5" />
+        </Link>
         {keepButton ?? <span className="pr-3" />}
       </div>
     );
