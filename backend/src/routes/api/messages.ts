@@ -10,6 +10,7 @@ import {
   getMessage,
   listArchived,
   listMessages,
+  listStarred,
   listThread,
   listUnifiedByRole,
   listUnifiedInbox,
@@ -72,6 +73,17 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { limit, before } = pageParams(req.query);
       return toListDtos(listArchived(req.params.accountId, limit, before));
+    },
+  );
+
+  // Virtual "Starred" view for an account: every \Flagged message, provider-agnostic.
+  // mailbox.org / generic IMAP have no Starred folder; Gmail's [Gmail]/Starred is folded
+  // in here too so every account gets one consistent Starred view.
+  app.get<{ Params: { accountId: string }; Querystring: { limit?: string; before?: string } }>(
+    '/api/accounts/:accountId/starred',
+    async (req) => {
+      const { limit, before } = pageParams(req.query);
+      return toListDtos(listStarred(req.params.accountId, limit, before));
     },
   );
 

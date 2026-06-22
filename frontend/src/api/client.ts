@@ -230,6 +230,15 @@ export const api = {
     return request<MessageDto[]>(`/api/accounts/${accountId}/archived${suffix}`);
   },
 
+  /** Virtual "Starred" view for an account (every \Flagged message, provider-agnostic). */
+  starred: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.before) qs.set('before', String(opts.before));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<MessageDto[]>(`/api/accounts/${accountId}/starred${suffix}`);
+  },
+
   message: (id: string) => request<MessageDetailDto>(`/api/messages/${id}`),
 
   /** Whole conversation (thread) for a message — light rows, oldest-first. */

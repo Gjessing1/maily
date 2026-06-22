@@ -197,6 +197,30 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
 }
 
 /**
+ * Virtual "Starred" view: an account's `\Flagged` messages, newest first. Provider-
+ * agnostic — Gmail exposes a `[Gmail]/Starred` folder but mailbox.org and generic IMAP
+ * have none, so the view is derived from the message-level flag rather than a folder
+ * (the frontend hides the real Gmail folder and uses this everywhere). Tombstones —
+ * including trashed mail — are hidden; keyset-paginated by receivedAt.
+ */
+export function listStarred(accountId: string, limit: number, beforeMs?: number): MessageRow[] {
+  return db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        eq(messages.flagged, true),
+        isNull(messages.deletedAt),
+        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.receivedAt))
+    .limit(limit)
+    .all();
+}
+
+/**
  * Estimated on-disk bytes of synced content for an account: the archived raw `.eml`
  * (`source_bytes` — the dominant true cost once the master-archive sweep has run,
  * ROADMAP §3.7.E) plus the parsed body columns (subject + snippet + text/html) plus

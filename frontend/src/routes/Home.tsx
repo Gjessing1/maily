@@ -11,6 +11,7 @@ import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ReaderView } from './Reader';
 import { isArchivedView } from '../state/archived';
+import { isStarredView } from '../state/starred';
 import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../state/unified';
 import { usePrefs } from '../state/prefs';
 import { avatarHue } from '../ui/format';
@@ -87,16 +88,21 @@ export function Home() {
   }, [folderId, accounts, firstFolders, setParams]);
 
   const folder = useLiveQuery(
-    () => (folderId && !isArchivedView(folderId) ? cache.folders.get(folderId) : undefined),
+    () =>
+      folderId && !isArchivedView(folderId) && !isStarredView(folderId)
+        ? cache.folders.get(folderId)
+        : undefined,
     [folderId],
   );
-  // Synthetic views (Archived, unified views) have no cached folder row — name them explicitly.
+  // Synthetic views (Archived, Starred, unified views) have no cached folder row — name them explicitly.
   const unifiedView = isUnifiedView(folderId);
   const folderName = unifiedView
     ? unifiedTitle(folderId)
     : isArchivedView(folderId)
       ? 'Archive'
-      : (folder?.name ?? 'Inbox');
+      : isStarredView(folderId)
+        ? 'Starred'
+        : (folder?.name ?? 'Inbox');
   // Outgoing mail shows the account owner as sender on every row, so surface the
   // recipient instead. A real Sent folder keeps its existing behaviour; the unified
   // "All sent"/"All drafts" views also read as outgoing.

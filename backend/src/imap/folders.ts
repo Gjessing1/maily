@@ -112,6 +112,27 @@ export async function syncFolders(client: ImapFlow, accountId: string): Promise<
     rows.push(ensureFolder(accountId, box.path, box.name, role));
   }
 
+  // Providers without a real Archive folder (mailbox.org, generic IMAP) leave the
+  // archive action with no target and an always-empty "Archived" view. Gmail always
+  // has "All Mail" (role archive via \All), so this only fires elsewhere: create a
+  // standard "Archive" mailbox once and adopt it. Best-effort — a server that refuses
+  // CREATE just leaves archiving unavailable, exactly as before.
+  if (!rows.some((f) => f.role === 'archive')) {
+    try {
+      await client.mailboxCreate('Archive');
+      // Subscribe so the new folder shows up in other IMAP clients too (harmless if
+      // the server auto-subscribes or doesn't track subscriptions).
+      await client.mailboxSubscribe('Archive').catch(() => undefined);
+      seenPaths.push('Archive');
+      rows.push(ensureFolder(accountId, 'Archive', 'Archive', 'archive'));
+      log.info(`created Archive folder for account ${accountId} (no archive folder present)`);
+    } catch (err) {
+      log.warn(
+        `could not create Archive folder for account ${accountId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   // Prune folders the server no longer lists. Guarded by a non-empty enumeration
   // (every account exposes at least INBOX) so a transient empty LIST can't wipe
   // the table; an erroneous prune would only force a re-create + full resync.

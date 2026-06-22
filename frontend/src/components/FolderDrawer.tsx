@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
 import { archivedFolder } from '../state/archived';
+import { starredFolder, isStarredView } from '../state/starred';
 import { unifiedFolderFor } from '../state/unified';
 import { useAuth } from '../state/auth';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
@@ -46,9 +47,27 @@ const ROLE_ICON: Record<FolderRole, ComponentType<SVGProps<SVGSVGElement>>> = {
   custom: FolderIcon,
 };
 
+/** Canonical drawer labels for the well-known roles, so the same view reads the same
+ * across providers (e.g. Gmail's "Spam" and mailbox.org's "Junk" both show as "Spam").
+ * Custom folders/labels keep their server-given name. */
+const ROLE_LABEL: Partial<Record<FolderRole, string>> = {
+  inbox: 'Inbox',
+  drafts: 'Drafts',
+  sent: 'Sent',
+  archive: 'Archive',
+  junk: 'Spam',
+  trash: 'Trash',
+};
+
+/** Display name for a folder row: a canonical label for role folders, else the
+ * server-given name (custom labels, and the synthetic Starred view). */
+function labelForFolder(f: FolderDto): string {
+  return (f.role !== 'custom' && ROLE_LABEL[f.role]) || f.name;
+}
+
 /** Custom folders/labels whose name matches a well-known flag-derived view get a
- * meaningful icon instead of the generic folder. Gmail surfaces `[Gmail]/Starred`
- * as a plain `custom` label (it has no SPECIAL-USE flag), so match on name. */
+ * meaningful icon instead of the generic folder. The synthetic Starred view and
+ * Gmail's `[Gmail]/Starred` label both match on name. */
 function iconForFolder(f: FolderDto): ComponentType<SVGProps<SVGSVGElement>> {
   if (f.role === 'custom' && /^(starred|flagged)$/i.test(f.name.trim())) return StarIcon;
   return ROLE_ICON[f.role] ?? FolderIcon;
@@ -85,7 +104,7 @@ function FolderRow({
         }`}
       >
         <Icon className="size-5 shrink-0 opacity-70" />
-        <span className="truncate capitalize">{folder.name}</span>
+        <span className="truncate capitalize">{labelForFolder(folder)}</span>
       </button>
     </li>
   );
@@ -106,17 +125,21 @@ function AccountFolders({
 }) {
   const folders = useFolders(account.id);
   const hidden = usePrefs().hiddenFolderIds;
+  // Sort smart views among the role folders: Starred sits right after Archive (4).
+  const sortKey = (f: FolderDto) => (isStarredView(f.id) ? 4.5 : (ROLE_ORDER[f.role] ?? 9));
   const sorted = (folders ?? [])
     .slice()
-    .sort(
-      (a, b) =>
-        (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.name.localeCompare(b.name),
-    )
+    // Drop the provider's real Starred folder (Gmail's [Gmail]/Starred); the
+    // provider-agnostic virtual Starred view below replaces it for every account.
+    .filter((f) => !(f.role === 'custom' && /^(starred|flagged)$/i.test(f.name.trim())))
     // The raw archive folder (Gmail "All Mail") holds everything; swap it for the
     // virtual "Archived" smart view so the entry actually means archived mail.
     .map((f) => (f.role === 'archive' ? archivedFolder(account.id) : f))
+    // Flag-derived Starred view, synthesised consistently for every account.
+    .concat(starredFolder(account.id))
     // Labels the user chose to hide (Settings → Labels) drop out of the drawer.
-    .filter((f) => !hidden.includes(f.id));
+    .filter((f) => !hidden.includes(f.id))
+    .sort((a, b) => sortKey(a) - sortKey(b) || a.name.localeCompare(b.name));
 
   // INBOX stays pinned and always visible; collapsing tucks away the rest so a
   // multi-provider sidebar isn't a wall of icons.

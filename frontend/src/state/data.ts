@@ -18,6 +18,7 @@ import {
   type CachedMessage,
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
+import { isStarredView, starredAccountId } from './starred';
 import { isUnifiedView, unifiedRole } from './unified';
 
 function receivedMs(m: { receivedAt: string | null }): number {
@@ -94,11 +95,19 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   // folder of one role; offline they union the cached messages of those folders.
   const unified = isUnifiedView(folderId);
   const unifiedFor = unifiedRole(folderId);
+  // The virtual "Starred" view is the account's \Flagged mail; offline it filters the
+  // cached rows of that account on the flag (no folder membership involved).
+  const starred = isStarredView(folderId);
+  const starredFor = starred ? starredAccountId(folderId) : undefined;
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
     let rows: CachedMessage[];
-    if (unified && unifiedFor) {
+    if (starred && starredFor) {
+      rows = (await cache.messages.where('accountId').equals(starredFor).toArray()).filter(
+        (m) => m.flagged,
+      );
+    } else if (unified && unifiedFor) {
       const roleFolderIds = (await cache.folders.toArray())
         .filter((f) => f.role === unifiedFor)
         .map((f) => f.id);
@@ -122,20 +131,22 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
       return receivedMs(b) - receivedMs(a);
     });
-  }, [folderId, archived, accountId, unified, unifiedFor, unreadAtTop]);
+  }, [folderId, archived, accountId, unified, unifiedFor, starred, starredFor, unreadAtTop]);
 
   // One page fetch for a unified view, an archived view, or a real folder. The inbox
   // keeps its dedicated endpoint; other roles go through the generic unified route.
   const fetchPage = useCallback(
     (before?: number) =>
-      unifiedFor
-        ? unifiedFor === 'inbox'
-          ? api.unifiedInbox({ limit: PAGE, before })
-          : api.unified(unifiedFor, { limit: PAGE, before })
-        : archived && accountId
-          ? api.archived(accountId, { limit: PAGE, before })
-          : api.messages(folderId!, { limit: PAGE, before }),
-    [unifiedFor, archived, accountId, folderId, PAGE],
+      starred && starredFor
+        ? api.starred(starredFor, { limit: PAGE, before })
+        : unifiedFor
+          ? unifiedFor === 'inbox'
+            ? api.unifiedInbox({ limit: PAGE, before })
+            : api.unified(unifiedFor, { limit: PAGE, before })
+          : archived && accountId
+            ? api.archived(accountId, { limit: PAGE, before })
+            : api.messages(folderId!, { limit: PAGE, before }),
+    [starred, starredFor, unifiedFor, archived, accountId, folderId, PAGE],
   );
 
   const refresh = useCallback(() => {
