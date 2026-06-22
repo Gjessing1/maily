@@ -85,6 +85,21 @@ export function CleanupMessages() {
     [],
   );
 
+  // The most recent "keep" (per-row shield) is held briefly so a misclick is reversible:
+  // the shield is a one-tap action with no confirm, so without this a mistap silently
+  // protects a message with no obvious way back. Stores the removed row + its position
+  // so Undo restores it exactly where it was and releases the keep server-side.
+  const [keptUndo, setKeptUndo] = useState<{ message: CleanupMessageDto; index: number } | null>(
+    null,
+  );
+  const keptTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (keptTimer.current) clearTimeout(keptTimer.current);
+    },
+    [],
+  );
+
   // Fetch the page starting at `offset`; offset 0 replaces (initial / param change),
   // later pages append. Newly loaded ids join the selection while autoSelect holds.
   const loadPage = useCallback(
@@ -173,11 +188,14 @@ export function CleanupMessages() {
 
   // Preserve a message from cleanup (the per-row shield): mark it kept server-side, then drop it
   // from the list optimistically (it's no longer a cleanup candidate). On failure, reload.
+  // Arms a short undo window (below) so a mistapped shield is recoverable.
   const keepMessage = (id: string) => {
-    const bytes = messages.find((m) => m.id === id)?.bytes ?? 0;
+    const index = messages.findIndex((m) => m.id === id);
+    if (index === -1) return;
+    const message = messages[index]!;
     setMessages((prev) => prev.filter((m) => m.id !== id));
     setTotal((t) => Math.max(0, t - 1));
-    setTotalBytes((b) => Math.max(0, b - bytes));
+    setTotalBytes((b) => Math.max(0, b - message.bytes));
     setExcluded((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -191,6 +209,26 @@ export function CleanupMessages() {
       return next;
     });
     void api.cleanup.keep([id], true).catch(() => void loadPage(0));
+    if (keptTimer.current) clearTimeout(keptTimer.current);
+    setKeptUndo({ message, index });
+    keptTimer.current = setTimeout(() => setKeptUndo(null), 6000);
+  };
+
+  // Reverse the last keep: release it server-side and slot the row back where it was.
+  const undoKeep = () => {
+    if (!keptUndo) return;
+    if (keptTimer.current) clearTimeout(keptTimer.current);
+    const { message, index } = keptUndo;
+    setKeptUndo(null);
+    void api.cleanup.keep([message.id], false).catch(() => void loadPage(0));
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === message.id)) return prev;
+      const next = prev.slice();
+      next.splice(Math.min(index, next.length), 0, message);
+      return next;
+    });
+    setTotal((t) => t + 1);
+    setTotalBytes((b) => b + message.bytes);
   };
 
   // Kick off a trash run for the current selection, then poll the queue until it drains. In
@@ -230,6 +268,8 @@ export function CleanupMessages() {
   }
 
   const title = domain || SLICE_LABELS[slice] || 'Messages';
+  // The selection-driven trash action bar; the keep-undo toast sits just above it when shown.
+  const showActionBar = actionable && !loading && messages.length > 0 && exec !== 'done';
 
   return (
     <div className="flex h-full flex-col">
@@ -347,8 +387,29 @@ export function CleanupMessages() {
         )}
       </main>
 
+      {/* Undo window for the per-row "Keep" shield — a mistap is otherwise irreversible.
+          Sits above the action bar when it's showing, else near the bottom edge. */}
+      {keptUndo && (
+        <div
+          className={`safe-bottom pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4 ${
+            showActionBar ? 'bottom-24' : 'bottom-4'
+          }`}
+        >
+          <div className="pointer-events-auto flex items-center gap-4 rounded-full border border-border bg-surface-2 py-2.5 pl-4 pr-2.5 text-sm shadow-lg">
+            <span className="text-fg">Kept — excluded from cleanup</span>
+            <button
+              type="button"
+              onClick={undoKeep}
+              className="rounded-full px-3 py-1 font-medium text-accent active:bg-surface-3"
+            >
+              Undo
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sticky action bar — selection-driven trashing for delete-eligible slices. */}
-      {actionable && !loading && messages.length > 0 && exec !== 'done' && (
+      {showActionBar && (
         <div className="safe-bottom sticky bottom-0 z-10 border-t border-border bg-bg/90 px-3 py-3 backdrop-blur">
           <div className="mx-auto max-w-2xl">
             {exec === 'running' ? (
