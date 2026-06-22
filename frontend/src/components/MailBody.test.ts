@@ -7,7 +7,14 @@
  * These are the pure pieces of MailBody — no iframe render needed.
  */
 import { describe, expect, test } from 'vitest';
-import { buildMailSrcDoc, hasRemoteImages, messageCsp, stripScripts } from './MailBody';
+import {
+  buildMailSrcDoc,
+  declaresOwnBackground,
+  declaresOwnTextColor,
+  hasRemoteImages,
+  messageCsp,
+  stripScripts,
+} from './MailBody';
 
 describe('hasRemoteImages', () => {
   test('flags a remote <img src> and a CSS url() background', () => {
@@ -65,5 +72,46 @@ describe('buildMailSrcDoc', () => {
   test('light vs dark pick different base colours', () => {
     expect(buildMailSrcDoc('', true, 'light')).toContain('#ffffff');
     expect(buildMailSrcDoc('', true, 'dark')).toContain('#15151c');
+  });
+
+  test('in dark mode, an email with its own text colours renders on a light sheet', () => {
+    // Sender greys authored for white would be unreadable on our dark background, so
+    // the body is rendered light instead (light bg, light colour-scheme).
+    const doc = buildMailSrcDoc('<p style="color:#888">grey note</p>', true, 'dark');
+    expect(doc).toContain('#ffffff');
+    expect(doc).toContain('color-scheme: light');
+    expect(doc).not.toContain('#15151c');
+  });
+
+  test('in dark mode, a plaintext-ish email keeps the dark treatment', () => {
+    const doc = buildMailSrcDoc('<p>just words, no styling</p>', true, 'dark');
+    expect(doc).toContain('#15151c');
+    expect(doc).toContain('color-scheme: dark');
+  });
+});
+
+describe('declaresOwnBackground', () => {
+  test('detects bgcolor attrs and colour-bearing background CSS', () => {
+    expect(declaresOwnBackground('<table bgcolor="#fff">')).toBe(true);
+    expect(declaresOwnBackground('<div style="background-color: #f5f5f5">')).toBe(true);
+    expect(declaresOwnBackground('<div style="background: rgb(0,0,0)">')).toBe(true);
+  });
+
+  test('ignores url()-only and transparent backgrounds', () => {
+    expect(declaresOwnBackground('<div style="background:url(http://x/bg.png)">')).toBe(false);
+    expect(declaresOwnBackground('<div style="background-color: transparent">')).toBe(false);
+    expect(declaresOwnBackground('<p>no background here</p>')).toBe(false);
+  });
+});
+
+describe('declaresOwnTextColor', () => {
+  test('detects CSS color and <font color>', () => {
+    expect(declaresOwnTextColor('<span style="color:#888">x</span>')).toBe(true);
+    expect(declaresOwnTextColor('<font color="gray">x</font>')).toBe(true);
+  });
+
+  test('does not mistake background-color for a text colour', () => {
+    expect(declaresOwnTextColor('<div style="background-color:#fff">x</div>')).toBe(false);
+    expect(declaresOwnTextColor('<p>plain</p>')).toBe(false);
   });
 });

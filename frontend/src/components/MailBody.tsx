@@ -33,6 +33,47 @@ export function messageCsp(allowImages: boolean): string {
 }
 
 /**
+ * True if sender HTML declares its own background colour — a `bgcolor` attribute or a
+ * colour-bearing `background`/`background-color` CSS value. `transparent`/`none` and
+ * `url()`-only backgrounds don't count (they don't establish a readable surface).
+ */
+export function declaresOwnBackground(html: string): boolean {
+  if (/\bbgcolor\s*=\s*["']?\s*#?[0-9a-z]/i.test(html)) return true;
+  if (
+    /background-color\s*:(?!\s*(?:transparent|inherit|initial|none|unset)\b)\s*[^;\s"']/i.test(html)
+  )
+    return true;
+  // `background` shorthand carrying an actual colour token (hex / rgb() / hsl()).
+  if (/background\s*:\s*[^;"']*(#[0-9a-f]{3,8}|rgb|hsl)/i.test(html)) return true;
+  return false;
+}
+
+/**
+ * True if sender HTML sets its own text colour anywhere — a CSS `color:` (not
+ * `background-color:`) or a `<font color>` attribute. Such colours are almost always
+ * authored against a light background, so on a dark page they go unreadable.
+ */
+export function declaresOwnTextColor(html: string): boolean {
+  if (/<font[^>]*\bcolor\s*=/i.test(html)) return true;
+  return /(^|[^-\w])color\s*:/i.test(html);
+}
+
+/**
+ * Pick the iframe's base colours. Light theme always renders light. In dark theme we
+ * only darken the body for plaintext/unstyled emails (which inherit our colours
+ * cleanly); any email that brings its own palette (a background or its own text
+ * colours) is rendered on a light sheet instead, because forcing a dark background
+ * behind sender colours authored for white leaves grey-on-dark text unreadable.
+ */
+export function pickMailColors(html: string, theme: ResolvedTheme) {
+  const renderLight =
+    theme === 'light' || declaresOwnBackground(html) || declaresOwnTextColor(html);
+  return renderLight
+    ? { scheme: 'light' as const, pageBg: '#ffffff', pageFg: '#18181f', linkFg: '#4a48d0' }
+    : { scheme: 'dark' as const, pageBg: '#15151c', pageFg: '#f4f4f6', linkFg: '#8b8aff' };
+}
+
+/**
  * Build the sandboxed-iframe `srcdoc` for a piece of sender HTML: a hardening CSP
  * meta, theme-matched base colours (the sandbox blocks app CSS from leaking in), and
  * the script-stripped body. Pure so the sanitisation contract is unit-testable
@@ -40,18 +81,16 @@ export function messageCsp(allowImages: boolean): string {
  */
 export function buildMailSrcDoc(html: string, allowImages: boolean, theme: ResolvedTheme): string {
   // The iframe is sandboxed (no app CSS leaks in), so its base colours are inlined
-  // here per theme rather than via tokens. Emails carrying their own palette still
-  // win; this only styles the surrounding page + unstyled/plaintext-ish bodies.
-  const pageBg = theme === 'light' ? '#ffffff' : '#15151c';
-  const pageFg = theme === 'light' ? '#18181f' : '#f4f4f6';
-  const linkFg = theme === 'light' ? '#4a48d0' : '#8b8aff';
+  // here per theme rather than via tokens. See pickMailColors: styled emails render
+  // light even in dark mode so sender colours (authored for white) stay readable.
+  const { scheme, pageBg, pageFg, linkFg } = pickMailColors(html, theme);
 
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${messageCsp(allowImages)}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>
-  :root { color-scheme: ${theme}; }
+  :root { color-scheme: ${scheme}; }
   html,body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     /* break-word breaks a long URL only when it would actually overflow, and —
