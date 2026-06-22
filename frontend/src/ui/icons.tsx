@@ -56,6 +56,16 @@ export const UploadIcon = (p: IconProps) => (
   </Base>
 );
 
+/** Share-nodes glyph — opens the native share sheet (SMS, mail, photos, …). */
+export const ShareIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+  </Base>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Base {...p}>
     <circle cx="11" cy="11" r="7" />

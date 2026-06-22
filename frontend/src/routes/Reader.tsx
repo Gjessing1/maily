@@ -10,6 +10,7 @@ import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/t
 import { plainTextToHtml } from '../ui/htmlText';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
+import { ImageAttachment, isImageAttachment } from '../components/ImageAttachment';
 import { AddToCalendar } from '../components/AddToCalendar';
 import { ContactEditor } from '../components/ContactEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -460,10 +461,19 @@ export function ReaderView({
             </div>
 
             {visibleAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 border-t border-border px-4 py-4">
-                {visibleAttachments.map((a) => (
-                  <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+              <div className="space-y-2 border-t border-border px-4 py-4">
+                {visibleAttachments.filter(isImageAttachment).map((a) => (
+                  <ImageAttachment key={a.id} messageId={detail.id} attachment={a} />
                 ))}
+                {visibleAttachments.some((a) => !isImageAttachment(a)) && (
+                  <div className="flex flex-wrap gap-2">
+                    {visibleAttachments
+                      .filter((a) => !isImageAttachment(a))
+                      .map((a) => (
+                        <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                      ))}
+                  </div>
+                )}
               </div>
             )}
             <div className="h-12" />

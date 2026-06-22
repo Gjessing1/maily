@@ -446,13 +446,19 @@ export function attachmentUrl(messageId: string, attId: string): string {
   return `${API_BASE}/api/messages/${messageId}/attachments/${attId}`;
 }
 
-/** Fetch attachment bytes as an object URL (sets the auth header via fetch). */
-export async function fetchAttachmentObjectUrl(messageId: string, attId: string): Promise<string> {
+/** Fetch attachment bytes as a Blob (sets the auth header via fetch). The caller owns
+ * it — build an object URL for display, a File for the Web Share API, or a download. */
+export async function fetchAttachmentBlob(messageId: string, attId: string): Promise<Blob> {
   const headers = new Headers();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(attachmentUrl(messageId, attId), { headers });
   if (!res.ok) throw new ApiError(res.status, 'attachment fetch failed');
-  return URL.createObjectURL(await res.blob());
+  return res.blob();
+}
+
+/** Fetch attachment bytes as an object URL (sets the auth header via fetch). */
+export async function fetchAttachmentObjectUrl(messageId: string, attId: string): Promise<string> {
+  return URL.createObjectURL(await fetchAttachmentBlob(messageId, attId));
 }
 
 /**

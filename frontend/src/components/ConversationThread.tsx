@@ -18,6 +18,7 @@ import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { avatarHue, fullDate, initials, senderName, shortDate } from '../ui/format';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
 import { AttachmentChip } from './AttachmentChip';
+import { ImageAttachment, isImageAttachment } from './ImageAttachment';
 import { Spinner } from '../ui/Spinner';
 import {
   ChevronDownIcon,
@@ -167,10 +168,19 @@ function ConversationMessage({
               )}
 
               {visibleAttachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
-                  {visibleAttachments.map((a) => (
-                    <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                <div className="space-y-2 border-t border-border px-4 py-3">
+                  {visibleAttachments.filter(isImageAttachment).map((a) => (
+                    <ImageAttachment key={a.id} messageId={detail.id} attachment={a} />
                   ))}
+                  {visibleAttachments.some((a) => !isImageAttachment(a)) && (
+                    <div className="flex flex-wrap gap-2">
+                      {visibleAttachments
+                        .filter((a) => !isImageAttachment(a))
+                        .map((a) => (
+                          <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                        ))}
+                    </div>
+                  )}
                 </div>
               )}
 
