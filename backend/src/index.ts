@@ -21,6 +21,7 @@ import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 import { startCleanupCache } from './cleanup/cache.js';
+import { startOutbox } from './outbox/runner.js';
 
 const log = createLogger('maily');
 
@@ -76,6 +77,10 @@ async function main(): Promise<void> {
   // Resume any cleanup trash-queue work left pending from a previous run, and trickle new
   // bulk-cleanup MOVEs to Trash thereafter (Phase 6b — rate-limited, restart-safe).
   startTrashQueue();
+
+  // Server-owned outbox: commit deferred sends (undo-send / scheduled) and undoable
+  // delete/archive MOVEs at their due time — independent of whether the PWA is open.
+  startOutbox();
 
   // Precompute the Cleanup Dashboard aggregates (warm at boot, re-warm after mail changes)
   // so entering the Cleanup screen is served from memory instead of full-table scans.

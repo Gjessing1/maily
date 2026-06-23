@@ -250,6 +250,17 @@ export function markMessageDeleted(messageId: string): void {
 }
 
 /**
+ * Clear the tombstone — the inverse of {@link markMessageDeleted}. Used when a deferred
+ * delete is undone within its window (the server-owned undo): the IMAP MOVE to Trash never
+ * happened, so dropping the tombstone re-surfaces the message in its existing folder.
+ */
+export function restoreMessageDeleted(messageId: string): void {
+  withWriteRetry('restoreMessageDeleted', () =>
+    db.update(messages).set({ deletedAt: null }).where(eq(messages.id, messageId)).run(),
+  );
+}
+
+/**
  * Set/clear the per-message "preserve from cleanup" flag (migration 0019). A preserved
  * message is excluded from every delete-eligible cleanup slice (the {@link ELIGIBLE}
  * predicate in cleanup/slices.ts) — a user-set counterpart of the keyword safety gate for

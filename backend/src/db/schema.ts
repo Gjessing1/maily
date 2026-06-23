@@ -358,3 +358,41 @@ export const cleanupQueue = sqliteTable(
     index('cleanup_queue_status_due_idx').on(t.status, t.nextAttemptAt),
   ],
 );
+
+/**
+ * Server-owned outbox: a restart-safe, cancelable deferred-action queue (migration 0020).
+ * One row per pending action — a send (undo-send or scheduled "send later"), a delete, or an
+ * archive. The runner (src/outbox/runner.ts) only claims rows whose `dueAt` has elapsed, and
+ * atomically flips `pending`→`sending` before acting so a concurrent cancel can't double-fire.
+ * Because the queue lives server-side, the action commits at `dueAt` whether or not the PWA is
+ * still open — the whole point of moving the undo window off the client.
+ */
+export const outbox = sqliteTable(
+  'outbox',
+  {
+    id: uuid(),
+    accountId: text('account_id').notNull(),
+    kind: text('kind', { enum: ['send', 'delete', 'archive'] }).notNull(),
+    /** Target message for delete/archive; null for a send (which carries `payload` instead). */
+    messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }),
+    /** JSON-encoded SendMessageRequest for `send`; null for delete/archive. */
+    payload: text('payload'),
+    status: text('status', { enum: ['pending', 'sending', 'done', 'canceled', 'dead'] })
+      .notNull()
+      .default('pending'),
+    /** When the action may execute: now+undoWindow for an undo, a future time for a schedule. */
+    dueAt: integer('due_at', { mode: 'timestamp_ms' }).notNull(),
+    /** Retry counter; at the cap a failed row is parked as 'dead'. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Backoff gate (ms): a re-armed pending row is only re-claimed once now >= nextAttemptAt. */
+    nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp_ms' }),
+    /** Last failure reason (null on success). */
+    error: text('error'),
+    createdAt: now(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    index('outbox_status_due_idx').on(t.status, t.dueAt),
+    index('outbox_message_idx').on(t.messageId),
+  ],
+);

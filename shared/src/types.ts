@@ -106,6 +106,13 @@ export interface SendMessageRequest {
   /** Message-ID being replied to (sets In-Reply-To/References for threading). */
   inReplyTo?: string | null;
   references?: string | null;
+  /**
+   * Scheduled "send later" time (epoch ms). When set, the backend queues the send to fire at
+   * this time. When absent, the send is queued with the configured undo-send window (and fires
+   * once that elapses), so even an immediate send is cancelable. Either way it commits
+   * server-side, independent of whether the PWA stays open.
+   */
+  sendAt?: number | null;
   /** Existing attachments to re-attach (forward): backend resolves bytes from cache/IMAP. */
   attachments?: AttachmentRef[];
   /** Freshly uploaded files (composer): backend resolves bytes from the uploads staging dir. */
@@ -512,4 +519,32 @@ export type SocketSignal =
   | { type: 'mail:flags'; accountId: string; messageId: string; seen: boolean; flagged: boolean }
   | { type: 'mail:deleted'; accountId: string; messageId: string }
   | { type: 'mail:archived'; accountId: string; messageId: string }
+  // Outbox lifecycle (src/outbox): a deferred delete/archive was canceled (undo) and the
+  // message should reappear; or a queued send committed / failed server-side.
+  | { type: 'mail:restored'; accountId: string; messageId: string }
+  | { type: 'mail:sent'; accountId: string; outboxId: string; messageId: string }
+  | { type: 'mail:send-failed'; accountId: string; outboxId: string; error: string }
   | { type: 'sync:progress'; accountId: string; done: number; total: number };
+
+/** The kind of deferred action staged in the server-side outbox. */
+export type OutboxKind = 'send' | 'delete' | 'archive';
+
+/** A pending/queued outbox row, surfaced to the client (e.g. the Scheduled/Outbox view). */
+export interface OutboxEntry {
+  id: string;
+  accountId: string;
+  kind: OutboxKind;
+  /** Epoch ms when the action is allowed to execute (undo window end, or scheduled time). */
+  dueAt: number;
+  status: 'pending' | 'sending' | 'done' | 'canceled' | 'dead';
+  /** Send-only summary so the list can render without re-fetching the payload. */
+  subject?: string | null;
+  to?: string[];
+}
+
+/** Server response to POST /send: the action is queued, not sent yet (undo window / schedule). */
+export interface QueuedSendResult {
+  outboxId: string;
+  /** Epoch ms when the send will actually fire unless canceled first. */
+  dueAt: number;
+}
