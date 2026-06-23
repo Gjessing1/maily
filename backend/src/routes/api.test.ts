@@ -292,7 +292,12 @@ test('DELETE /api/messages/:id tombstones locally so it drops out of the folder 
 
   const res = await send('DELETE', `/api/messages/${id}`);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.json(), { ok: true });
+  // The MOVE-to-Trash is now deferred into the outbox: the response carries the queued
+  // action's id + dueAt so the client can mirror the undo window and cancel against it.
+  const body = res.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.outboxId, 'string');
+  assert.equal(typeof body.dueAt, 'number');
 
   const listing = await get(`/api/folders/${folderId}/messages`);
   assert.ok(

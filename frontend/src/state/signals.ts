@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { onSignal } from '../api/socket';
 import { cacheBody, patchCachedFlags, removeCachedMessage } from '../db/cache';
+import { showNotice } from './undo';
 
 export interface SyncProgress {
   accountId: string;
@@ -43,6 +44,21 @@ export function useSignals(): { progress: SyncProgress | null } {
           // Moved out of the inbox to Archive. Drop the local copy; it re-syncs into
           // the Archive folder when that folder is next viewed.
           void removeCachedMessage(signal.messageId);
+          break;
+        case 'mail:restored':
+          // A deferred delete/archive was undone (possibly on another device) before it
+          // committed — re-pull the message so it reappears in the inbox.
+          api
+            .message(signal.messageId)
+            .then(cacheBody)
+            .catch(() => undefined);
+          break;
+        case 'mail:sent':
+          // The queued send committed server-side; the Sent copy syncs via its folder cron.
+          break;
+        case 'mail:send-failed':
+          // The send exhausted its retries — let the user know it never went out.
+          showNotice(`Send failed: ${signal.error}`);
           break;
         case 'sync:progress':
           setProgress({

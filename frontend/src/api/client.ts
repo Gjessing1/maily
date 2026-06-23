@@ -254,11 +254,18 @@ export const api = {
 
   /** Soft-delete → move to Trash (server tombstones + moves on IMAP out-of-band). */
   deleteMessage: (id: string) =>
-    request<{ ok: boolean }>(`/api/messages/${id}`, { method: 'DELETE' }),
+    request<{ ok: boolean; outboxId?: string; dueAt?: number }>(`/api/messages/${id}`, {
+      method: 'DELETE',
+    }),
 
-  /** Archive → move the inbox copy to the Archive folder (no tombstone). */
+  /**
+   * Archive → queue a deferred MOVE to the Archive folder (no tombstone). Returns the outbox id
+   * + dueAt so the undo window can mirror the server's, and Undo can cancel it (see state/undo).
+   */
   archiveMessage: (id: string) =>
-    request<{ ok: boolean }>(`/api/messages/${id}/archive`, { method: 'POST' }),
+    request<{ ok: boolean; outboxId?: string; dueAt?: number }>(`/api/messages/${id}/archive`, {
+      method: 'POST',
+    }),
 
   /**
    * Queue a send into the server-owned outbox. Returns the outbox id + `dueAt` (when it will

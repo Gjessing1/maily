@@ -1,26 +1,24 @@
 /**
- * Undo window for destructive list actions — delete *and* archive (backlog: "undo
- * window after delete / swipe-to-delete", extended to archive for parity). The action
- * is staged here, not sent immediately: the rows are removed from the local cache
- * optimistically and a snackbar offers a few seconds to undo before the server move
- * commits. Module-level state (not React state) so the pending action survives route
- * changes — the Reader navigates away on delete/archive.
+ * Undo window for deferred actions — delete, archive, and send. The window is now **server
+ * owned**: staging an action enqueues it in the backend outbox (which returns the `dueAt` when
+ * it will actually commit) and optimistically hides the rows locally. This snackbar only mirrors
+ * that window visually — the backend commits at `dueAt` whether or not the PWA stays open, so a
+ * backgrounded/closed app can no longer drop the action. Undo cancels the outbox row server-side
+ * (and, for delete/archive, the backend emits `mail:restored` so every client un-hides the row).
  *
- * Two extras layered on top of the basic window:
- *  - **Failure handling.** If the server rejects the committed move, the snapshotted
- *    rows are restored to the cache (so they don't silently vanish until the next
- *    resync) and a transient error notice is surfaced.
- *  - **Hidden-id registry.** Cache-backed lists (the inbox) re-hide rows automatically
- *    via their liveQuery, but Search holds an independent result array with no such
- *    reactivity. `useHiddenIds()` exposes the ids that are currently staged-away or
- *    permanently committed-away so that list can filter them out and react to undo.
+ * Module-level state (not React state) so the pending action survives route changes — the Reader
+ * navigates away on delete/archive.
+ *
+ * Hidden-id registry: cache-backed lists (the inbox) re-hide rows via their liveQuery, but Search
+ * holds an independent result array with no such reactivity. `useHiddenIds()` exposes the ids
+ * currently staged-away or committed-away so that list can filter them out and react to undo.
  */
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import { cache, removeCachedMessage, type CachedBody, type CachedMessage } from '../db/cache';
 
-/** How long the undo snackbar stays before the action commits server-side. */
-const WINDOW_MS = 5000;
+/** Fallback window if the server didn't return a dueAt (kept in sync with the backend default). */
+const FALLBACK_WINDOW_MS = 5000;
 /** How long a transient error notice lingers. */
 const NOTICE_MS = 4000;
 
@@ -31,25 +29,21 @@ export interface PendingAction {
   /** Every message id in this batch (one for a swipe/context action, many for bulk). */
   ids: string[];
   label: string;
-  /** Snapshots kept so undo (or a failed commit) can re-insert the removed rows. */
+  /** Snapshots kept so undo can re-insert the optimistically-removed rows. */
   messages: CachedMessage[];
   bodies: CachedBody[];
-  /**
-   * Server-owned actions (currently `send`) carry the outbox row id: the backend owns the
-   * commit timer, so this snackbar is purely visual — expiry just drops it, and Undo cancels
-   * server-side via the outbox rather than restoring local cache.
-   */
-  outboxId?: string;
+  /** The outbox row ids backing this action — Undo cancels these server-side. */
+  outboxIds: string[];
 }
 
 let pending: PendingAction | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
-/** Transient error notice (failed commit / failed flag change). */
+/** Transient error notice (failed enqueue / failed flag change / too-late undo). */
 let notice: string | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Ids committed-away this session (permanent) — kept so Search can stay them hidden. */
+/** Ids committed-away this session (window elapsed) — kept so Search stays them hidden. */
 const committed = new Set<string>();
 /** Cached union (committed ∪ pending) handed to `useHiddenIds`; rebuilt only on change. */
 let hidden = new Set<string>();
@@ -92,61 +86,79 @@ function defaultLabel(kind: ActionKind, count: number): string {
   return `${noun} ${kind === 'archive' ? 'archived' : 'deleted'}`;
 }
 
-/** Commit the pending action to the server, then clear undo state. */
-async function commit(): Promise<void> {
+/**
+ * Finalise the pending action: the server already owns the commit at its `dueAt`, so window
+ * expiry just keeps the rows hidden (record them in `committed`) and drops the snackbar.
+ */
+function commit(): void {
   if (!pending) return;
-  const { kind, ids, messages, bodies, outboxId } = pending;
   clearTimer();
-
-  // Server-owned action (send): the backend already owns the commit at its dueAt, so window
-  // expiry just drops the snackbar — no client-side commit call.
-  if (outboxId) {
-    pending = null;
-    notify();
-    return;
-  }
-  // Mark these as permanently gone before the async calls so a list that re-reads
-  // mid-commit doesn't flash the rows back; failures below re-add them.
-  for (const id of ids) committed.add(id);
+  for (const id of pending.ids) committed.add(id);
   pending = null;
   notify();
-
-  const call = kind === 'archive' ? api.archiveMessage : api.deleteMessage;
-  const failed: string[] = [];
-  await Promise.all(
-    ids.map((id) =>
-      call(id).catch(() => {
-        failed.push(id);
-      }),
-    ),
-  );
-
-  if (failed.length > 0) {
-    // The server rejected the move: restore the snapshotted rows so they don't vanish
-    // until the next resync, and tell the user it didn't stick.
-    const failedSet = new Set(failed);
-    for (const id of failed) committed.delete(id);
-    for (const m of messages) if (failedSet.has(m.id)) await cache.messages.put(m);
-    for (const b of bodies) if (failedSet.has(b.id)) await cache.bodies.put(b);
-    showNotice(kind === 'archive' ? 'Couldn’t archive — restored' : 'Couldn’t delete — restored');
-  }
 }
 
-/** Stage a batch action: snapshot + optimistically remove the rows, then arm the window. */
-async function stage(kind: ActionKind, ids: string[], label?: string): Promise<void> {
+/**
+ * Stage a batch delete/archive: snapshot + optimistically remove the rows, enqueue the deferred
+ * MOVE server-side (returns the outbox id + dueAt), then arm the snackbar to that dueAt. Rows the
+ * server couldn't queue are restored with a notice.
+ */
+async function stage(kind: 'delete' | 'archive', ids: string[], label?: string): Promise<void> {
   if (ids.length === 0) return;
-  await commit(); // a second action while one is pending commits the first immediately
-  const messages: CachedMessage[] = [];
-  const bodies: CachedBody[] = [];
+  commit(); // a second action while one is pending finalises the first immediately
+
+  const snapMessages = new Map<string, CachedMessage>();
+  const snapBodies = new Map<string, CachedBody>();
   for (const id of ids) {
     const message = await cache.messages.get(id);
     const body = await cache.bodies.get(id);
-    if (message) messages.push(message);
-    if (body) bodies.push(body);
+    if (message) snapMessages.set(id, message);
+    if (body) snapBodies.set(id, body);
     await removeCachedMessage(id);
   }
-  pending = { kind, ids, label: label ?? defaultLabel(kind, ids.length), messages, bodies };
-  timer = setTimeout(() => void commit(), WINDOW_MS);
+
+  const call = kind === 'archive' ? api.archiveMessage : api.deleteMessage;
+  const outboxIds: string[] = [];
+  const okIds: string[] = [];
+  const failed: string[] = [];
+  let dueAt = Date.now() + FALLBACK_WINDOW_MS;
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const res = await call(id);
+        if (res.outboxId) outboxIds.push(res.outboxId);
+        if (typeof res.dueAt === 'number') dueAt = res.dueAt;
+        okIds.push(id);
+      } catch {
+        failed.push(id);
+      }
+    }),
+  );
+
+  if (failed.length > 0) {
+    // Couldn't queue the move server-side — restore those rows so they don't silently vanish.
+    for (const id of failed) {
+      const m = snapMessages.get(id);
+      const b = snapBodies.get(id);
+      if (m) await cache.messages.put(m);
+      if (b) await cache.bodies.put(b);
+    }
+    showNotice(kind === 'archive' ? 'Couldn’t archive — restored' : 'Couldn’t delete — restored');
+  }
+  if (okIds.length === 0) {
+    notify();
+    return;
+  }
+
+  pending = {
+    kind,
+    ids: okIds,
+    label: label ?? defaultLabel(kind, okIds.length),
+    messages: okIds.map((id) => snapMessages.get(id)).filter((m): m is CachedMessage => !!m),
+    bodies: okIds.map((id) => snapBodies.get(id)).filter((b): b is CachedBody => !!b),
+    outboxIds,
+  };
+  timer = setTimeout(() => commit(), Math.max(0, dueAt - Date.now()));
   notify();
 }
 
@@ -172,38 +184,44 @@ export async function requestArchiveMany(ids: string[], label?: string): Promise
  * The send is already owned by the backend outbox; this only mirrors the window visually.
  */
 export async function stageSend(outboxId: string, dueAt: number, label?: string): Promise<void> {
-  await commit(); // flush any pending action first
+  commit(); // flush any pending action first
   pending = {
     kind: 'send',
     ids: [],
     label: label ?? defaultLabel('send', 1),
     messages: [],
     bodies: [],
-    outboxId,
+    outboxIds: [outboxId],
   };
-  const ms = Math.max(0, dueAt - Date.now());
-  timer = setTimeout(() => void commit(), ms);
+  timer = setTimeout(() => commit(), Math.max(0, dueAt - Date.now()));
   notify();
 }
 
-/** Cancel the pending action. Server-owned (send) → cancel via the outbox; else restore cache. */
+/**
+ * Cancel the pending action: cancel each backing outbox row server-side, then restore the
+ * optimistically-removed rows. During the visible window the action's `dueAt` is still in the
+ * future, so the runner hasn't claimed it and the cancel reliably wins.
+ */
 export async function undoAction(): Promise<void> {
   if (!pending) return;
   clearTimer();
-  const { messages, bodies, outboxId } = pending;
+  const { messages, bodies, outboxIds, kind } = pending;
   pending = null;
-  if (outboxId) {
-    // Server-owned: ask the backend to cancel. A 409 means it already committed (too late).
-    try {
-      await api.cancelOutbox(outboxId);
-    } catch {
-      showNotice('Already sent — too late to undo');
-    }
-    notify();
-    return;
-  }
+
+  let tooLate = false;
+  await Promise.all(
+    outboxIds.map((id) =>
+      api.cancelOutbox(id).catch(() => {
+        tooLate = true;
+      }),
+    ),
+  );
+
+  // Restore snapshots (delete/archive). A send has no local snapshot; if its cancel was too late
+  // it already went out, so tell the user.
   for (const m of messages) await cache.messages.put(m);
   for (const b of bodies) await cache.bodies.put(b);
+  if (tooLate && kind === 'send') showNotice('Already sent — too late to undo');
   notify();
 }
 

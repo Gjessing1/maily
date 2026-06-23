@@ -1,22 +1,23 @@
 /**
  * Message mutations: flag, delete (→ Trash), archive. Each follows the local-first
  * rule (ARCHITECTURE §2/§13): tombstone/flag/relink the local row + emit a signal
- * synchronously, then propagate to IMAP out-of-band over a transient connection so
- * the INBOX IDLE connection is never disturbed and the HTTP response never blocks on
- * a (possibly slow) transient connection. The next folder resync reconciles on failure.
+ * synchronously. Flags propagate to IMAP out-of-band over a transient connection.
+ *
+ * Delete and archive defer their IMAP MOVE into the **server-owned outbox** (src/outbox) with a
+ * short `dueAt` window, so the move is undoable *and* commits server-side even if the PWA closes
+ * mid-window (the old undo timer lived on the client and could be lost). The response carries the
+ * outbox id + dueAt so the client can mirror the window and cancel (undo) against it.
  */
 import type { FastifyInstance } from 'fastify';
 import { emitSignal } from '../../events.js';
-import {
-  folderByRole,
-  getMessage,
-  uidLocationForMessage,
-  uidLocationInFolder,
-} from '../../db/queries.js';
+import { folderByRole, getMessage, uidLocationForMessage } from '../../db/queries.js';
 import { markMessageDeleted, updateMessageFlags } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
-import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
+import { enqueueDelete, enqueueArchive } from '../../outbox/runner.js';
+
+/** Undo window (ms) for a deferred delete/archive — how long the move is cancelable. */
+const UNDO_WINDOW_MS = 5000;
 
 export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string }; Body: { seen?: boolean; flagged?: boolean } }>(
@@ -71,11 +72,11 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // Soft-delete → move to Trash. Tombstone locally first (instant, optimistic),
-  // then MOVE on IMAP out-of-band over a transient connection so INBOX IDLE is
-  // never disturbed (ARCHITECTURE §2/§13). The provider-agnostic primitive is a
-  // UID MOVE to the role='trash' folder — a real trash on Gmail, a plain move on
-  // Dovecot; imapflow falls back to COPY+\Deleted+EXPUNGE where MOVE is unadvertised.
+  // Soft-delete → move to Trash. Tombstone locally first (instant, optimistic) + emit the
+  // signal, then queue the MOVE-to-Trash into the server-owned outbox with a short undo window
+  // (ARCHITECTURE §2/§13). The outbox runner performs the UID MOVE to the role='trash' folder
+  // at dueAt — a real trash on Gmail, a plain move on Dovecot; imapflow falls back to
+  // COPY+\Deleted+EXPUNGE where MOVE is unadvertised — and an Undo cancels it within the window.
   app.delete<{ Params: { id: string } }>('/api/messages/:id', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
@@ -83,54 +84,27 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     markMessageDeleted(m.id);
     emitSignal({ type: 'mail:deleted', accountId: m.accountId, messageId: m.id });
 
-    const trash = folderByRole(m.accountId, 'trash');
-    const loc = uidLocationForMessage(m.id);
-    const engine = getEngine(m.accountId);
-    // Out-of-band, fire-and-forget: the tombstone + signal above already hide the
-    // message, so the HTTP response must not block on the transient-connection MOVE
-    // (slow under a heavy sweep → client timeout → the row flickers back).
-    if (!trash) {
-      app.log.warn(
-        `no trash folder for account ${m.accountId}; message ${m.id} tombstoned locally`,
-      );
-    } else if (loc && engine && loc.folderPath !== trash.path) {
-      // The tombstone is preserved across the move (Trash re-sights never clear it —
-      // see store.ts), so converging the mapping onto Trash keeps the row fetchable.
-      void moveToFolderOnServer(engine.accountConfig, m.id, loc, trash).catch((err: Error) =>
-        app.log.warn(`trash move failed for ${m.id}: ${err.message}`),
-      );
-    }
-
-    return { ok: true };
+    const dueAt = Date.now() + UNDO_WINDOW_MS;
+    const outboxId = enqueueDelete(m.accountId, m.id, dueAt);
+    return { ok: true, outboxId, dueAt };
   });
 
   // Archive → move the inbox copy to the role='archive' folder (Gmail "All Mail"
   // strips the INBOX label; generic IMAP moves to Archive). Unlike delete this does
-  // NOT tombstone: the message stays live and listable, just out of the inbox. Same
-  // out-of-band MOVE over a transient connection so INBOX IDLE is undisturbed.
+  // NOT tombstone: the message stays live and listable, just out of the inbox. The MOVE is
+  // queued into the outbox with an undo window; the runner resolves the inbox location and
+  // performs the MOVE at dueAt (and skips it if the message is no longer in the inbox).
   app.post<{ Params: { id: string } }>('/api/messages/:id/archive', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
 
     const archive = folderByRole(m.accountId, 'archive');
     if (!archive) return reply.code(409).send({ error: 'no archive folder' });
-    const inbox = folderByRole(m.accountId, 'inbox');
-    const loc = inbox ? uidLocationInFolder(m.id, inbox.id) : undefined;
-    // Not in the inbox (already archived / elsewhere) → nothing to do.
-    if (!loc || loc.folderPath === archive.path) return { ok: true };
 
     emitSignal({ type: 'mail:archived', accountId: m.accountId, messageId: m.id });
 
-    // Out-of-band, fire-and-forget (same rationale as flags/delete): don't block the
-    // response on the transient-connection MOVE so the optimistic UI stays snappy
-    // under load; the next inbox resync reconciles if the move fails.
-    const engine = getEngine(m.accountId);
-    if (engine) {
-      void moveToFolderOnServer(engine.accountConfig, m.id, loc, archive).catch((err: Error) =>
-        app.log.warn(`archive move failed for ${m.id}: ${err.message}`),
-      );
-    }
-
-    return { ok: true };
+    const dueAt = Date.now() + UNDO_WINDOW_MS;
+    const outboxId = enqueueArchive(m.accountId, m.id, dueAt);
+    return { ok: true, outboxId, dueAt };
   });
 }
