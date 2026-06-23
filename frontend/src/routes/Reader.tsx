@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { patchCachedFlags, removeCachedMessage } from '../db/cache';
-import { requestDeleteMany } from '../state/undo';
+import { patchCachedFlags } from '../db/cache';
+import { requestArchiveMany, requestDeleteMany } from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
 import { ConversationThread } from '../components/ConversationThread';
 import { usePrefs } from '../state/prefs';
@@ -200,13 +200,11 @@ export function ReaderView({
 
   function archive() {
     if (!detail) return;
-    // Optimistic: drop locally + leave; the server moves each copy to Archive
-    // out-of-band (non-destructive, no confirm). Re-syncs into Archive when viewed.
+    // Stage with an undo window (app-level snackbar persists past this navigation),
+    // then leave the reader — mirroring delete. The Archive move commits server-side
+    // once it elapses; a conversation archives every message behind one undo window.
+    void requestArchiveMany(threaded ? threadIds : [detail.id]);
     onClose();
-    for (const mid of threaded ? threadIds : [detail.id]) {
-      void removeCachedMessage(mid);
-      api.archiveMessage(mid).catch(() => undefined);
-    }
   }
 
   function forward() {

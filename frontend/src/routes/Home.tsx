@@ -3,8 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache, patchCachedFlags, removeCachedMessage } from '../db/cache';
-import { requestDeleteMany } from '../state/undo';
+import { cache, patchCachedFlags } from '../db/cache';
+import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
 import { groupConversations } from '../state/threads';
 import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
@@ -174,26 +174,30 @@ export function Home() {
     (id: string, seen: boolean) => {
       for (const mid of expandIds(id)) {
         void patchCachedFlags(mid, { seen });
-        api.setFlags(mid, { seen }).catch(() => void patchCachedFlags(mid, { seen: !seen }));
+        api.setFlags(mid, { seen }).catch(() => {
+          void patchCachedFlags(mid, { seen: !seen });
+          showNotice('Couldn’t update — reverted');
+        });
       }
     },
     [expandIds],
   );
 
   // Star toggle stays per-message (the representative/latest), Gmail-style — flip
-  // locally, reconcile on the server (revert on failure).
+  // locally, reconcile on the server (revert + notify on failure).
   const handleToggleFlag = useCallback((id: string, flagged: boolean) => {
     void patchCachedFlags(id, { flagged });
-    api.setFlags(id, { flagged }).catch(() => void patchCachedFlags(id, { flagged: !flagged }));
+    api.setFlags(id, { flagged }).catch(() => {
+      void patchCachedFlags(id, { flagged: !flagged });
+      showNotice('Couldn’t update — reverted');
+    });
   }, []);
 
-  // Archive the whole conversation (context menu): drop locally, move each copy server-side.
+  // Archive the whole conversation (context menu): staged behind one undo window,
+  // mirroring delete — drops locally now, moves each copy server-side once it elapses.
   const handleArchive = useCallback(
     (id: string) => {
-      for (const mid of expandIds(id)) {
-        void removeCachedMessage(mid);
-        api.archiveMessage(mid).catch(() => undefined);
-      }
+      void requestArchiveMany(expandIds(id));
     },
     [expandIds],
   );
@@ -230,7 +234,10 @@ export function Home() {
       for (const id of selectedIds) {
         for (const mid of expandIds(id)) {
           void patchCachedFlags(mid, { seen });
-          api.setFlags(mid, { seen }).catch(() => void patchCachedFlags(mid, { seen: !seen }));
+          api.setFlags(mid, { seen }).catch(() => {
+            void patchCachedFlags(mid, { seen: !seen });
+            showNotice('Couldn’t update — reverted');
+          });
         }
       }
       clearSelect();
@@ -238,12 +245,8 @@ export function Home() {
     [selectedIds, expandIds, clearSelect],
   );
   const bulkArchive = useCallback(() => {
-    for (const id of selectedIds) {
-      for (const mid of expandIds(id)) {
-        void removeCachedMessage(mid);
-        api.archiveMessage(mid).catch(() => undefined);
-      }
-    }
+    // Stage the whole selection behind one undo window, mirroring bulk delete.
+    void requestArchiveMany([...selectedIds].flatMap(expandIds));
     clearSelect();
   }, [selectedIds, expandIds, clearSelect]);
   const bulkDelete = useCallback(() => {

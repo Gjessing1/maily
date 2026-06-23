@@ -6,13 +6,32 @@
  * under the form ("Runs as: …") so the syntax teaches itself. The backend parses the
  * string into the canonical IR and compiles it to FTS5 + SQL (`search/query.ts`).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
+import { patchCachedFlags } from '../db/cache';
+import {
+  requestArchiveMany,
+  requestDelete,
+  requestDeleteMany,
+  showNotice,
+  useHiddenIds,
+} from '../state/undo';
+import { usePrefs } from '../state/prefs';
+import { useMediaQuery } from '../ui/useMediaQuery';
 import { MessageRow } from '../components/MessageRow';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, ChevronDownIcon, SearchIcon } from '../ui/icons';
+import {
+  ArchiveIcon,
+  BackIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  MailIcon,
+  MailOpenIcon,
+  SearchIcon,
+  TrashIcon,
+} from '../ui/icons';
 
 /** The structured filter form — each field maps 1:1 to a query operator. */
 interface Filters {
@@ -123,6 +142,8 @@ function FilterChip({
 
 export function Search() {
   const navigate = useNavigate();
+  const prefs = usePrefs();
+  const isWide = useMediaQuery('(min-width: 768px)');
   const [q, setQ] = useState('');
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
@@ -162,45 +183,177 @@ export function Search() {
     };
   }, [query]);
 
+  // Search results are a flat list, not the Dexie-backed inbox — they don't react to a
+  // liveQuery. So delete/archive (which stage rows away via the shared undo window) are
+  // reflected by filtering out the hidden ids; an undo un-hides them and the row returns.
+  const hidden = useHiddenIds();
+  const visible = useMemo(
+    () => results?.filter((m) => !hidden.has(m.id)) ?? null,
+    [results, hidden],
+  );
+
+  // Patch a single result row in place (read/flag toggles aren't cache-driven here).
+  const patchResult = useCallback(
+    (id: string, patch: Partial<MessageDto>) =>
+      setResults((prev) => prev?.map((m) => (m.id === id ? { ...m, ...patch } : m)) ?? prev),
+    [],
+  );
+
+  // ── Swipe / per-row actions (parity with the inbox) ─────────────────────────
+  const handleDelete = useCallback((id: string) => void requestDelete(id), []);
+  const handleToggleRead = useCallback(
+    (id: string, seen: boolean) => {
+      patchResult(id, { seen });
+      void patchCachedFlags(id, { seen });
+      api.setFlags(id, { seen }).catch(() => {
+        patchResult(id, { seen: !seen });
+        void patchCachedFlags(id, { seen: !seen });
+        showNotice('Couldn’t update — reverted');
+      });
+    },
+    [patchResult],
+  );
+  const handleToggleFlag = useCallback(
+    (id: string, flagged: boolean) => {
+      patchResult(id, { flagged });
+      void patchCachedFlags(id, { flagged });
+      api.setFlags(id, { flagged }).catch(() => {
+        patchResult(id, { flagged: !flagged });
+        void patchCachedFlags(id, { flagged: !flagged });
+        showNotice('Couldn’t update — reverted');
+      });
+    },
+    [patchResult],
+  );
+
+  // ── Multi-select (long-press / avatar-tap a result to enter) ────────────────
+  // Mirrors the inbox (Home.tsx).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectionMode = selectedIds.size > 0;
+
+  // A new/changed result set abandons any selection.
+  useEffect(() => setSelectedIds(new Set()), [results]);
+
+  const enterSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelect = useCallback(() => setSelectedIds(new Set()), []);
+
+  const bulkMarkRead = useCallback(
+    (seen: boolean) => {
+      for (const id of selectedIds) {
+        patchResult(id, { seen });
+        void patchCachedFlags(id, { seen });
+        api.setFlags(id, { seen }).catch(() => {
+          patchResult(id, { seen: !seen });
+          void patchCachedFlags(id, { seen: !seen });
+          showNotice('Couldn’t update — reverted');
+        });
+      }
+      clearSelect();
+    },
+    [selectedIds, patchResult, clearSelect],
+  );
+  const bulkArchive = useCallback(() => {
+    // Staged behind one undo window; the hidden-id filter drops the rows immediately.
+    void requestArchiveMany([...selectedIds]);
+    clearSelect();
+  }, [selectedIds, clearSelect]);
+  const bulkDelete = useCallback(() => {
+    void requestDeleteMany([...selectedIds]);
+    clearSelect();
+  }, [selectedIds, clearSelect]);
+
   return (
     <div className="flex h-full flex-col">
       <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate(-1)}
-            className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Back"
-          >
-            <BackIcon />
-          </button>
-          <div className="flex flex-1 items-center gap-2 rounded-full bg-surface px-3 py-2">
-            <SearchIcon className="size-4 text-faint" />
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search mail"
-              autoCapitalize="off"
-              className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
-            />
-            {busy && <Spinner className="size-4" />}
+        {selectionMode ? (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={clearSelect}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Cancel selection"
+            >
+              <CloseIcon />
+            </button>
+            <h1 className="flex-1 truncate text-lg font-semibold tabular-nums">
+              {selectedIds.size}
+            </h1>
+            <button
+              onClick={() => bulkMarkRead(true)}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Mark as read"
+            >
+              <MailOpenIcon />
+            </button>
+            <button
+              onClick={() => bulkMarkRead(false)}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Mark as unread"
+            >
+              <MailIcon />
+            </button>
+            <button
+              onClick={bulkArchive}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Archive"
+            >
+              <ArchiveIcon />
+            </button>
+            <button
+              onClick={bulkDelete}
+              className="rounded-full p-2 text-fg active:bg-surface-2"
+              aria-label="Delete"
+            >
+              <TrashIcon />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowFilters((s) => !s)}
-            aria-expanded={showFilters}
-            className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-2 text-sm font-medium active:bg-surface-2 ${
-              filtersActive ? 'text-accent' : 'text-muted'
-            }`}
-          >
-            Filters
-            <ChevronDownIcon
-              className={`size-4 transition-transform ${showFilters ? 'rotate-180' : ''}`}
-            />
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate(-1)}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Back"
+            >
+              <BackIcon />
+            </button>
+            <div className="flex flex-1 items-center gap-2 rounded-full bg-surface px-3 py-2">
+              <SearchIcon className="size-4 text-faint" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search mail"
+                autoCapitalize="off"
+                className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
+              />
+              {busy && <Spinner className="size-4" />}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFilters((s) => !s)}
+              aria-expanded={showFilters}
+              className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-2 text-sm font-medium active:bg-surface-2 ${
+                filtersActive ? 'text-accent' : 'text-muted'
+              }`}
+            >
+              Filters
+              <ChevronDownIcon
+                className={`size-4 transition-transform ${showFilters ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </div>
+        )}
 
-        {showFilters && (
+        {!selectionMode && showFilters && (
           <div className="mx-auto mt-2 flex max-w-2xl flex-col gap-2 rounded-xl border border-border bg-surface p-3">
             <FilterField
               label="From"
@@ -302,10 +455,25 @@ export function Search() {
               <code className="text-muted">is:flagged</code>
             </p>
           </div>
-        ) : results.length === 0 && !busy ? (
+        ) : !visible || (visible.length === 0 && !busy) ? (
           <p className="px-4 py-16 text-center text-faint">No matches.</p>
         ) : (
-          results.map((m) => <MessageRow key={m.id} message={m} />)
+          visible.map((m) => (
+            <MessageRow
+              key={m.id}
+              message={m}
+              onDelete={handleDelete}
+              onToggleRead={handleToggleRead}
+              onToggleFlag={handleToggleFlag}
+              isWide={isWide}
+              swipeRight={prefs.swipeRight}
+              swipeLeft={prefs.swipeLeft}
+              selectionMode={selectionMode}
+              checked={selectedIds.has(m.id)}
+              onEnterSelect={enterSelect}
+              onToggleSelect={toggleSelect}
+            />
+          ))
         )}
       </main>
     </div>
