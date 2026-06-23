@@ -217,11 +217,13 @@ export async function undoAction(): Promise<void> {
     ),
   );
 
-  // Restore snapshots (delete/archive). A send has no local snapshot; if its cancel was too late
-  // it already went out, so tell the user.
+  // Restore snapshots (delete/archive). A send has no local snapshot — the backend saves the
+  // canceled send back to \Drafts; if the cancel was too late it already went out.
   for (const m of messages) await cache.messages.put(m);
   for (const b of bodies) await cache.bodies.put(b);
-  if (tooLate && kind === 'send') showNotice('Already sent — too late to undo');
+  if (kind === 'send') {
+    showNotice(tooLate ? 'Already sent — too late to undo' : 'Send canceled — saved to Drafts');
+  }
   notify();
 }
 

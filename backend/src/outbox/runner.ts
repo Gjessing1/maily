@@ -20,6 +20,7 @@ import { restoreMessageDeleted } from '../imap/store.js';
 import { moveToFolderOnServer } from '../imap/move.js';
 import { getEngine } from '../imap/registry.js';
 import { sendMessage } from '../mail/send.js';
+import { saveDraft } from '../mail/draft.js';
 import { emitSignal } from '../events.js';
 import { createLogger } from '../logger.js';
 
@@ -83,10 +84,18 @@ export type CancelOutcome = 'canceled' | 'too-late' | 'not-found';
  * `pending`→`canceled` flip: if the runner already claimed it (now `sending`/`done`), the
  * update changes 0 rows and we report `too-late`. On a successful cancel of a delete/archive
  * we reverse the optimistic local hide and emit `mail:restored` so every client un-hides it.
+ * A canceled SEND is saved back to \Drafts so the composition isn't lost — the composer has
+ * already navigated away and cleared its local draft, so the server-side \Drafts copy is the
+ * only place the message survives (and it then syncs to every device).
  */
 export function cancelOutbox(id: string): CancelOutcome {
   const row = db
-    .select({ kind: outbox.kind, accountId: outbox.accountId, messageId: outbox.messageId })
+    .select({
+      kind: outbox.kind,
+      accountId: outbox.accountId,
+      messageId: outbox.messageId,
+      payload: outbox.payload,
+    })
     .from(outbox)
     .where(eq(outbox.id, id))
     .get();
@@ -105,6 +114,23 @@ export function cancelOutbox(id: string): CancelOutcome {
     // delete tombstoned locally at enqueue; archive made no local change (the signal hid it).
     if (row.kind === 'delete') restoreMessageDeleted(row.messageId);
     emitSignal({ type: 'mail:restored', accountId: row.accountId, messageId: row.messageId });
+  }
+
+  if (row.kind === 'send' && row.payload) {
+    const engine = getEngine(row.accountId);
+    if (engine) {
+      try {
+        const req = JSON.parse(row.payload) as SendMessageRequest;
+        void saveDraft(engine.accountConfig, req)
+          .then((r) => {
+            // Surface the restored draft promptly instead of waiting for the next cron pass.
+            if (r.savedToDrafts) engine.reconcileFoldersNow();
+          })
+          .catch((err: Error) => log.warn(`undo-send draft save failed: ${err.message}`));
+      } catch {
+        /* malformed payload — nothing to preserve */
+      }
+    }
   }
   return 'canceled';
 }
