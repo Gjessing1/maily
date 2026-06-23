@@ -26,7 +26,9 @@ import type {
   FolderDto,
   MessageDetailDto,
   MessageDto,
+  OutboxEntry,
   PushSubscriptionDto,
+  QueuedSendResult,
   SaveDraftRequest,
   SaveDraftResult,
   SendMessageRequest,
@@ -258,11 +260,23 @@ export const api = {
   archiveMessage: (id: string) =>
     request<{ ok: boolean }>(`/api/messages/${id}/archive`, { method: 'POST' }),
 
+  /**
+   * Queue a send into the server-owned outbox. Returns the outbox id + `dueAt` (when it will
+   * actually fire). The send commits server-side at `dueAt` even if the app closes; cancel
+   * within the window via `cancelOutbox` (undo-send) — see state/undo.ts.
+   */
   send: (accountId: string, msg: SendMessageRequest) =>
-    request<{ messageId?: string; appended?: boolean }>(`/api/accounts/${accountId}/send`, {
+    request<QueuedSendResult>(`/api/accounts/${accountId}/send`, {
       method: 'POST',
       body: JSON.stringify(msg),
     }),
+
+  /** Pending/scheduled sends still in the outbox (Scheduled/Outbox view). */
+  listOutbox: () => request<{ entries: OutboxEntry[] }>(`/api/outbox`),
+
+  /** Cancel a queued outbox action (undo-send / undo delete-archive). 409 ⇒ already committed. */
+  cancelOutbox: (id: string) =>
+    request<{ canceled: boolean }>(`/api/outbox/${id}`, { method: 'DELETE' }),
 
   /** Save a draft → APPEND to the account's \Drafts mailbox (syncs across devices). */
   saveDraft: (accountId: string, msg: SaveDraftRequest) =>

@@ -24,7 +24,7 @@ const WINDOW_MS = 5000;
 /** How long a transient error notice lingers. */
 const NOTICE_MS = 4000;
 
-type ActionKind = 'delete' | 'archive';
+type ActionKind = 'delete' | 'archive' | 'send';
 
 export interface PendingAction {
   kind: ActionKind;
@@ -34,6 +34,12 @@ export interface PendingAction {
   /** Snapshots kept so undo (or a failed commit) can re-insert the removed rows. */
   messages: CachedMessage[];
   bodies: CachedBody[];
+  /**
+   * Server-owned actions (currently `send`) carry the outbox row id: the backend owns the
+   * commit timer, so this snackbar is purely visual — expiry just drops it, and Undo cancels
+   * server-side via the outbox rather than restoring local cache.
+   */
+  outboxId?: string;
 }
 
 let pending: PendingAction | null = null;
@@ -81,6 +87,7 @@ export function showNotice(message: string): void {
 }
 
 function defaultLabel(kind: ActionKind, count: number): string {
+  if (kind === 'send') return 'Message sent';
   const noun = count === 1 ? 'Message' : `${count} messages`;
   return `${noun} ${kind === 'archive' ? 'archived' : 'deleted'}`;
 }
@@ -88,8 +95,16 @@ function defaultLabel(kind: ActionKind, count: number): string {
 /** Commit the pending action to the server, then clear undo state. */
 async function commit(): Promise<void> {
   if (!pending) return;
-  const { kind, ids, messages, bodies } = pending;
+  const { kind, ids, messages, bodies, outboxId } = pending;
   clearTimer();
+
+  // Server-owned action (send): the backend already owns the commit at its dueAt, so window
+  // expiry just drops the snackbar — no client-side commit call.
+  if (outboxId) {
+    pending = null;
+    notify();
+    return;
+  }
   // Mark these as permanently gone before the async calls so a list that re-reads
   // mid-commit doesn't flash the rows back; failures below re-add them.
   for (const id of ids) committed.add(id);
@@ -152,12 +167,41 @@ export async function requestArchiveMany(ids: string[], label?: string): Promise
   return stage('archive', ids, label);
 }
 
-/** Cancel the pending action and restore the cached rows. No server call is made. */
+/**
+ * Stage a just-queued send so the snackbar offers "Undo send" until the server's `dueAt`.
+ * The send is already owned by the backend outbox; this only mirrors the window visually.
+ */
+export async function stageSend(outboxId: string, dueAt: number, label?: string): Promise<void> {
+  await commit(); // flush any pending action first
+  pending = {
+    kind: 'send',
+    ids: [],
+    label: label ?? defaultLabel('send', 1),
+    messages: [],
+    bodies: [],
+    outboxId,
+  };
+  const ms = Math.max(0, dueAt - Date.now());
+  timer = setTimeout(() => void commit(), ms);
+  notify();
+}
+
+/** Cancel the pending action. Server-owned (send) → cancel via the outbox; else restore cache. */
 export async function undoAction(): Promise<void> {
   if (!pending) return;
   clearTimer();
-  const { messages, bodies } = pending;
+  const { messages, bodies, outboxId } = pending;
   pending = null;
+  if (outboxId) {
+    // Server-owned: ask the backend to cancel. A 409 means it already committed (too late).
+    try {
+      await api.cancelOutbox(outboxId);
+    } catch {
+      showNotice('Already sent — too late to undo');
+    }
+    notify();
+    return;
+  }
   for (const m of messages) await cache.messages.put(m);
   for (const b of bodies) await cache.bodies.put(b);
   notify();

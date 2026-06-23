@@ -10,7 +10,25 @@ import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
 import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
-import { BackIcon, PaperclipIcon, SendIcon } from '../ui/icons';
+import { BackIcon, ClockIcon, PaperclipIcon, SendIcon } from '../ui/icons';
+import { showNotice, stageSend } from '../state/undo';
+
+/** Human-readable label for a scheduled-send time (confirmation notice). */
+function formatSchedule(ms: number): string {
+  return new Date(ms).toLocaleString([], {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/** `datetime-local` value (local time, no tz suffix) for a Date — used to seed the picker. */
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /** sessionStorage key holding the id of the compose draft in progress (for reload restore). */
 const ACTIVE_DRAFT_KEY = 'maily.activeDraft';
@@ -122,6 +140,8 @@ export function Compose() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // On a fresh navigation, strip the `fresh` flag from history state so a subsequent
@@ -300,7 +320,13 @@ export function Compose() {
     fromAccount && parseAddrs(to).length && !sending && !savingDraft && uploading === 0,
   );
 
-  async function send() {
+  /**
+   * Queue the message. With no `sendAt` it's held for the configured undo-send window and the
+   * "Undo send" snackbar is armed; with a future `sendAt` it's scheduled (a confirmation notice,
+   * no snackbar). Either way the backend outbox owns the actual send, so it goes out even if the
+   * app closes.
+   */
+  async function send(sendAt?: number) {
     if (!fromAccount) return;
     const recipients = parseAddrs(to);
     if (!recipients.length) {
@@ -313,6 +339,7 @@ export function Compose() {
       setError(`Check these addresses: ${bad.join(', ')}`);
       return;
     }
+    const scheduled = typeof sendAt === 'number' && sendAt > Date.now();
     // Empty subject is allowed, but confirm — it's almost always an oversight.
     if (!subject.trim() && !window.confirm('Send this message without a subject?')) {
       return;
@@ -336,10 +363,17 @@ export function Compose() {
         ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
         : undefined,
       replaceDraftId: sourceDraftId,
+      sendAt: scheduled ? sendAt : undefined,
     };
     try {
-      await api.send(fromAccount.id, msg);
+      const { outboxId, dueAt } = await api.send(fromAccount.id, msg);
       clearDraft();
+      if (scheduled) {
+        showNotice(`Scheduled for ${formatSchedule(dueAt)}`);
+      } else {
+        // Arm the "Undo send" snackbar until the server's dueAt (the undo window end).
+        void stageSend(outboxId, dueAt);
+      }
       navigate(-1);
     } catch (e) {
       setError((e as Error).message || 'Send failed.');
@@ -367,18 +401,68 @@ export function Compose() {
         >
           <PaperclipIcon />
         </button>
-        <button
-          onClick={send}
-          disabled={!canSend}
-          className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
-        >
-          {sending ? (
-            <Spinner className="border-white/70 size-4" />
-          ) : (
-            <SendIcon className="size-4" />
+        <div className="relative flex items-center">
+          <button
+            onClick={() => void send()}
+            disabled={!canSend}
+            className="flex items-center gap-2 rounded-l-full bg-accent px-4 py-2 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
+          >
+            {sending ? (
+              <Spinner className="border-white/70 size-4" />
+            ) : (
+              <SendIcon className="size-4" />
+            )}
+            Send
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setScheduleAt((v) => v || toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
+              setScheduleOpen((o) => !o);
+            }}
+            disabled={!canSend}
+            aria-label="Send later"
+            className="flex items-center rounded-r-full border-l border-white/25 bg-accent px-2 py-2 text-white transition active:scale-95 disabled:opacity-40"
+          >
+            <ClockIcon className="size-4" />
+          </button>
+          {scheduleOpen && (
+            <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-surface-2 p-3 shadow-lg">
+              <p className="mb-2 text-sm font-medium text-fg">Send later</p>
+              <input
+                type="datetime-local"
+                value={scheduleAt}
+                min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
+                onChange={(e) => setScheduleAt(e.target.value)}
+                className="w-full rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none"
+              />
+              <div className="mt-3 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setScheduleOpen(false)}
+                  className="rounded-full px-3 py-1.5 text-sm text-faint active:bg-surface-3"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ms = new Date(scheduleAt).getTime();
+                    if (!Number.isFinite(ms) || ms <= Date.now()) {
+                      setError('Pick a time in the future.');
+                      return;
+                    }
+                    setScheduleOpen(false);
+                    void send(ms);
+                  }}
+                  className="rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-white active:scale-95"
+                >
+                  Schedule
+                </button>
+              </div>
+            </div>
           )}
-          Send
-        </button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">

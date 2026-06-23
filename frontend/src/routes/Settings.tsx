@@ -769,6 +769,18 @@ export function Settings() {
             Composing
           </p>
           <div className="border-y border-border">
+            <SelectRow
+              label="Undo send"
+              hint="Hold a sent message this long (cancelable) before it goes out. The send commits on the server even if you close the app."
+              prefKey="undoSendSeconds"
+              options={[
+                { value: 0, label: 'Off' },
+                { value: 5, label: '5s' },
+                { value: 10, label: '10s' },
+                { value: 20, label: '20s' },
+                { value: 30, label: '30s' },
+              ]}
+            />
             {(accounts?.length ?? 0) > 1 && (
               <SelectRow
                 label="Default account"

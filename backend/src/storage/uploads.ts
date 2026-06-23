@@ -38,12 +38,17 @@ export async function deleteUpload(uploadId: string): Promise<void> {
   }
 }
 
-/** Drop abandoned staged uploads. Called opportunistically on boot. */
-export async function sweepStaleUploads(): Promise<void> {
+/**
+ * Drop abandoned staged uploads. Called opportunistically on boot. `keep` holds upload ids
+ * still referenced by a queued send (scheduled "send later") so the sweep doesn't strip a
+ * future send's attachments just because the staged file has aged past the cutoff.
+ */
+export async function sweepStaleUploads(keep: Set<string> = new Set()): Promise<void> {
   try {
     const cutoff = Date.now() - MAX_AGE_MS;
     const names = await readdir(env.uploadsDir);
     for (const name of names) {
+      if (keep.has(name)) continue;
       const path = join(env.uploadsDir, name);
       try {
         if (statSync(path).mtimeMs < cutoff) await unlink(path);

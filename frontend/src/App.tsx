@@ -17,6 +17,7 @@ import { Contacts } from './routes/Contacts';
 import { ContactDetail } from './routes/ContactDetail';
 import { Cleanup } from './routes/Cleanup';
 import { CleanupMessages } from './routes/CleanupMessages';
+import { Outbox } from './routes/Outbox';
 
 export function App() {
   const { authed, ready } = useAuth();
@@ -67,6 +68,7 @@ export function App() {
         <Route path="/search" element={<Search />} />
         <Route path="/cleanup" element={<Cleanup />} />
         <Route path="/cleanup/messages" element={<CleanupMessages />} />
+        <Route path="/outbox" element={<Outbox />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/contacts/:uid" element={<ContactDetail />} />

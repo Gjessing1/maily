@@ -10,6 +10,7 @@ import { setPref, usePrefs, type Theme } from '../state/prefs';
 import {
   ArchiveIcon,
   ChevronDownIcon,
+  ClockIcon,
   DraftIcon,
   FolderIcon,
   InboxIcon,
@@ -414,6 +415,14 @@ export function FolderDrawer({
           >
             <SparklesIcon className="size-5 opacity-70" />
             Cleanup
+          </Link>
+          <Link
+            to="/outbox"
+            onClick={onClose}
+            className="flex items-center gap-3 px-4 py-3 text-[15px] text-fg active:bg-surface-2"
+          >
+            <ClockIcon className="size-5 opacity-70" />
+            Outbox
           </Link>
           <Link
             to="/settings"

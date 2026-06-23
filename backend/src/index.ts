@@ -21,7 +21,7 @@ import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 import { startCleanupCache } from './cleanup/cache.js';
-import { startOutbox } from './outbox/runner.js';
+import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
 
 const log = createLogger('maily');
 
@@ -68,8 +68,9 @@ async function main(): Promise<void> {
   await app.listen({ host: '0.0.0.0', port: env.port });
   log.info(`HTTP + Socket.io listening on :${env.port}`);
 
-  // Clear abandoned composer uploads left from previous runs.
-  void sweepStaleUploads();
+  // Clear abandoned composer uploads left from previous runs — but keep any still referenced
+  // by a queued send (a scheduled "send later" can outlive the staging cutoff).
+  void sweepStaleUploads(pendingSendUploadIds());
 
   // Keep the contacts cache fresh from the Radicale addressbook (no-op if unset).
   startContactsSync();

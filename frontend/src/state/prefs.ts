@@ -98,6 +98,12 @@ export interface Prefs {
   trustedImageDomains: string[];
   /** Cleanup Dashboard aggressiveness profile (ROADMAP Phase 6b.2). */
   cleanupPreset: CleanupPreset;
+  /**
+   * Undo-send window in seconds: how long a send is held in the server outbox (cancelable)
+   * before it actually goes out. `0` disables the hold (send immediately). The backend reads
+   * this same value from the synced prefs blob when queuing a send.
+   */
+  undoSendSeconds: number;
 }
 
 const DEFAULTS: Prefs = {
@@ -121,6 +127,7 @@ const DEFAULTS: Prefs = {
   collapseAccountsByDefault: false,
   trustedImageDomains: [],
   cleanupPreset: 'balanced',
+  undoSendSeconds: 10,
 };
 
 const KEY = 'maily.prefs';

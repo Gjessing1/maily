@@ -354,6 +354,32 @@ export function startOutbox(): void {
   if (typeof timer.unref === 'function') timer.unref();
 }
 
+/**
+ * Upload ids still referenced by a queued/in-flight send. The staged-uploads sweep must keep
+ * these so a scheduled "send later" doesn't lose its attachments before it fires (the sweep
+ * otherwise drops files older than 24h, which a far-future schedule would trip).
+ */
+export function pendingSendUploadIds(): Set<string> {
+  const ids = new Set<string>();
+  const rows = db
+    .select({ payload: outbox.payload })
+    .from(outbox)
+    .where(
+      and(eq(outbox.kind, 'send'), or(eq(outbox.status, 'pending'), eq(outbox.status, 'sending'))),
+    )
+    .all();
+  for (const r of rows) {
+    if (!r.payload) continue;
+    try {
+      const p = JSON.parse(r.payload) as SendMessageRequest;
+      for (const u of p.uploads ?? []) ids.add(u.uploadId);
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return ids;
+}
+
 /** Count of pending send rows — small helper for tests/diagnostics. */
 export function pendingSendCount(): number {
   return (
