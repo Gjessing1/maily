@@ -56,6 +56,11 @@ export function backfillSourceBytes(): BackfillResult {
 
   let filled = 0;
   let missing = 0;
+  // Stat every `.eml` first (filesystem reads, no DB writes), then flush all updates in a
+  // single transaction. Per-row autocommit means one fsync per row, which on WAL + slow
+  // storage made a 10k+ row archive take minutes and blocked boot; one transaction = one
+  // fsync for the whole pass.
+  const sized: Array<{ id: string; size: number }> = [];
   for (const { id, sourcePath } of rows) {
     let size: number;
     try {
@@ -67,8 +72,13 @@ export function backfillSourceBytes(): BackfillResult {
       missing += 1;
       log.warn(`source missing for ${id}: ${sourcePath} — recording 0 bytes`);
     }
-    db.update(messages).set({ sourceBytes: size }).where(eq(messages.id, id)).run();
+    sized.push({ id, size });
   }
+  db.transaction((tx) => {
+    for (const { id, size } of sized) {
+      tx.update(messages).set({ sourceBytes: size }).where(eq(messages.id, id)).run();
+    }
+  });
 
   log.info(`source_bytes backfill — filled ${filled}, ${missing} missing (recorded 0)`);
   return { pending: rows.length, filled, missing };

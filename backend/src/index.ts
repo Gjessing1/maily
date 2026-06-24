@@ -58,12 +58,6 @@ async function main(): Promise<void> {
   runMigrations();
   reportBoot();
 
-  // Self-healing storage metric: fill source_bytes for any archived row left NULL (rows
-  // archived before the column existed) or zeroed by a buggy write, so the cleanup byte
-  // estimate and the detach size preview reflect the true on-disk `.eml` cost. A no-op
-  // once every archived `.eml` has been measured (runs before the cleanup cache warms).
-  backfillSourceBytes();
-
   // Warm the sender-name enrichment map from any contacts already cached on disk.
   reloadContactCache();
 
@@ -74,6 +68,19 @@ async function main(): Promise<void> {
   wirePushNotifications();
   await app.listen({ host: '0.0.0.0', port: env.port });
   log.info(`HTTP + Socket.io listening on :${env.port}`);
+
+  // Self-healing storage metric: fill source_bytes for any archived row left NULL (rows
+  // archived before the column existed) or zeroed by a buggy write, so the cleanup byte
+  // estimate and the detach size preview reflect the true on-disk `.eml` cost. A no-op once
+  // every archived `.eml` has been measured. Deferred to *after* listen and off the listen
+  // path (setImmediate) so a large archive can never gate the HTTP server coming up.
+  setImmediate(() => {
+    try {
+      backfillSourceBytes();
+    } catch (err) {
+      log.error('source_bytes backfill failed (non-fatal):', err);
+    }
+  });
 
   // Clear abandoned composer uploads left from previous runs — but keep any still referenced
   // by a queued send (a scheduled "send later" can outlive the staging cutoff).
