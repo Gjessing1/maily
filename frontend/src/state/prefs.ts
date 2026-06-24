@@ -99,6 +99,12 @@ export interface Prefs {
   /** Cleanup Dashboard aggressiveness profile (ROADMAP Phase 6b.2). */
   cleanupPreset: CleanupPreset;
   /**
+   * Hrefs of address books collapsed (hidden) in the Contacts manager. A view-only
+   * preference — it never affects which books feed composer autocomplete (that's the
+   * server-side "active" set); it only hides a book's section in the manager list.
+   */
+  hiddenContactBooks: string[];
+  /**
    * Undo-send window in seconds: how long a send is held in the server outbox (cancelable)
    * before it actually goes out. `0` disables the hold (send immediately). The backend reads
    * this same value from the synced prefs blob when queuing a send.
@@ -127,6 +133,7 @@ const DEFAULTS: Prefs = {
   collapseAccountsByDefault: false,
   trustedImageDomains: [],
   cleanupPreset: 'balanced',
+  hiddenContactBooks: [],
   undoSendSeconds: 10,
 };
 

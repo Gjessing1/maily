@@ -10,6 +10,7 @@ import { sql } from 'drizzle-orm';
 import type { ContactCardDto, ContactDto } from '@maily/shared';
 import { db, sqlite } from '../db/client.js';
 import { contacts } from '../db/schema.js';
+import { effectiveActive } from './addressbooks.js';
 import { buildVCard, parseCardDetail } from './vcard.js';
 
 /** A parsed contact ready to persist (one row per email). */
@@ -258,18 +259,30 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-/** Autocomplete: contacts whose name or email contains `q` (small table → LIKE is fine). */
+/**
+ * Autocomplete: contacts whose name or email contains `q` (small table → LIKE is fine).
+ * Scoped to the **active** address books — the cache holds every book for the manager,
+ * but the composer only suggests from the books the user has marked active. Legacy rows
+ * with no book tag (pre multi-book) are treated as active so they keep autocompleting.
+ */
 export function searchContacts(q: string, limit: number): ContactDto[] {
   const term = q.trim();
   if (!term) return [];
   const like = `%${escapeLike(term)}%`;
+  const active = new Set(effectiveActive());
   return db
-    .select({ name: contacts.name, email: contacts.email })
+    .select({
+      name: contacts.name,
+      email: contacts.email,
+      addressbookHref: contacts.addressbookHref,
+    })
     .from(contacts)
     .where(
       sql`(${contacts.email} LIKE ${like} ESCAPE '\\' OR ${contacts.name} LIKE ${like} ESCAPE '\\')`,
     )
     .orderBy(contacts.name)
-    .limit(limit)
-    .all();
+    .all()
+    .filter((r) => !r.addressbookHref || active.has(r.addressbookHref))
+    .slice(0, limit)
+    .map(({ name, email }) => ({ name, email }));
 }

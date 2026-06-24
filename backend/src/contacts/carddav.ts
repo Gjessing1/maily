@@ -231,10 +231,16 @@ export async function ensureDiscovered(): Promise<void> {
 }
 
 /**
- * Discover the address books, then fetch + parse every card from the **active** ones
- * and replace the local contacts cache. The cache therefore mirrors exactly the
- * books in use, so toggling a book active/inactive (then re-syncing) adds/removes its
- * contacts with no per-query filtering.
+ * Discover the address books, then fetch + parse **every** book's cards and replace
+ * the local contacts cache, tagging each row with its owning book. The cache mirrors
+ * the whole server so the Contacts manager can show and group all books; the
+ * compose/autocomplete path (`searchContacts`) narrows to the *active* books at query
+ * time, so toggling a book active only affects what the composer suggests, not what
+ * the manager can browse.
+ *
+ * Inactive books are fetched first and active books last, so on the rare email that
+ * lives in two books the active card wins the dedup (`replaceContacts` keeps the last
+ * write) — keeping the composer's active-only view correct.
  */
 export async function syncContacts(): Promise<void> {
   const cfg = env.carddav();
@@ -244,15 +250,16 @@ export async function syncContacts(): Promise<void> {
   setDiscovered(books);
 
   const active = new Set(effectiveActive());
-  const activeBooks = books.filter((b) => active.has(b.href));
+  const ordered = [
+    ...books.filter((b) => !active.has(b.href)),
+    ...books.filter((b) => active.has(b.href)),
+  ];
 
   const parsed: ParsedContact[] = [];
-  for (const book of activeBooks) parsed.push(...(await fetchBook(cfg, book)));
+  for (const book of ordered) parsed.push(...(await fetchBook(cfg, book)));
 
   const count = replaceContacts(parsed);
-  log.info(
-    `synced ${count} contact address(es) from ${activeBooks.length}/${books.length} book(s)`,
-  );
+  log.info(`synced ${count} contact address(es) from ${books.length} book(s)`);
 }
 
 /** Start the contacts sync loop: once on boot, then on the configured interval. */
