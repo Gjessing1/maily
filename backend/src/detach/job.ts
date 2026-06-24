@@ -78,13 +78,21 @@ function hasLocalSource(sourcePath: string | null): sourcePath is string {
   return sourcePath !== null && existsSync(sourcePath);
 }
 
+/** Upper bound (exclusive, epoch ms) implied by the request, or undefined for an open end. */
 function beforeMsFor(req: DetachRequest): number | undefined {
-  return req.scope === 'cutoff' ? req.cutoffMs : undefined;
+  if (req.scope === 'cutoff') return req.cutoffMs;
+  if (req.scope === 'range') return req.toMs;
+  return undefined;
+}
+
+/** Lower bound (inclusive, epoch ms) implied by the request, or undefined for an open start. */
+function afterMsFor(req: DetachRequest): number | undefined {
+  return req.scope === 'range' ? req.fromMs : undefined;
 }
 
 /** Dry-run: what a real run with this request would do. No mutation, no IMAP. */
 export function previewDetach(req: DetachRequest): DetachPreviewDto {
-  const candidates = listDetachCandidates(req.accountId, beforeMsFor(req));
+  const candidates = listDetachCandidates(req.accountId, beforeMsFor(req), afterMsFor(req));
   const safe = candidates.filter((c) => hasLocalSource(c.sourcePath));
   const unsafe = candidates.filter((c) => !hasLocalSource(c.sourcePath));
 
@@ -104,6 +112,8 @@ export function previewDetach(req: DetachRequest): DetachPreviewDto {
     accountId: req.accountId,
     scope: req.scope,
     cutoffMs: req.cutoffMs,
+    fromMs: req.fromMs,
+    toMs: req.toMs,
     total: candidates.length,
     safe: safe.length,
     unsafe: unsafe.length,
@@ -127,13 +137,15 @@ export function startDetach(req: DetachRequest): DetachStatusDto {
   if (job.state === 'running') throw new DetachError('a detach run is already in progress');
   if (req.scope === 'cutoff' && !req.cutoffMs)
     throw new DetachError('cutoff scope needs a cutoffMs');
+  if (req.scope === 'range' && !req.fromMs && !req.toMs)
+    throw new DetachError('range scope needs a fromMs and/or toMs');
 
   const engine = getEngine(req.accountId);
   if (!engine) throw new DetachError(`account ${req.accountId} is not ready`);
   const trash = folderByRole(req.accountId, 'trash');
   if (!trash) throw new DetachError('account has no Trash folder to move messages into');
 
-  const candidates = listDetachCandidates(req.accountId, beforeMsFor(req));
+  const candidates = listDetachCandidates(req.accountId, beforeMsFor(req), afterMsFor(req));
   const safe = candidates.filter((c) => hasLocalSource(c.sourcePath));
   const unsafe = candidates.length - safe.length;
 

@@ -12,12 +12,16 @@ function parseRequest(body: unknown): DetachRequest | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
   if (typeof b.accountId !== 'string') return null;
-  if (b.scope !== 'all' && b.scope !== 'cutoff') return null;
+  if (b.scope !== 'all' && b.scope !== 'cutoff' && b.scope !== 'range') return null;
   if (b.scope === 'cutoff' && typeof b.cutoffMs !== 'number') return null;
+  if (b.scope === 'range' && typeof b.fromMs !== 'number' && typeof b.toMs !== 'number')
+    return null;
   return {
     accountId: b.accountId,
     scope: b.scope,
     cutoffMs: typeof b.cutoffMs === 'number' ? b.cutoffMs : undefined,
+    fromMs: typeof b.fromMs === 'number' ? b.fromMs : undefined,
+    toMs: typeof b.toMs === 'number' ? b.toMs : undefined,
   };
 }
 

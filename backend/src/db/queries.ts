@@ -8,6 +8,7 @@ import {
   desc,
   eq,
   getTableColumns,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -281,7 +282,11 @@ export interface DetachCandidate {
  * scope). Newest-first. The job partitions these into safe (local `.eml` present) vs
  * unsafe (no local source — never deleted from the server) before touching anything.
  */
-export function listDetachCandidates(accountId: string, beforeMs?: number): DetachCandidate[] {
+export function listDetachCandidates(
+  accountId: string,
+  beforeMs?: number,
+  afterMs?: number,
+): DetachCandidate[] {
   return db
     .select({
       id: messages.id,
@@ -297,6 +302,7 @@ export function listDetachCandidates(accountId: string, beforeMs?: number): Deta
         isNull(messages.deletedAt),
         eq(messages.localOnly, false),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+        afterMs ? gte(messages.receivedAt, new Date(afterMs)) : undefined,
       ),
     )
     .orderBy(desc(messages.receivedAt))

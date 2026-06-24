@@ -113,3 +113,34 @@ test('cutoff scope only counts mail received before the cutoff', () => {
   assert.equal(p.total, 1);
   assert.equal(p.safe, 1);
 });
+
+test('range scope counts only mail within [fromMs, toMs)', () => {
+  const accountId = seedAccount();
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2024-05-31T12:00:00Z') }); // before
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2024-06-15T12:00:00Z') }); // inside
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2024-07-10T12:00:00Z') }); // after (== toMs, excluded)
+
+  const p = job.previewDetach({
+    accountId,
+    scope: 'range',
+    fromMs: new Date('2024-06-01T00:00:00Z').getTime(),
+    toMs: new Date('2024-07-10T12:00:00Z').getTime(),
+  });
+  assert.equal(p.total, 1);
+  assert.equal(p.safe, 1);
+});
+
+test('range scope with only fromMs leaves the end open', () => {
+  const accountId = seedAccount();
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2024-05-31T12:00:00Z') }); // before from
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2024-06-15T12:00:00Z') }); // after from
+  seedMessage(accountId, { withFile: true, receivedAt: new Date('2027-01-01T00:00:00Z') }); // far future, still in
+
+  const p = job.previewDetach({
+    accountId,
+    scope: 'range',
+    fromMs: new Date('2024-06-01T00:00:00Z').getTime(),
+  });
+  assert.equal(p.total, 2);
+  assert.equal(p.safe, 2);
+});

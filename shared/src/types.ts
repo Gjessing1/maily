@@ -553,19 +553,33 @@ export interface QueuedSendResult {
 
 // --- Detach to local (delete from the provider, keep the full copy on this server) ---
 
-/** Which mail a detach run targets. `all` = every live message; `cutoff` = older than `cutoffMs`. */
+/** Which mail a detach run targets. */
+export type DetachScope =
+  /** Every live message on the account. */
+  | 'all'
+  /** Older than `cutoffMs` (received strictly before it). */
+  | 'cutoff'
+  /** Received within [`fromMs`, `toMs`) — a single day or an interval; either bound may be omitted to leave that side open. */
+  | 'range';
+
 export interface DetachRequest {
   accountId: string;
-  scope: 'all' | 'cutoff';
+  scope: DetachScope;
   /** Epoch ms; required when scope === 'cutoff' — only mail received before this is detached. */
   cutoffMs?: number;
+  /** Epoch ms inclusive lower bound (scope === 'range'); omit to leave the start open. */
+  fromMs?: number;
+  /** Epoch ms exclusive upper bound (scope === 'range'); omit to leave the end open. */
+  toMs?: number;
 }
 
 /** Dry-run preview: what a real run with the same request would do. Mutates nothing. */
 export interface DetachPreviewDto {
   accountId: string;
-  scope: 'all' | 'cutoff';
+  scope: DetachScope;
   cutoffMs?: number;
+  fromMs?: number;
+  toMs?: number;
   /** Candidates in scope (live, not already detached). */
   total: number;
   /** Have a local `.eml` on disk → safe to delete from the server. */

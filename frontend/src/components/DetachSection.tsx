@@ -15,6 +15,12 @@ function humanBytes(n: number): string {
 const fmtDate = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : '—';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Start of a `yyyy-mm-dd` day, epoch ms (UTC midnight, matching `<input type=date>`). */
+const dayStartMs = (d: string): number => new Date(d).getTime();
+/** End of a `yyyy-mm-dd` day, exclusive — next midnight — so the whole day is included. */
+const dayEndMs = (d: string): number => dayStartMs(d) + DAY_MS;
+
 /**
  * Settings panel for "detach to local": delete an account's mail from the provider while
  * keeping the full copy on this server. Always preview (dry-run) before the destructive
@@ -24,8 +30,10 @@ const fmtDate = (iso: string | null): string =>
  */
 export function DetachSection({ accounts }: { accounts: AccountDto[] }) {
   const [accountId, setAccountId] = useState<string>('');
-  const [scope, setScope] = useState<'all' | 'cutoff'>('all');
+  const [scope, setScope] = useState<'all' | 'cutoff' | 'range'>('all');
   const [cutoff, setCutoff] = useState<string>(''); // yyyy-mm-dd
+  const [from, setFrom] = useState<string>(''); // yyyy-mm-dd, inclusive
+  const [to, setTo] = useState<string>(''); // yyyy-mm-dd, inclusive day
   const [preview, setPreview] = useState<DetachPreviewDto | null>(null);
   const [status, setStatus] = useState<DetachStatusDto | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,7 +80,16 @@ export function DetachSection({ accounts }: { accounts: AccountDto[] }) {
   const buildRequest = (): DetachRequest | null => {
     if (scope === 'cutoff') {
       if (!cutoff) return null;
-      return { accountId, scope, cutoffMs: new Date(cutoff).getTime() };
+      return { accountId, scope, cutoffMs: dayStartMs(cutoff) };
+    }
+    if (scope === 'range') {
+      if (!from && !to) return null;
+      return {
+        accountId,
+        scope,
+        fromMs: from ? dayStartMs(from) : undefined,
+        toMs: to ? dayEndMs(to) : undefined,
+      };
     }
     return { accountId, scope };
   };
@@ -80,7 +97,7 @@ export function DetachSection({ accounts }: { accounts: AccountDto[] }) {
   const runDryRun = async (): Promise<void> => {
     const req = buildRequest();
     if (!req) {
-      setError('Pick a cutoff date first.');
+      setError(scope === 'range' ? 'Pick a from and/or to date.' : 'Pick a cutoff date first.');
       return;
     }
     setBusy(true);
@@ -157,6 +174,13 @@ export function DetachSection({ accounts }: { accounts: AccountDto[] }) {
             >
               Older than…
             </button>
+            <button
+              onClick={() => setScope('range')}
+              disabled={running}
+              className={`rounded px-2 py-1 ${scope === 'range' ? 'bg-accent text-white' : 'bg-surface-2 text-fg'}`}
+            >
+              Date range
+            </button>
           </div>
         </div>
         {scope === 'cutoff' && (
@@ -170,6 +194,36 @@ export function DetachSection({ accounts }: { accounts: AccountDto[] }) {
               className="rounded bg-surface-2 px-2 py-1 text-sm"
             />
           </label>
+        )}
+        {scope === 'range' && (
+          <>
+            <label className="flex items-center justify-between gap-4 px-4 py-3">
+              <span className="text-[15px]">From</span>
+              <input
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+                disabled={running}
+                className="rounded bg-surface-2 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-4 px-4 py-3">
+              <span className="text-[15px]">To</span>
+              <input
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+                disabled={running}
+                className="rounded bg-surface-2 px-2 py-1 text-sm"
+              />
+            </label>
+            <p className="px-4 pb-1 text-xs text-faint">
+              Both dates are inclusive. Set the same day in both to detach a single date; leave one
+              blank for an open-ended range.
+            </p>
+          </>
         )}
 
         <button
