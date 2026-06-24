@@ -15,11 +15,16 @@ function humanBytes(n: number): string {
 const fmtDate = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : '—';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-/** Start of a `yyyy-mm-dd` day, epoch ms (UTC midnight, matching `<input type=date>`). */
-const dayStartMs = (d: string): number => new Date(d).getTime();
-/** End of a `yyyy-mm-dd` day, exclusive — next midnight — so the whole day is included. */
-const dayEndMs = (d: string): number => dayStartMs(d) + DAY_MS;
+/** Start of a `yyyy-mm-dd` day in the browser's local timezone, epoch ms. */
+const dayStartMs = (d: string): number => {
+  const [y, m, day] = d.split('-').map(Number);
+  return new Date(y, m - 1, day).getTime();
+};
+/** End of a `yyyy-mm-dd` day, exclusive — next local midnight (DST-safe) — so the whole day is included. */
+const dayEndMs = (d: string): number => {
+  const [y, m, day] = d.split('-').map(Number);
+  return new Date(y, m - 1, day + 1).getTime();
+};
 
 /**
  * Settings panel for "detach to local": delete an account's mail from the provider while
