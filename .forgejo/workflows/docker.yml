@@ -1,15 +1,18 @@
 # Forgejo Actions equivalent of .github/workflows/docker.yml.
-# Builds the backend image and pushes it to Forgejo's built-in container
-# registry at git.gjessing.io. The deployment host then `docker compose pull`s
+# Builds the backend image, pushes it to Forgejo's built-in container registry,
+# then redeploys on the host. The deployment host pulls
 # git.gjessing.io/gjessing1/maily-backend and restarts.
 #
 # Notes specific to this runner (host-Docker-socket model):
 # - `runs-on: docker` -> catthehacker/ubuntu:act-latest, which has the docker CLI.
-# - docker build/push run against the HOST daemon, which can only reach the
-#   registry by its public name, so we use git.gjessing.io (HTTPS via Caddy),
-#   not the internal forgejo:3000.
-# - secrets.GITHUB_TOKEN is injected automatically by Forgejo; it can push
-#   packages for this repo's owner, so no credentials are stored anywhere.
+# - docker build/push run against the HOST daemon via the mounted socket.
+# - Pushes go to localhost:3000 (Forgejo's host-published HTTP port) rather than
+#   git.gjessing.io, because Caddy 413s the large layer uploads this image
+#   produces (the better-sqlite3 native build). Registry storage is
+#   hostname-agnostic, so the image is still *pulled* as git.gjessing.io/... as
+#   usual. This mirrors the proven nodemap workflow.
+# - Auth is a PAT with write:package stored as the REGISTRY_TOKEN repo secret; the
+#   automatic GITHUB_TOKEN only gets package *read* on this instance.
 name: docker
 
 on:
@@ -19,7 +22,10 @@ on:
   workflow_dispatch:
 
 env:
+  # Public name — what deployments pull (HTTPS via Caddy).
   IMAGE: git.gjessing.io/gjessing1/maily-backend
+  # Push name — straight to Forgejo's host-published port, avoiding Caddy.
+  PUSH_IMAGE: localhost:3000/gjessing1/maily-backend
 
 jobs:
   # Single job: the quality gate (format, lint, types, tests) now lives INSIDE the
@@ -35,27 +41,38 @@ jobs:
     runs-on: docker
     permissions:
       contents: read
-      packages: write # not sufficient alone on this instance; push uses REGISTRY_TOKEN (see login step)
+      packages: write # not sufficient alone on this instance; push uses REGISTRY_TOKEN (see auth step)
     env:
       DOCKER_BUILDKIT: '1' # required for the Dockerfile's RUN --mount=type=cache npm cache
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to the Forgejo registry
-        # The automatic GITHUB_TOKEN only gets package *read* on this instance, so
-        # blob uploads 401 even with `packages: write`. Use a PAT (write:package)
-        # stored as the REGISTRY_TOKEN repo secret instead.
-        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.gjessing.io -u gjessing1 --password-stdin
+      # Written directly instead of `docker login`: login pings the registry from the job
+      # container (where localhost:3000 is unreachable), but the push runs on the host daemon
+      # (where it works). The automatic GITHUB_TOKEN only gets package *read* here, so a PAT
+      # (write:package) stored as the REGISTRY_TOKEN repo secret is required for blob uploads.
+      - name: Registry auth
+        run: |
+          mkdir -p ~/.docker
+          auth=$(printf 'gjessing1:%s' "${{ secrets.REGISTRY_TOKEN }}" | base64 -w0)
+          printf '{"auths":{"localhost:3000":{"auth":"%s"}}}' "$auth" > ~/.docker/config.json
 
-      - name: Build and push
-        # --progress=plain so the verbose npm + better-sqlite3 compile output is
-        # readable in the run log (the default TTY UI collapses it). The build itself
-        # runs the quality gate; a failure here means nothing is pushed.
+      - name: Build image
+        # --progress=plain so the verbose npm + better-sqlite3 compile output is readable in
+        # the run log (the default TTY UI collapses it). The build runs the quality gate; a
+        # failure here means nothing is pushed. Tagged with both the public pull name and the
+        # localhost push name so the layers are shared (one build, two tag sets).
         run: |
           SHA_TAG="${GITHUB_SHA::7}"
-          docker build --progress=plain -f backend/Dockerfile -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" .
-          docker push "$IMAGE:latest"
-          docker push "$IMAGE:$SHA_TAG"
+          docker build --progress=plain -f backend/Dockerfile \
+            -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" \
+            -t "$PUSH_IMAGE:latest" -t "$PUSH_IMAGE:$SHA_TAG" .
+
+      - name: Push image
+        run: |
+          SHA_TAG="${GITHUB_SHA::7}"
+          docker push "$PUSH_IMAGE:latest"
+          docker push "$PUSH_IMAGE:$SHA_TAG"
 
   # Redeploy on the host after a successful main build. Runs against the host
   # daemon via the mounted Docker socket; the deploy project (compose file +
