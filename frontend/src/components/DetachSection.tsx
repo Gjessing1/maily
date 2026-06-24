@@ -17,12 +17,12 @@ const fmtDate = (iso: string | null): string =>
 
 /** Start of a `yyyy-mm-dd` day in the browser's local timezone, epoch ms. */
 const dayStartMs = (d: string): number => {
-  const [y, m, day] = d.split('-').map(Number);
+  const [y, m, day] = d.split('-').map(Number) as [number, number, number];
   return new Date(y, m - 1, day).getTime();
 };
 /** End of a `yyyy-mm-dd` day, exclusive — next local midnight (DST-safe) — so the whole day is included. */
 const dayEndMs = (d: string): number => {
-  const [y, m, day] = d.split('-').map(Number);
+  const [y, m, day] = d.split('-').map(Number) as [number, number, number];
   return new Date(y, m - 1, day + 1).getTime();
 };
 
