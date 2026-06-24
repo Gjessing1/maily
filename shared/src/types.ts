@@ -57,6 +57,8 @@ export interface MessageDto {
   receivedAt: string | null;
   seen: boolean;
   flagged: boolean;
+  /** Detached to local-only: the server copy was removed; this server is its only home. */
+  localOnly: boolean;
   folderIds: string[];
   attachments: AttachmentDto[];
 }
@@ -547,4 +549,48 @@ export interface QueuedSendResult {
   outboxId: string;
   /** Epoch ms when the send will actually fire unless canceled first. */
   dueAt: number;
+}
+
+// --- Detach to local (delete from the provider, keep the full copy on this server) ---
+
+/** Which mail a detach run targets. `all` = every live message; `cutoff` = older than `cutoffMs`. */
+export interface DetachRequest {
+  accountId: string;
+  scope: 'all' | 'cutoff';
+  /** Epoch ms; required when scope === 'cutoff' — only mail received before this is detached. */
+  cutoffMs?: number;
+}
+
+/** Dry-run preview: what a real run with the same request would do. Mutates nothing. */
+export interface DetachPreviewDto {
+  accountId: string;
+  scope: 'all' | 'cutoff';
+  cutoffMs?: number;
+  /** Candidates in scope (live, not already detached). */
+  total: number;
+  /** Have a local `.eml` on disk → safe to delete from the server. */
+  safe: number;
+  /** No local source → would be SKIPPED (deleting them would lose their attachments). */
+  unsafe: number;
+  /** Estimated on-disk bytes of the safe set's archived `.eml`s. */
+  estimatedBytes: number;
+  /** ISO bounds of the safe set (null when empty). */
+  oldest: string | null;
+  newest: string | null;
+  /** A few unsafe subjects so the user can see what would be skipped. */
+  unsafeSamples: string[];
+}
+
+/** Live status of the (single, server-wide) detach job. */
+export interface DetachStatusDto {
+  state: 'idle' | 'running' | 'done' | 'error';
+  accountId: string | null;
+  total: number;
+  processed: number;
+  detached: number;
+  skippedUnsafe: number;
+  failed: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
 }

@@ -25,6 +25,7 @@ function makeMessage(overrides: Partial<MessageDto> = {}): MessageDto {
     receivedAt: '2025-06-01T00:00:00.000Z',
     seen: false,
     flagged: false,
+    localOnly: false,
     folderIds: [],
     attachments: [],
     ...overrides,

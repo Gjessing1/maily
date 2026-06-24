@@ -383,6 +383,14 @@ export function ReaderView({
               <h1 className="text-xl font-semibold leading-snug">
                 {detail.subject || '(no subject)'}
               </h1>
+              {detail.localOnly && (
+                <span
+                  className="mt-2 inline-block rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-faint"
+                  title="Stored on this server only — no longer on the mail provider"
+                >
+                  Local copy only
+                </span>
+              )}
               <div className="mt-3 flex w-full items-center gap-3">
                 <button
                   onClick={openSender}

@@ -101,6 +101,7 @@ export async function cacheBody(detail: MessageDetailDto): Promise<void> {
     receivedAt: detail.receivedAt,
     seen: detail.seen,
     flagged: detail.flagged,
+    localOnly: detail.localOnly,
     folderIds: detail.folderIds,
     attachments: detail.attachments,
     cachedAt: Date.now(),

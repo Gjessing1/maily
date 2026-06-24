@@ -81,6 +81,13 @@ export function getMessage(id: string): MessageRow | undefined {
   return db.select().from(messages).where(eq(messages.id, id)).get();
 }
 
+/** Whether a message has been detached to local-only (no server copy; inert to sync). */
+export function isMessageLocalOnly(id: string): boolean {
+  return (
+    db.select({ l: messages.localOnly }).from(messages).where(eq(messages.id, id)).get()?.l === true
+  );
+}
+
 /** Messages in a folder, newest first, keyset-paginated by receivedAt. Tombstones hidden (§13) except in trash. */
 export function listMessages(folderId: string, limit: number, beforeMs?: number): MessageRow[] {
   const where = and(
@@ -257,6 +264,43 @@ export function accountContentBytes(accountId: string): number {
     .get();
 
   return (body?.bytes ?? 0) + (atts?.bytes ?? 0);
+}
+
+/** One detach candidate: a live, not-yet-detached message + the data the job needs. */
+export interface DetachCandidate {
+  id: string;
+  sourcePath: string | null;
+  sourceBytes: number | null;
+  receivedAt: Date | null;
+  subject: string | null;
+}
+
+/**
+ * Messages eligible to be detached to local-only for an account: live (not tombstoned),
+ * not already detached, optionally only those received before `beforeMs` (the cutoff
+ * scope). Newest-first. The job partitions these into safe (local `.eml` present) vs
+ * unsafe (no local source — never deleted from the server) before touching anything.
+ */
+export function listDetachCandidates(accountId: string, beforeMs?: number): DetachCandidate[] {
+  return db
+    .select({
+      id: messages.id,
+      sourcePath: messages.sourcePath,
+      sourceBytes: messages.sourceBytes,
+      receivedAt: messages.receivedAt,
+      subject: messages.subject,
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        isNull(messages.deletedAt),
+        eq(messages.localOnly, false),
+        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.receivedAt))
+    .all();
 }
 
 export function folderIdsForMessage(messageId: string): string[] {

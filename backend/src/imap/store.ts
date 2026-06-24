@@ -12,7 +12,7 @@
  * arrival orders so out-of-order delivery is back-fillable.
  */
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, notInArray } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
@@ -127,6 +127,14 @@ function mergeOrphanReplies(accountId: string, newId: string, parsed: ParsedMess
 }
 
 /** Insert-or-update message<->folder mapping carrying the per-folder IMAP UID. */
+/** Whether a message has been detached to local-only (inert to IMAP reconciliation). */
+function isLocalOnly(messageId: string): boolean {
+  return (
+    db.select({ l: messages.localOnly }).from(messages).where(eq(messages.id, messageId)).get()
+      ?.l === true
+  );
+}
+
 function linkFolder(messageId: string, folderId: string, uid: number | null): void {
   db.insert(messageFolders)
     .values({ messageId, folderId, uid })
@@ -151,6 +159,10 @@ export function touchKnownMessage(
   flags: MessageFlags,
   folderRole: FolderRole,
 ): void {
+  // A detached (local_only) message is inert to sync: it has no live server copy we
+  // track, so a transient re-sight — e.g. when the move-to-Trash copy surfaces during a
+  // Trash reconcile — must NOT re-link it into a new folder or touch its frozen state.
+  if (isLocalOnly(messageId)) return;
   const set: Partial<typeof messages.$inferInsert> = {
     seen: flags.seen,
     flagged: flags.flagged,
@@ -246,6 +258,23 @@ export function upsertMessage(
 export function markMessageDeleted(messageId: string): void {
   withWriteRetry('markMessageDeleted', () =>
     db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, messageId)).run(),
+  );
+}
+
+/**
+ * Mark a message detached to local-only (migration 0021): its server copy has been
+ * moved to the provider Trash, so this server is now its only home. Sets `local_only`
+ * and `detached_at`; the message's folder mappings are deliberately LEFT INTACT so it
+ * keeps showing where it was (e.g. inbox), and from now on sync treats it as inert
+ * (see {@link unlinkUids}/{@link clearFolderUids}/{@link touchKnownMessage}).
+ */
+export function markMessageLocalOnly(messageId: string): void {
+  withWriteRetry('markMessageLocalOnly', () =>
+    db
+      .update(messages)
+      .set({ localOnly: true, detachedAt: new Date() })
+      .where(eq(messages.id, messageId))
+      .run(),
   );
 }
 
@@ -441,17 +470,28 @@ export function unlinkUids(folderId: string, uids: number[]): void {
   if (uids.length === 0) return;
   db.transaction(() => {
     const affected = db
-      .select({ id: messageFolders.messageId })
+      .select({ id: messageFolders.messageId, localOnly: messages.localOnly })
       .from(messageFolders)
+      .innerJoin(messages, eq(messages.id, messageFolders.messageId))
       .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
-      .all()
-      .map((r) => r.id);
+      .all();
+
+    // Detached (local_only) messages are inert: their mapping is frozen, so neither
+    // unlink nor tombstone them when their now-stale server UID disappears.
+    const dropIds = affected.filter((r) => !r.localOnly).map((r) => r.id);
+    if (dropIds.length === 0) return;
 
     db.delete(messageFolders)
-      .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
+      .where(
+        and(
+          eq(messageFolders.folderId, folderId),
+          inArray(messageFolders.uid, uids),
+          inArray(messageFolders.messageId, dropIds),
+        ),
+      )
       .run();
 
-    for (const id of affected) {
+    for (const id of dropIds) {
       const stillMapped = db
         .select({ folderId: messageFolders.folderId })
         .from(messageFolders)
@@ -463,7 +503,26 @@ export function unlinkUids(folderId: string, uids: number[]): void {
   });
 }
 
-/** Drop ALL UID mappings for a folder — used when UIDVALIDITY changes (UIDs invalidated). */
+/**
+ * Drop UID mappings for a folder — used when UIDVALIDITY changes (UIDs invalidated).
+ * Detached (local_only) messages are preserved: their mapping is frozen and no longer
+ * tracks a live server UID, so a UIDVALIDITY rebuild must not orphan them.
+ */
 export function clearFolderUids(folderId: string): void {
-  db.delete(messageFolders).where(eq(messageFolders.folderId, folderId)).run();
+  const localOnlyIds = db
+    .select({ id: messageFolders.messageId })
+    .from(messageFolders)
+    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
+    .where(and(eq(messageFolders.folderId, folderId), eq(messages.localOnly, true)))
+    .all()
+    .map((r) => r.id);
+
+  db.delete(messageFolders)
+    .where(
+      and(
+        eq(messageFolders.folderId, folderId),
+        localOnlyIds.length ? notInArray(messageFolders.messageId, localOnlyIds) : undefined,
+      ),
+    )
+    .run();
 }

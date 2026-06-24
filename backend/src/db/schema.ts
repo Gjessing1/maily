@@ -142,6 +142,17 @@ export const messages = sqliteTable(
      * keyword safety gate). Purely a cleanup exclusion — normal views/search unaffected.
      */
     cleanupKeep: integer('cleanup_keep', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * "Detached to local" flag (migration 0021): the message's server copy has been
+     * removed (moved to the provider Trash) and this server is now its only home. A
+     * `local_only` message is INERT to IMAP reconciliation — sync never adds, removes,
+     * or tombstones its folder mappings (store.ts `unlinkUids`/`clearFolderUids`/
+     * `linkFolder` all skip it) — so it stays a normal member of whatever folder it was
+     * in (e.g. inbox), served entirely from the local `.eml`. New mail is unaffected.
+     */
+    localOnly: integer('local_only', { mode: 'boolean' }).notNull().default(false),
+    /** When the message was detached to local-only (audit). Null ⇒ never detached. */
+    detachedAt: integer('detached_at', { mode: 'timestamp_ms' }),
     createdAt: now(),
   },
   (t) => [

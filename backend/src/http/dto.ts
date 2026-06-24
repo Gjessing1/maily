@@ -73,6 +73,7 @@ export function toMessageDto(
     receivedAt: iso(m.receivedAt),
     seen: m.seen,
     flagged: m.flagged,
+    localOnly: m.localOnly,
     folderIds,
     attachments: attachmentRows.map(toAttachmentDto),
   };

@@ -15,7 +15,12 @@ import { and, asc, eq, lte, or, isNull, count } from 'drizzle-orm';
 import type { SendMessageRequest, OutboxEntry, OutboxKind } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { outbox } from '../db/schema.js';
-import { folderByRole, uidLocationForMessage, uidLocationInFolder } from '../db/queries.js';
+import {
+  folderByRole,
+  isMessageLocalOnly,
+  uidLocationForMessage,
+  uidLocationInFolder,
+} from '../db/queries.js';
 import { restoreMessageDeleted } from '../imap/store.js';
 import { moveToFolderOnServer } from '../imap/move.js';
 import { getEngine } from '../imap/registry.js';
@@ -286,6 +291,14 @@ async function execute(row: DueRow): Promise<void> {
   }
 
   if (!row.messageId) {
+    markDone(row.id);
+    return;
+  }
+
+  // A detached (local_only) message has no server copy to move — its UID is stale, so an
+  // IMAP MOVE would fail and retry forever. Delete/archive of such a message is a pure
+  // local action: the route already applied the local tombstone/relink, so just finish.
+  if (isMessageLocalOnly(row.messageId)) {
     markDone(row.id);
     return;
   }

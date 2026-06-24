@@ -21,6 +21,9 @@ import type {
   ContactCardInput,
   ContactDto,
   ContactImportResult,
+  DetachPreviewDto,
+  DetachRequest,
+  DetachStatusDto,
   EnrichmentStatusDto,
   EventDraftDto,
   FolderDto,
@@ -441,6 +444,21 @@ export const api = {
       }),
     /** Trash-queue progress for the "Moving N to Trash…" readout. */
     queueStatus: () => request<CleanupQueueStatusDto>('/api/cleanup/queue'),
+  },
+
+  /** Detach-to-local (delete from the provider, keep the full copy on this server). */
+  detach: {
+    status: () => request<DetachStatusDto>('/api/detach/status'),
+    dryRun: (req: DetachRequest) =>
+      request<DetachPreviewDto>('/api/detach/dry-run', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      }),
+    run: (req: DetachRequest) =>
+      request<DetachStatusDto>('/api/detach/run', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      }),
   },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),

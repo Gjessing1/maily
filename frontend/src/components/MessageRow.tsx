@@ -350,6 +350,16 @@ export function MessageRow({
               >
                 {message.subject || '(no subject)'}
               </span>
+              {/* Detached-to-local marker: this message no longer exists on the mail
+                  provider — this server is its only copy. */}
+              {message.localOnly && (
+                <span
+                  className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-faint"
+                  title="Stored on this server only — no longer on the mail provider"
+                >
+                  Local
+                </span>
+              )}
               {/* Inline flag indicator only where there's no trailing star toggle
                   (e.g. search results); the toggle already shows state otherwise. */}
               {message.flagged && !onToggleFlag && (

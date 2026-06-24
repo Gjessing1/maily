@@ -371,6 +371,64 @@ test('unlinkUids from one of two folders keeps the message alive (still mapped e
   assert.equal(row?.deletedAt, null, 'still mapped in archive ⇒ not tombstoned');
 });
 
+test('unlinkUids leaves a detached (local_only) message mapped + untombstoned', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const r = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    7,
+    makeParsed({ gmMsgId: 'gm-detached' }),
+    'inbox',
+  );
+  store.markMessageLocalOnly(r.id);
+
+  // Its server UID has vanished (deleted from the provider) — reconcile must NOT prune it.
+  store.unlinkUids(folder('inbox'), [7]);
+
+  const row = rawDb
+    .select({ deletedAt: schema.messages.deletedAt })
+    .from(schema.messages)
+    .where(eq(schema.messages.id, r.id))
+    .get();
+  assert.equal(row?.deletedAt, null, 'detached message is not tombstoned');
+  assert.deepEqual(store.knownUids(folder('inbox')), [7], 'detached mapping is preserved');
+});
+
+test('clearFolderUids preserves a detached (local_only) mapping on a UIDVALIDITY rebuild', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  const keep = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    5,
+    makeParsed({ gmMsgId: 'gm-keep' }),
+    'inbox',
+  );
+  store.upsertMessage(accountId, folder('inbox'), 6, makeParsed({ gmMsgId: 'gm-drop' }), 'inbox');
+  store.markMessageLocalOnly(keep.id);
+
+  store.clearFolderUids(folder('inbox'));
+
+  assert.deepEqual(store.knownUids(folder('inbox')), [5], 'only the detached mapping survives');
+});
+
+test('a detached (local_only) message is inert to re-sighting — not re-linked into a new folder', () => {
+  const { accountId, folder } = seedAccount(['inbox', 'trash']);
+  const parsed = makeParsed({ gmMsgId: 'gm-inert' });
+  const r = store.upsertMessage(accountId, folder('inbox'), 1, parsed, 'inbox');
+  store.markMessageLocalOnly(r.id);
+
+  // Move-to-Trash copy surfaces during a Trash reconcile: must be ignored.
+  store.upsertMessage(accountId, folder('trash'), 9, parsed, 'trash');
+
+  const mappings = rawDb
+    .select({ folderId: schema.messageFolders.folderId })
+    .from(schema.messageFolders)
+    .where(eq(schema.messageFolders.messageId, r.id))
+    .all()
+    .map((m) => m.folderId);
+  assert.deepEqual(mappings, [folder('inbox')], 'still only the frozen inbox mapping');
+});
+
 test('re-sight in a NON-trash folder clears an existing tombstone; a trash re-sight does not', () => {
   const { accountId, folder } = seedAccount(['inbox', 'trash']);
   const parsed = makeParsed({ gmMsgId: 'gm-undelete' });

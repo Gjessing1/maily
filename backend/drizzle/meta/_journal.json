@@ -148,6 +148,13 @@
       "when": 1782000000000,
       "tag": "0020_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1782500000000,
+      "tag": "0021_message_local_only",
+      "breakpoints": true
     }
   ]
 }

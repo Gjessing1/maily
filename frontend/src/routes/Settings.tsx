@@ -16,6 +16,7 @@ import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { untrustImageDomain } from '../state/trustedImages';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { DetachSection } from '../components/DetachSection';
 import { BackIcon, CloseIcon } from '../ui/icons';
 
 /** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
@@ -991,6 +992,8 @@ export function Settings() {
             server-side.
           </p>
         </section>
+
+        <DetachSection accounts={accounts ?? []} />
 
         <section className="mt-6 mb-10">
           <div className="border-y border-border">

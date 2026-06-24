@@ -21,6 +21,7 @@ function msg(over: Partial<CachedMessage> & { id: string }): CachedMessage {
     receivedAt: null,
     seen: true,
     flagged: false,
+    localOnly: false,
     folderIds: [],
     attachments: [],
     cachedAt: 0,
