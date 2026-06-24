@@ -43,20 +43,22 @@ const MS_PER_MONTH = MS_PER_YEAR / 12;
 const MB = 1024 * 1024;
 
 /**
- * Per-message byte estimate: the archived raw `.eml` size (`source_bytes`, the dominant
- * true cost — captured at archive time, ROADMAP §3.7.E) plus the parsed body (text + html)
- * and attachment sizes for any message not yet archived (null `source_bytes`). The body
- * term reads the precomputed `content_bytes` column (migration 0018) — length() over the
- * body columns inside an aggregate forces SQLite to read + decode every body, measured at
- * 15-20s per scan on a real mailbox; the NULL fallback keeps pre-0018 writers correct.
- * For an archived message the body+attachment terms double-count a small slice already
- * inside the `.eml`, but the `.eml` figure dominates and this stays a fast estimate.
+ * Per-message byte estimate. When the message is archived the raw `.eml` size
+ * (`source_bytes`, captured at archive time, ROADMAP §3.7.E) is AUTHORITATIVE: the `.eml`
+ * already contains the body AND every attachment, so it is the whole on-disk cost — adding
+ * the body/attachment terms on top double-counts (~half the headline total once the master
+ * archive sweep + lazy attachments landed: the .eml bytes plus a phantom copy of the same
+ * attachments). Only a not-yet-archived message (null/0 `source_bytes`) falls back to an
+ * estimate from the parsed body (text + html) plus attachment sizes. The body term reads
+ * the precomputed `content_bytes` column (migration 0018) — length() over the body columns
+ * inside an aggregate forces SQLite to read + decode every body, measured at 15-20s per
+ * scan on a real mailbox; the NULL fallback keeps pre-0018 writers correct.
  */
 const BYTES = sql`(
-  coalesce(m.source_bytes, 0)
-  + coalesce(m.content_bytes,
-      length(CAST(coalesce(m.body_text, '') AS BLOB)) + length(CAST(coalesce(m.body_html, '') AS BLOB)))
-  + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0)
+  coalesce(nullif(m.source_bytes, 0),
+    coalesce(m.content_bytes,
+        length(CAST(coalesce(m.body_text, '') AS BLOB)) + length(CAST(coalesce(m.body_html, '') AS BLOB)))
+    + coalesce((SELECT SUM(a.size_bytes) FROM attachments a WHERE a.message_id = m.id), 0))
 )`;
 
 interface RawGroup {

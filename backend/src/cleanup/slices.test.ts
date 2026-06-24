@@ -120,21 +120,22 @@ test('storageByDomain: groups every domain and counts attachment + body bytes', 
   assert.equal(slice.totalMessages, 1);
 });
 
-test('storageByDomain: adds the archived .eml source_bytes to the estimate', () => {
+test('storageByDomain: archived .eml source_bytes is authoritative (no double-count)', () => {
   const acct = seedAccount();
   const m = seedMessage(acct, {
     fromAddress: 'a@archived.example',
-    bodyText: 'hello world', // 11 bytes
-    sourceBytes: 5000, // on-disk .eml — the dominant true cost
+    bodyText: 'hello world', // already inside the .eml
+    sourceBytes: 5000, // on-disk .eml — contains body AND attachments
   });
   db.insert(schema.attachments).values({ messageId: m, sizeBytes: 1000 }).run();
 
   const slice = S.storageByDomain();
   const g = findGroup(slice, 'archived.example');
   assert.ok(g, 'archived.example present in storage audit');
-  // source_bytes 5000 + body 11 + attachment 1000.
-  assert.equal(g!.bytes, 6011);
-  assert.equal(slice.totalBytes, 6011);
+  // source_bytes 5000 alone — the body + attachment bytes are already inside the .eml,
+  // so adding them would double-count.
+  assert.equal(g!.bytes, 5000);
+  assert.equal(slice.totalBytes, 5000);
 });
 
 test('storageByDomain: null source_bytes contributes nothing (un-archived row)', () => {

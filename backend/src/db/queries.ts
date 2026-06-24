@@ -229,14 +229,16 @@ export function listStarred(accountId: string, limit: number, beforeMs?: number)
 }
 
 /**
- * Estimated on-disk bytes of synced content for an account: the archived raw `.eml`
- * (`source_bytes` — the dominant true cost once the master-archive sweep has run,
- * ROADMAP §3.7.E) plus the parsed body columns (subject + snippet + text/html) plus
- * the bytes of attachments actually downloaded to disk. Lazy attachments never fetched
- * occupy no space (ARCHITECTURE §4), so the local figure is far smaller than the
- * mailbox's server-side total. For an archived message the body terms double-count a
- * small slice already inside the `.eml`, but `source_bytes` dominates — same trade-off
- * as the cleanup storage metric (slices.ts). `length(cast(… as blob))` yields byte
+ * Estimated on-disk bytes of synced content for an account. When the message is archived
+ * the raw `.eml` (`source_bytes`, ROADMAP §3.7.E) is AUTHORITATIVE — it already contains
+ * the body and attachments, so it is the whole content cost and the parsed-body terms must
+ * NOT be added on top (that double-counted the body for every archived message). Only a
+ * not-yet-archived message (null/0 `source_bytes`) falls back to the parsed body columns
+ * (subject + snippet + text/html). Added separately: attachments actually downloaded to
+ * disk — those are genuine standalone files under `attachments/`, distinct from the copy
+ * inside the `.eml`. Lazy attachments never fetched occupy no extra space (ARCHITECTURE
+ * §4), so the local figure is far smaller than the mailbox's server-side total. This
+ * mirrors the cleanup storage metric (slices.ts). `length(cast(… as blob))` yields byte
  * length rather than character count. The body text/html term reads the precomputed
  * `content_bytes` column (migration 0018) — length() over the bodies inside the
  * aggregate would read + decode every body on each Settings visit.
@@ -245,12 +247,12 @@ export function accountContentBytes(accountId: string): number {
   const body = db
     .select({
       bytes: sql<number>`coalesce(sum(
-        coalesce(${messages.sourceBytes}, 0) +
-        length(cast(coalesce(${messages.subject}, '') as blob)) +
-        length(cast(coalesce(${messages.snippet}, '') as blob)) +
-        coalesce(${messages.contentBytes},
-          length(cast(coalesce(${messages.bodyText}, '') as blob)) +
-          length(cast(coalesce(${messages.bodyHtml}, '') as blob)))
+        coalesce(nullif(${messages.sourceBytes}, 0),
+          length(cast(coalesce(${messages.subject}, '') as blob)) +
+          length(cast(coalesce(${messages.snippet}, '') as blob)) +
+          coalesce(${messages.contentBytes},
+            length(cast(coalesce(${messages.bodyText}, '') as blob)) +
+            length(cast(coalesce(${messages.bodyHtml}, '') as blob))))
       ), 0)`,
     })
     .from(messages)
