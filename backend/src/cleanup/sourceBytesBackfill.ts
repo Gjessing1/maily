@@ -1,23 +1,23 @@
 /**
- * One-time, idempotent backfill of `messages.source_bytes` (ROADMAP Phase 6 cleanup
- * storage metric). Rows archived before the `source_bytes` column existed have a
- * `source_path` but a NULL `source_bytes`, so the cleanup byte estimate (slices.ts
- * `BYTES`) under-counts their dominant on-disk cost. This stats each such `.eml` once
- * and records its size.
+ * Idempotent, self-healing backfill of `messages.source_bytes` (ROADMAP Phase 6 cleanup
+ * storage metric / detach size estimate). Rows archived before the `source_bytes` column
+ * existed have a `source_path` but a NULL `source_bytes`, so the byte estimates
+ * (slices.ts `BYTES`, the detach preview) under-count their dominant on-disk cost — the
+ * `.eml` (with attachments) is the largest per-message cost. This stats each such `.eml`
+ * once and records its real size.
  *
- * Idempotent + self-healing: it only touches rows where `source_path IS NOT NULL AND
- * source_bytes IS NULL`, so re-running it is a no-op once every archived row is filled.
- * A missing file (archive lost a message) is recorded as 0 so the row is not retried
- * forever — mirroring how rebuild.ts treats a vanished source as a skip, not a crash.
+ * Targets `source_path IS NOT NULL AND (source_bytes IS NULL OR source_bytes = 0)`, so it
+ * fills the historical NULL backlog AND self-heals any row a buggy write left at 0. A row
+ * whose file is present converges to a positive size and stops matching, so re-running is
+ * a no-op once the archive is fully measured. A missing file (archive lost a message) is
+ * recorded as 0 — mirroring how rebuild.ts treats a vanished source as a skip, not a crash.
  *
- * Pure SQLite + filesystem (no IMAP), so it is safe to run from a throwaway script in
- * the backend/ workspace. It is exported (not auto-wired into boot) to keep this change
- * inside the cleanup module; wire `backfillSourceBytes()` into the boot sequence later
- * if a self-healing pass at startup is wanted.
+ * Pure SQLite + filesystem (no IMAP). Wired into boot ({@link backfillSourceBytes} in
+ * index.ts) as a self-healing startup pass, and runnable standalone as a CLI for a one-off.
  */
 import { statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, or } from 'drizzle-orm';
 import { db, sqlite } from '../db/client.js';
 import { messages } from '../db/schema.js';
 import { createLogger } from '../logger.js';
@@ -25,7 +25,7 @@ import { createLogger } from '../logger.js';
 const log = createLogger('source-bytes-backfill');
 
 export interface BackfillResult {
-  /** Rows that had a source_path but no source_bytes when the pass started. */
+  /** Rows that had a source_path but no (or a zeroed) source_bytes when the pass started. */
   pending: number;
   /** Rows whose `.eml` was stat-ed and source_bytes recorded (file present). */
   filled: number;
@@ -42,7 +42,12 @@ export function backfillSourceBytes(): BackfillResult {
   const rows = db
     .select({ id: messages.id, sourcePath: messages.sourcePath })
     .from(messages)
-    .where(and(isNotNull(messages.sourcePath), isNull(messages.sourceBytes)))
+    .where(
+      and(
+        isNotNull(messages.sourcePath),
+        or(isNull(messages.sourceBytes), eq(messages.sourceBytes, 0)),
+      ),
+    )
     .all()
     .filter((r): r is { id: string; sourcePath: string } => r.sourcePath !== null);
 

@@ -21,6 +21,7 @@ import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 import { startCleanupCache } from './cleanup/cache.js';
+import { backfillSourceBytes } from './cleanup/sourceBytesBackfill.js';
 import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
 
 const log = createLogger('maily');
@@ -56,6 +57,12 @@ function installShutdown(engines: AccountEngine[], io: IoServer): void {
 async function main(): Promise<void> {
   runMigrations();
   reportBoot();
+
+  // Self-healing storage metric: fill source_bytes for any archived row left NULL (rows
+  // archived before the column existed) or zeroed by a buggy write, so the cleanup byte
+  // estimate and the detach size preview reflect the true on-disk `.eml` cost. A no-op
+  // once every archived `.eml` has been measured (runs before the cleanup cache warms).
+  backfillSourceBytes();
 
   // Warm the sender-name enrichment map from any contacts already cached on disk.
   reloadContactCache();
