@@ -13,9 +13,10 @@ import { contacts } from '../db/schema.js';
 import { effectiveActive } from './addressbooks.js';
 import { buildVCard, parseCardDetail } from './vcard.js';
 
-/** A parsed contact ready to persist (one row per email). */
+/** A parsed contact ready to persist (one row per email, or one email-less row per card). */
 export interface ParsedContact {
-  email: string;
+  /** Lowercased address, or null for a card with no EMAIL property. */
+  email: string | null;
   name: string | null;
   vcardUid: string | null;
   /** Card resource path + etag (same across a card's email rows). */
@@ -42,7 +43,7 @@ export function reloadContactCache(): void {
   const rows = db.select({ email: contacts.email, name: contacts.name }).from(contacts).all();
   const map = new Map<string, string>();
   for (const r of rows) {
-    if (r.name) map.set(r.email, r.name);
+    if (r.email && r.name) map.set(r.email, r.name);
   }
   nameByEmail = map;
 }
@@ -53,14 +54,23 @@ export function reloadContactCache(): void {
  * reader never sees a half-rebuilt table.
  */
 export function replaceContacts(parsed: ParsedContact[]): number {
-  const byEmail = new Map<string, ParsedContact>();
+  // Dedup addressed rows by email (so one address shared across books collapses to a
+  // single row — the active book wins, as it's synced last). Email-less cards have no
+  // email to collapse on, so they're keyed by their card identity (UID, else href);
+  // the two key spaces are prefixed so they never collide.
+  const byKey = new Map<string, ParsedContact>();
   for (const c of parsed) {
-    const email = c.email.trim().toLowerCase();
-    if (!email) continue;
-    byEmail.set(email, { ...c, email });
+    const email = c.email?.trim().toLowerCase() || null;
+    if (email) {
+      byKey.set(`e:${email}`, { ...c, email });
+    } else {
+      const cardKey = c.vcardUid ?? c.href ?? null;
+      if (!cardKey) continue; // un-addressable email-less card — nothing to key it by
+      byKey.set(`c:${cardKey}`, { ...c, email: null });
+    }
   }
 
-  const rows = [...byEmail.values()];
+  const rows = [...byKey.values()];
   const tx = sqlite.transaction(() => {
     db.delete(contacts).run();
     for (const r of rows) {
@@ -156,7 +166,7 @@ export function listCards(): ContactCardDto[] {
     if (!card.name && r.name) card.name = r.name;
     if (!card.addressbook && r.addressbookHref) card.addressbook = r.addressbookHref;
     if (!card.raw && r.rawVcard) card.raw = r.rawVcard;
-    card.emails.push(r.email);
+    if (r.email) card.emails.push(r.email);
     byCard.set(key, card);
   }
 
@@ -191,7 +201,7 @@ export function listRawCards(addressbook?: string | null): string {
     const card = byCard.get(key) ?? { name: r.name, emails: [], raw: null };
     if (!card.name && r.name) card.name = r.name;
     if (!card.raw && r.rawVcard) card.raw = r.rawVcard;
-    card.emails.push(r.email);
+    if (r.email) card.emails.push(r.email);
     byCard.set(key, card);
   }
 
@@ -250,7 +260,7 @@ export function getCardByKey(key: string): CardRecord | null {
     href: first.href,
     etag: first.etag,
     name: rows.find((r) => r.name)?.name ?? null,
-    emails: rows.map((r) => r.email),
+    emails: rows.map((r) => r.email).filter((e): e is string => !!e),
     raw: rows.find((r) => r.rawVcard)?.rawVcard ?? null,
   };
 }
@@ -282,7 +292,7 @@ export function searchContacts(q: string, limit: number): ContactDto[] {
     )
     .orderBy(contacts.name)
     .all()
-    .filter((r) => !r.addressbookHref || active.has(r.addressbookHref))
+    .filter((r) => !!r.email && (!r.addressbookHref || active.has(r.addressbookHref)))
     .slice(0, limit)
-    .map(({ name, email }) => ({ name, email }));
+    .map(({ name, email }) => ({ name, email: email! }));
 }

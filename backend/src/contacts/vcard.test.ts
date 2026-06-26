@@ -89,9 +89,9 @@ test('parseVCard unfolds RFC 6350 continuation lines', () => {
   assert.equal(row!.name, 'Very LongName');
 });
 
-test('parseVCard yields no rows for a card with no EMAIL', () => {
-  const vcard = ['BEGIN:VCARD', 'FN:No Mail', 'END:VCARD'].join(CRLF);
-  assert.deepEqual(parseVCard(vcard), []);
+test('parseVCard yields one email-less row for a card with no EMAIL', () => {
+  const vcard = ['BEGIN:VCARD', 'UID:no-mail-1', 'FN:No Mail', 'END:VCARD'].join(CRLF);
+  assert.deepEqual(parseVCard(vcard), [{ email: null, name: 'No Mail', vcardUid: 'no-mail-1' }]);
 });
 
 test('extractCards pulls href/etag/vcard per response and decodes entities', () => {

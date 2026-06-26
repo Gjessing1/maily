@@ -987,9 +987,10 @@ export function Settings() {
             </button>
           </div>
           <p className="px-4 pt-2 text-xs text-faint">
-            The local cache is a disposable copy of mail that’s still on the server. Clearing it
-            re-downloads live mail, but can’t restore anything already archived or purged
-            server-side.
+            This only clears mail stored in <strong>this browser</strong>. It does{' '}
+            <strong>not</strong> touch the server or your Local archive below — everything
+            re-downloads from the server on reload. The one thing it can’t bring back is mail that
+            was already purged from the server itself.
           </p>
         </section>
 
@@ -1004,13 +1005,17 @@ export function Settings() {
               Lock app
             </button>
           </div>
+          <p className="px-4 pt-2 text-xs text-faint">
+            Signs you out on this device and returns to the password screen. Your mail, settings,
+            and Local archive stay put — you’ll need the master password to unlock again.
+          </p>
         </section>
       </main>
 
       <ConfirmDialog
         open={confirmClear}
         title="Clear local cache?"
-        message="This wipes mail stored on this device. Anything still on the server re-downloads, but mail already archived or purged server-side can’t be recovered here."
+        message="This wipes only the copy of mail stored in this browser — the server and your Local archive are untouched, and everything re-downloads on reload. Safe to do anytime."
         confirmLabel="Clear cache"
         danger
         onConfirm={() => {

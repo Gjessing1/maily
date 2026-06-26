@@ -202,8 +202,13 @@ export const contacts = sqliteTable(
   'contacts',
   {
     id: uuid(),
-    /** Lowercased email address — the autocomplete + sender-enrichment key. */
-    email: text('email').notNull(),
+    /**
+     * Lowercased email address — the autocomplete + sender-enrichment key. NULL for a
+     * card that carries no EMAIL property: such contacts still belong in the address-book
+     * manager (SQLite treats NULLs as distinct, so the unique index permits many of them),
+     * they're just excluded from compose autocomplete and sender enrichment.
+     */
+    email: text('email'),
     /** Formatted name (vCard FN), if the card carries one. */
     name: text('name'),
     /** vCard UID — stable per card across syncs; groups a card's multiple emails. */

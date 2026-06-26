@@ -103,6 +103,10 @@ export function parseVCard(vcard: string): ParsedContact[] {
   }
 
   const name = fn ?? structuredName;
+  // A card with no EMAIL property still belongs in the address book; emit one
+  // email-less row so it's cached and surfaced in the manager (it just won't feed
+  // compose autocomplete). The card key (UID/href) keeps it dedupable downstream.
+  if (emails.length === 0) return [{ email: null, name, vcardUid: uid }];
   return emails.map((email) => ({ email, name, vcardUid: uid }));
 }
 
