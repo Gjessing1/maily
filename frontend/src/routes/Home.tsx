@@ -272,7 +272,7 @@ export function Home() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
         {selectionMode ? (
-          <div className="flex items-center gap-1 px-2 py-2">
+          <div className="flex min-h-14 items-center gap-1 px-2 py-2">
             <button
               onClick={clearSelect}
               className="rounded-full p-2 text-fg active:bg-surface-2"
@@ -313,7 +313,7 @@ export function Home() {
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-1 px-2 py-2">
+          <div className="flex min-h-14 items-center gap-1 px-2 py-2">
             {/* On mobile, Folders/Search live in the bottom bar; keep them up top on wide screens. */}
             {isWide && (
               <button
