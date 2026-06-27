@@ -9,6 +9,7 @@ import type { Server as IoServer } from 'socket.io';
 import { env } from './env.js';
 import { sqlite } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { startDbBackup } from './db/backup.js';
 import { createLogger } from './logger.js';
 import { loadAccountConfigs } from './config/accounts.js';
 import { startSyncEngines, type AccountEngine } from './imap/engine.js';
@@ -113,6 +114,10 @@ async function main(): Promise<void> {
   // Precompute the Cleanup Dashboard aggregates (warm at boot, re-warm after mail changes)
   // so entering the Cleanup screen is served from memory instead of full-table scans.
   startCleanupCache();
+
+  // Periodic WAL-safe SQLite snapshot into backups/ for the off-host backup (backrest) to grab —
+  // a plain copy of the live WAL-mode DB can be torn. The live source of truth (ARCHITECTURE §1).
+  startDbBackup();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {

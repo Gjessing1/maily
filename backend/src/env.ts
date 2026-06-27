@@ -26,12 +26,15 @@ const attachmentsDir = resolve(dataDir, 'attachments');
 const uploadsDir = resolve(dataDir, 'uploads');
 /** Canonical raw-RFC822 (.eml) archive (ROADMAP §3.7.E), partitioned per account/message. */
 const sourceDir = resolve(dataDir, 'source');
+/** WAL-safe SQLite snapshot dir — the off-host backup (backrest) grabs this, not the live DB. */
+const backupDir = resolve(dataDir, 'backups');
 
 // Ensure the data directory exists before SQLite tries to open the file.
 mkdirSync(dirname(dbPath), { recursive: true });
 mkdirSync(attachmentsDir, { recursive: true });
 mkdirSync(uploadsDir, { recursive: true });
 mkdirSync(sourceDir, { recursive: true });
+mkdirSync(backupDir, { recursive: true });
 
 /** Radicale CardDAV config for contacts sync, or null when not configured. */
 function carddavConfig(): {
@@ -117,6 +120,22 @@ export const env = {
   attachmentsDir,
   uploadsDir,
   sourceDir,
+  backupDir,
+  /**
+   * WAL-safe SQLite snapshot for off-host backup (ARCHITECTURE §1/§12). The live DB runs in
+   * WAL mode, so an external backup tool copying `mail.sqlite` directly can capture a torn
+   * state (committed pages still in the `-wal` sidecar). Instead we periodically write a
+   * self-contained, consistent copy via the online-backup API and atomically rename it into
+   * `backups/`; backrest backs up *that* file and handles versioning/retention.
+   */
+  dbBackup: {
+    /** On by default; set `MAILY_DB_BACKUP=false` to disable (e.g. if backups are handled elsewhere). */
+    enabled: optional('MAILY_DB_BACKUP', 'true') !== 'false',
+    /** Snapshot cadence. Default 6h — backrest versions each overwrite, so this is just freshness. */
+    intervalMs: Number(optional('MAILY_DB_BACKUP_MS', String(6 * 60 * 60 * 1000))),
+    /** Rolling consistent snapshot file, atomically replaced each cycle. */
+    path: resolve(backupDir, 'mail.sqlite.bak'),
+  },
   /** Local SQLite cache window: how many days back the sync `since` filter reaches (0 = all). */
   cacheWindowDays: Number(optional('MAILY_CACHE_WINDOW_DAYS', '365')),
   /**
