@@ -27,7 +27,7 @@ import type {
 } from '@maily/shared';
 import { db } from '../db/client.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
-import { customKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
+import { effectiveKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
 import { SENDER_KEY, senderKeyOf } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
@@ -242,10 +242,7 @@ export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
  */
 function coldStorageWhere(years: number): SQL {
   const cutoff = Date.now() - years * MS_PER_YEAR;
-  const coldMatch = ftsOrMatch([
-    ...COLD_KEEP_KEYWORDS,
-    ...customKeywords('cleanupColdKeepKeywords'),
-  ]);
+  const coldMatch = ftsOrMatch(effectiveKeywords('cleanupColdKeepKeywords', COLD_KEEP_KEYWORDS));
   return sql`${ELIGIBLE}
     AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
     AND ${notProtected('m')}
@@ -290,10 +287,7 @@ function unreadWhere(months: number): SQL {
  * — the deterministic bulk-mail heuristic, riding the FTS index. The bulk-mail angle.
  */
 function newslettersWhere(): SQL {
-  const match = ftsOrMatch([
-    ...NEWSLETTER_KEYWORDS,
-    ...customKeywords('cleanupNewsletterKeywords'),
-  ]);
+  const match = ftsOrMatch(effectiveKeywords('cleanupNewsletterKeywords', NEWSLETTER_KEYWORDS));
   return sql`${ELIGIBLE} AND ${notProtected('m')}
     AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${match})`;
 }

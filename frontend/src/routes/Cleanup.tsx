@@ -715,49 +715,65 @@ function SliceConfigCard({ prefs }: { prefs: Prefs }) {
 }
 
 /**
- * Editable keyword list for a slice (cold-storage "keep" words / newsletter markers). The
- * built-ins are shown read-only (they always apply); the user's additions are removable chips.
- * Changes are persisted + pushed to the server by the parent's `onChange`.
+ * Fully-editable keyword list (cold-storage "keep" words / newsletter markers / the protected
+ * gate). Seeded from the built-in `defaults`; every word is a removable chip and any can be
+ * added, so the saved list *replaces* the built-ins server-side (remove one and it stops
+ * applying). An empty list reverts to the defaults, which is what "Reset" writes. Custom words
+ * (not in the defaults) are tinted so it's clear what you've changed. The parent's `onChange`
+ * persists + pushes the new list.
  */
 function KeywordEditor({
   title,
   hint,
-  builtins,
+  defaults,
   value,
   onChange,
 }: {
   title: string;
   hint?: string;
-  builtins: string[];
+  defaults: string[];
   value: string[];
   onChange: (list: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
+  // An empty/unset stored list means "use the built-ins", so the editor shows them as the
+  // starting point — editing from there materialises the full list the backend will use.
+  const effective = value.length ? value : defaults;
+  const customized = value.length > 0;
   const add = () => {
     const term = draft.trim().toLowerCase();
     setDraft('');
-    if (!term || value.includes(term) || builtins.includes(term)) return;
-    onChange([...value, term]);
+    if (!term || effective.includes(term)) return;
+    onChange([...effective, term]);
   };
+  const remove = (term: string) => onChange(effective.filter((x) => x !== term));
   return (
     <div className="mt-3 border-t border-border pt-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-faint">{title}</p>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-faint">{title}</p>
+        {customized && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="shrink-0 text-xs font-medium text-accent active:opacity-70"
+          >
+            Reset to defaults
+          </button>
+        )}
+      </div>
       {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {builtins.map((b) => (
-          <span key={b} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-faint">
-            {b}
-          </span>
-        ))}
-        {value.map((term) => (
+        {effective.map((term) => (
           <span
             key={term}
-            className="flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent"
+            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
+              defaults.includes(term) ? 'bg-surface-2 text-faint' : 'bg-accent/15 text-accent'
+            }`}
           >
             {term}
             <button
               type="button"
-              onClick={() => onChange(value.filter((x) => x !== term))}
+              onClick={() => remove(term)}
               aria-label={`Remove ${term}`}
               className="active:opacity-70"
             >
@@ -787,9 +803,6 @@ function KeywordEditor({
           <PlusIcon className="size-4" /> Add
         </button>
       </div>
-      <p className="mt-1.5 text-[11px] text-faint">
-        Built-in words (grey) always apply; your additions are highlighted.
-      </p>
     </div>
   );
 }
@@ -1075,11 +1088,12 @@ export function Cleanup() {
               <h2 className="text-base font-semibold text-fg">Protected mail</h2>
               <p className="mt-1 text-sm text-muted">
                 Mail whose body contains one of these words is never offered for cleanup. Add your
-                own to protect more — the built-ins always apply, so this only ever protects more.
+                own, or remove any you don’t want — removing a word lets that mail be cleaned.
               </p>
               <KeywordEditor
                 title="Protected words"
-                builtins={PROTECTED_BUILTINS}
+                hint="The full safety gate — edit freely. Reset restores the built-in list."
+                defaults={PROTECTED_BUILTINS}
                 value={prefs.cleanupProtectedKeywords}
                 onChange={(list) => applyKeywords('cleanupProtectedKeywords', list)}
               />
@@ -1117,7 +1131,7 @@ export function Cleanup() {
               <KeywordEditor
                 title="Words that flag bulk mail"
                 hint="Mail whose body contains one of these is treated as a newsletter."
-                builtins={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
+                defaults={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
                 value={prefs.cleanupNewsletterKeywords}
                 onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
               />,
@@ -1138,7 +1152,7 @@ export function Cleanup() {
               <KeywordEditor
                 title="Words that keep mail"
                 hint="An old message whose body contains one of these is spared from this slice."
-                builtins={[
+                defaults={[
                   'invoice',
                   'faktura',
                   'tax',

@@ -105,16 +105,17 @@ export interface Prefs {
   /** Unread-and-old age threshold (months). */
   cleanupUnreadMonths: number;
   /**
-   * Extra cold-storage "keep" markers the user added, merged with the built-ins server-side:
-   * an old message whose body carries one is spared from the cold-storage slice.
+   * The cold-storage "keep" markers — an old message whose body carries one is spared from the
+   * cold-storage slice. Full-ownership lists (not additive): seeded from the built-ins in the
+   * editor, the saved list *replaces* them server-side; empty = revert to the built-in defaults.
    */
   cleanupColdKeepKeywords: string[];
-  /** Extra newsletter/bulk-mail markers the user added, merged with the built-ins server-side. */
+  /** Newsletter/bulk-mail markers — replaces the built-ins server-side; empty = defaults. */
   cleanupNewsletterKeywords: string[];
   /**
-   * Extra protected-safety markers the user added, merged with the built-in HARD gate
-   * server-side: mail whose body carries one is never offered for cleanup. Additive only —
-   * the built-ins always apply, so this can only ever protect *more* mail.
+   * The protected-safety markers — the HARD gate: mail whose body carries one is never offered
+   * for cleanup. Fully editable (add *or* remove built-ins); the saved list replaces the built-ins
+   * server-side, and an empty list reverts to the built-in defaults.
    */
   cleanupProtectedKeywords: string[];
   /**

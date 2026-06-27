@@ -62,11 +62,20 @@ test('protectedMatch is a non-empty OR-joined prefix FTS expression', () => {
   assert.match(Safety.protectedMatch(), / OR /);
 });
 
-test('custom protected keywords extend the gate (FTS expr + isProtected)', () => {
+test('a customised protected list fully replaces the built-ins (add + remove)', () => {
+  // The Cleanup editor seeds from the built-ins, so saving a list is full ownership: words you
+  // added apply, and built-ins you dropped (here everything but the two custom words) do not.
   settings.putPrefs({ cleanupProtectedKeywords: ['warranty', 'garanti'] });
   assert.match(Safety.protectedMatch(), /"warranty"\*/);
   assert.ok(Safety.isProtected({ subject: 'Your warranty certificate' }));
   assert.ok(Safety.isProtected({ subject: 'Din garanti er gyldig' }));
-  // A built-in still applies alongside the additions.
+  // 'invoice' is a built-in that this list omits — so it is no longer protected.
+  assert.equal(Safety.isProtected({ subject: 'Your invoice' }), false);
+});
+
+test('an empty or unset protected list falls back to the built-ins (reset = revert)', () => {
+  settings.putPrefs({ cleanupProtectedKeywords: [] });
+  assert.ok(Safety.isProtected({ subject: 'Your invoice' }));
+  settings.putPrefs({});
   assert.ok(Safety.isProtected({ subject: 'Your invoice' }));
 });
