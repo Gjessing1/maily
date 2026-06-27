@@ -104,7 +104,10 @@ function allGroupsByDomain(where: SQL): CleanupGroupDto[] {
   return rows.map(toGroup);
 }
 
-/** Group-list paging + search options, shared by every slice. */
+/** How a sender-group list is ordered. 'bytes' is the SQL default (worst offenders first). */
+export type GroupSort = 'bytes' | 'count' | 'name';
+
+/** Group-list paging + search + sort/filter options, shared by every slice. */
 export interface GroupPageOpts {
   /** Case-insensitive sender-key substring filter (the "Review by sender" search box). */
   q?: string;
@@ -112,6 +115,12 @@ export interface GroupPageOpts {
   offset?: number;
   /** Page size; defaults to {@link GROUP_LIMIT}. */
   limit?: number;
+  /** Sort order: by estimated bytes (default), by message count, or by sender name. */
+  sort?: GroupSort;
+  /** Drop groups with fewer than this many messages. */
+  minMessages?: number;
+  /** Drop groups smaller than this many estimated bytes. */
+  minBytes?: number;
 }
 
 /**
@@ -125,7 +134,20 @@ function paginateGroups(
   opts: GroupPageOpts = {},
 ): { groups: CleanupGroupDto[]; truncated: boolean } {
   const q = opts.q?.trim().toLowerCase();
-  const filtered = q ? groups.filter((g) => g.domain.includes(q)) : groups;
+  let filtered = q ? groups.filter((g) => g.domain.includes(q)) : groups;
+  if (opts.minMessages && opts.minMessages > 0) {
+    filtered = filtered.filter((g) => g.messageCount >= opts.minMessages!);
+  }
+  if (opts.minBytes && opts.minBytes > 0) {
+    filtered = filtered.filter((g) => g.bytes >= opts.minBytes!);
+  }
+  // The cached list is already bytes-descending (the SQL ORDER BY), so only re-sort when a
+  // different order is asked for — copy first so the shared cached array is never mutated.
+  if (opts.sort === 'count') {
+    filtered = filtered.slice().sort((a, b) => b.messageCount - a.messageCount);
+  } else if (opts.sort === 'name') {
+    filtered = filtered.slice().sort((a, b) => a.domain.localeCompare(b.domain));
+  }
   const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
   const limit = opts.limit && opts.limit > 0 ? opts.limit : GROUP_LIMIT;
   return {
@@ -473,18 +495,20 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
  * inner subquery selects just the page's ids — so the per-row {@link BYTES} estimate (a
  * correlated attachments sub-select) is only evaluated for the rows actually returned,
  * instead of materialising the entire slice on every page/filter request (the old path,
- * which made the drill-down feel slow on big slices). Only the destructive slices drill —
- * 'storage' is informational and throws.
+ * which made the drill-down feel slow on big slices). The informational 'storage' audit
+ * also drills (read-only: every live message for the sender, no safety/slice predicate).
  */
 export function sliceMessages(
-  slice: DeleteSlice,
+  slice: PreviewSlice,
   opts: SliceThresholds & { domain?: string; q?: string; limit?: number; offset?: number } = {},
 ): { messages: CleanupMessageDto[]; total: number; totalBytes: number; truncated: boolean } {
   const limit = opts.limit ?? MESSAGE_LIMIT;
   const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
   const domain = opts.domain?.toLowerCase();
 
-  let where = sliceWhere(slice, opts);
+  // The informational storage audit lists ALL live mail for a sender (no safety/slice gate —
+  // it never proposes deletion); the delete-eligible slices reuse their shared predicate.
+  let where = slice === 'storage' ? LIVE : sliceWhere(slice, opts);
   if (domain) where = sql`${where} AND ${SENDER_KEY} = ${domain}`;
   const q = opts.q?.trim();
   if (q) {

@@ -711,3 +711,44 @@ test('cleanupSummary: counts protected mail', () => {
   assert.equal(summary.totalMessages, 2);
   assert.equal(summary.protectedMessages, 1);
 });
+
+test('sliceMessages(storage): read-only per-sender drill lists every live message', () => {
+  const acct = seedAccount();
+  seedMessage(acct, { fromAddress: 'a@promo.example', subject: 'one' });
+  seedMessage(acct, { fromAddress: 'b@promo.example', subject: 'two' });
+  seedMessage(acct, { fromAddress: 'c@other.example', subject: 'elsewhere' });
+
+  const res = S.sliceMessages('storage', { domain: 'promo.example' });
+  assert.equal(res.total, 2, 'both promo.example messages, scoped to the sender');
+  assert.deepEqual(res.messages.map((m) => m.subject).sort(), ['one', 'two']);
+});
+
+test('storageByDomain: sort=count orders senders by message count', () => {
+  const acct = seedAccount();
+  seedMessage(acct, { fromAddress: 'a@few.example', sourceBytes: 9000 });
+  seedMessage(acct, { fromAddress: 'a@many.example', sourceBytes: 100 });
+  seedMessage(acct, { fromAddress: 'b@many.example', sourceBytes: 100 });
+
+  // Default (bytes) puts the big single message first; sort=count flips to the busier sender.
+  assert.equal(S.storageByDomain().groups[0]!.domain, 'few.example');
+  assert.equal(S.storageByDomain({ sort: 'count' }).groups[0]!.domain, 'many.example');
+});
+
+test('storageByDomain: minMessages / minBytes drop senders below the threshold', () => {
+  const acct = seedAccount();
+  seedMessage(acct, { fromAddress: 'a@small.example', sourceBytes: 100 });
+  seedMessage(acct, { fromAddress: 'a@big.example', sourceBytes: 5000 });
+  seedMessage(acct, { fromAddress: 'b@big.example', sourceBytes: 5000 });
+
+  const byCount = S.storageByDomain({ minMessages: 2 });
+  assert.deepEqual(
+    byCount.groups.map((g) => g.domain),
+    ['big.example'],
+  );
+
+  const bySize = S.storageByDomain({ minBytes: 1000 });
+  assert.deepEqual(
+    bySize.groups.map((g) => g.domain),
+    ['big.example'],
+  );
+});

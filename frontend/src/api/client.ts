@@ -117,6 +117,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** How the "Review by sender" group list is ordered. */
+export type GroupSort = 'bytes' | 'count' | 'name';
+
 /** Cleanup group-list paging/search: a domain substring (`q`), a page `offset`, thresholds. */
 interface GroupPage {
   q?: string;
@@ -124,6 +127,12 @@ interface GroupPage {
   years?: number;
   minMb?: number;
   months?: number;
+  /** Sort order for the sender list (default 'bytes'). */
+  sort?: GroupSort;
+  /** Hide senders with fewer than this many messages. */
+  minMsgs?: number;
+  /** Hide senders smaller than this many MB (estimated). */
+  minSizeMb?: number;
 }
 
 /** Build the `?q=…&offset=…&years=…` query for a slice request (omitting empty parts). */
@@ -134,6 +143,9 @@ function groupQuery(opts: GroupPage): string {
   if (opts.years) p.set('years', String(opts.years));
   if (opts.minMb) p.set('minMb', String(opts.minMb));
   if (opts.months) p.set('months', String(opts.months));
+  if (opts.sort && opts.sort !== 'bytes') p.set('sort', opts.sort);
+  if (opts.minMsgs) p.set('minMsgs', String(opts.minMsgs));
+  if (opts.minSizeMb) p.set('minSizeMb', String(opts.minSizeMb));
   const s = p.toString();
   return s ? `?${s}` : '';
 }

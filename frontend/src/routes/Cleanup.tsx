@@ -25,7 +25,7 @@ import type {
   CleanupMessageDto,
   CleanupSliceDto,
 } from '@maily/shared';
-import { api } from '../api/client';
+import { api, type GroupSort } from '../api/client';
 import { getPrefs, setPref, usePrefs, type Prefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import {
@@ -197,7 +197,11 @@ export function CleanupMessageRow({
 type BrowseSource = { slice: 'storage' | ActionSlice; params?: SliceParams };
 
 /** Build the drill-down URL query for a slice (+ optional sender), carrying its thresholds. */
-export function drillQuery(slice: ActionSlice, params: SliceParams = {}, domain?: string): string {
+export function drillQuery(
+  slice: ActionSlice | 'storage',
+  params: SliceParams = {},
+  domain?: string,
+): string {
   const p = new URLSearchParams({ slice });
   if (domain) p.set('domain', domain);
   if (params.years) p.set('years', String(params.years));
@@ -217,6 +221,11 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  // Sort + minimum-threshold filters for the sender list (applied server-side over the whole
+  // slice, not just the loaded page). Empty inputs = no minimum.
+  const [sort, setSort] = useState<GroupSort>('bytes');
+  const [minMsgs, setMinMsgs] = useState('');
+  const [minSizeMb, setMinSizeMb] = useState('');
   const [groups, setGroups] = useState<CleanupGroupDto[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -225,28 +234,38 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
 
   const kind = source.slice;
   const { years, minMb, months } = source.params ?? {};
+  const minMsgsNum = Number(minMsgs) > 0 ? Math.floor(Number(minMsgs)) : undefined;
+  const minSizeMbNum = Number(minSizeMb) > 0 ? Number(minSizeMb) : undefined;
 
   const fetchPage = useCallback(
-    (opts: { q?: string; offset?: number }): Promise<CleanupSliceDto> => {
+    (opts: { offset?: number }): Promise<CleanupSliceDto> => {
+      const o = {
+        q: q || undefined,
+        sort,
+        minMsgs: minMsgsNum,
+        minSizeMb: minSizeMbNum,
+        offset: opts.offset,
+      };
       switch (kind) {
         case 'storage':
-          return api.cleanup.storage(opts);
+          return api.cleanup.storage(o);
         case 'never-replied':
-          return api.cleanup.neverReplied(opts);
+          return api.cleanup.neverReplied(o);
         case 'cold-storage':
-          return api.cleanup.coldStorage(years, opts);
+          return api.cleanup.coldStorage(years, o);
         case 'large':
-          return api.cleanup.large(minMb, opts);
+          return api.cleanup.large(minMb, o);
         case 'unread':
-          return api.cleanup.unread(months, opts);
+          return api.cleanup.unread(months, o);
         case 'newsletters':
-          return api.cleanup.newsletters(opts);
+          return api.cleanup.newsletters(o);
       }
     },
-    [kind, years, minMb, months],
+    [kind, years, minMb, months, q, sort, minMsgsNum, minSizeMbNum],
   );
 
-  // (Re)load the first page when opened or the (debounced) search term changes.
+  // (Re)load the first page when opened or any of the (debounced) search/sort/filter inputs
+  // change. The debounce mainly absorbs typing in the text fields; discrete controls reload too.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -254,7 +273,7 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
     setError(false);
     const t = setTimeout(
       () => {
-        fetchPage({ q: q || undefined })
+        fetchPage({})
           .then((res) => {
             if (cancelled) return;
             setGroups(res.groups);
@@ -267,18 +286,20 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
             if (!cancelled) setLoading(false);
           });
       },
-      q ? 250 : 0,
+      // Debounce only while the text fields are being typed; the first open + the discrete
+      // sort/threshold controls fetch immediately.
+      q || minMsgs || minSizeMb ? 250 : 0,
     );
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [open, q, fetchPage]);
+  }, [open, fetchPage]);
 
   const loadMore = () => {
     setLoadingMore(true);
     setError(false);
-    fetchPage({ q: q || undefined, offset: groups.length })
+    fetchPage({ offset: groups.length })
       .then((res) => {
         setGroups((prev) => [...prev, ...res.groups]);
         setHasMore(res.truncated);
@@ -287,8 +308,9 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
       .finally(() => setLoadingMore(false));
   };
 
+  // Every sender row drills down — delete-eligible slices into a selectable trash list, the
+  // informational storage audit into a read-only per-sender message list.
   const drillInto = (domain: string) => {
-    if (kind === 'storage') return;
     navigate(`/cleanup/messages?${drillQuery(kind, source.params, domain)}`);
   };
 
@@ -317,6 +339,49 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
             />
           </div>
 
+          {/* Sort + minimum-threshold filters — applied over the whole slice, not the page. */}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <label className="flex items-center gap-1.5">
+              <span>Sort</span>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as GroupSort)}
+                className="rounded-lg border border-border bg-surface px-2 py-1 text-fg outline-none focus:border-accent"
+              >
+                <option value="bytes">Size</option>
+                <option value="count">Messages</option>
+                <option value="name">Name</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span>≥</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={minMsgs}
+                onChange={(e) => setMinMsgs(e.target.value)}
+                placeholder="0"
+                className="w-14 rounded-lg border border-border bg-surface px-2 py-1 text-right tabular-nums text-fg outline-none focus:border-accent"
+              />
+              <span>msg</span>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span>≥</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.1"
+                value={minSizeMb}
+                onChange={(e) => setMinSizeMb(e.target.value)}
+                placeholder="0"
+                className="w-14 rounded-lg border border-border bg-surface px-2 py-1 text-right tabular-nums text-fg outline-none focus:border-accent"
+              />
+              <span>MB</span>
+            </label>
+          </div>
+
           {loading ? (
             <div className="flex justify-center py-6">
               <Spinner />
@@ -325,40 +390,28 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
             <p className="px-1 py-3 text-center text-sm text-danger">Couldn’t load senders.</p>
           ) : groups.length === 0 ? (
             <p className="px-1 py-3 text-center text-sm text-muted">
-              {q ? 'No senders match.' : 'Nothing here — nice and tidy.'}
+              {q || minMsgsNum || minSizeMbNum
+                ? 'No senders match.'
+                : 'Nothing here — nice and tidy.'}
             </p>
           ) : (
             <>
               <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
                 {groups.map((g) => (
                   <li key={g.domain}>
-                    {kind === 'storage' ? (
-                      <div className="flex items-center gap-3 px-3 py-2 text-sm">
-                        <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
-                        <span className="shrink-0 tabular-nums text-muted">
-                          {g.messageCount} msg
-                        </span>
-                        <span className="w-20 shrink-0 text-right tabular-nums text-faint">
-                          {formatBytes(g.bytes)}
-                        </span>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => drillInto(g.domain)}
-                        aria-label={`Review messages from ${g.domain}`}
-                        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm active:bg-surface-2"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
-                        <span className="shrink-0 tabular-nums text-muted">
-                          {g.messageCount} msg
-                        </span>
-                        <span className="w-20 shrink-0 text-right tabular-nums text-faint">
-                          {formatBytes(g.bytes)}
-                        </span>
-                        <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => drillInto(g.domain)}
+                      aria-label={`Review messages from ${g.domain}`}
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm active:bg-surface-2"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
+                      <span className="shrink-0 tabular-nums text-muted">{g.messageCount} msg</span>
+                      <span className="w-20 shrink-0 text-right tabular-nums text-faint">
+                        {formatBytes(g.bytes)}
+                      </span>
+                      <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
+                    </button>
                   </li>
                 ))}
               </ul>

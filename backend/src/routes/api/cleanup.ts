@@ -27,18 +27,33 @@ import {
   paginateSlice,
   sliceMessageIds,
   sliceMessages,
+  type GroupPageOpts,
+  type GroupSort,
 } from '../../cleanup/slices.js';
 import { bumpCleanupCache, cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
 import { markMessageDeleted, setCleanupKeep } from '../../imap/store.js';
 import { emitSignal } from '../../events.js';
 
-/** Parse the shared group-list paging/search query (`q` substring + `offset`). */
-function pageOpts(q: { offset?: string; q?: string }): { q?: string; offset?: number } {
+const MB = 1024 * 1024;
+
+/**
+ * Parse the shared group-list query — substring (`q`), page `offset`, plus the "Review by
+ * sender" sort/filter controls: `sort` (bytes|count|name), `minMsgs` (min message count)
+ * and `minSizeMb` (min estimated size, converted to bytes). Empty/invalid parts are dropped.
+ */
+function pageOpts(q: PageQuery): GroupPageOpts {
   const off = Number(q.offset);
+  const minMsgs = Number(q.minMsgs);
+  const minMb = Number(q.minSizeMb);
+  const sort: GroupSort | undefined =
+    q.sort === 'count' || q.sort === 'name' || q.sort === 'bytes' ? q.sort : undefined;
   return {
     q: q.q?.trim() ? q.q.trim() : undefined,
     offset: Number.isFinite(off) && off > 0 ? off : undefined,
+    sort,
+    minMessages: Number.isFinite(minMsgs) && minMsgs > 0 ? Math.floor(minMsgs) : undefined,
+    minBytes: Number.isFinite(minMb) && minMb > 0 ? Math.round(minMb * MB) : undefined,
   };
 }
 
@@ -48,7 +63,13 @@ function posNum(raw: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-type PageQuery = { offset?: string; q?: string };
+type PageQuery = {
+  offset?: string;
+  q?: string;
+  sort?: string;
+  minMsgs?: string;
+  minSizeMb?: string;
+};
 
 export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Headline figures: total live mail, estimated bytes, protected-from-cleanup count.
@@ -135,7 +156,8 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     };
   }>('/api/cleanup/messages', async (req, reply): Promise<CleanupMessagesDto> => {
     const { slice, years, minMb, months, domain, q, limit, offset } = req.query;
-    if (!slice || !isDeleteSlice(slice)) {
+    // 'storage' drills read-only (the audit's per-sender list); the rest must be delete-eligible.
+    if (!slice || (slice !== 'storage' && !isDeleteSlice(slice))) {
       return reply.code(400).send({ error: 'slice is not drillable' }) as never;
     }
     const lim = posNum(limit);

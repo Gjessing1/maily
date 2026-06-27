@@ -35,6 +35,30 @@ function numParam(raw: string | null): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * The drill-down's selection/filter state, preserved across navigation. Opening a message in
+ * the reader unmounts this screen, so without this an in-progress review (which rows you'd
+ * unchecked, the filter you'd typed) is lost the moment you tap into a message to inspect it
+ * and come back. Keyed by the drill (slice + sender + thresholds) so each sender keeps its own
+ * progress; it's a session-lived in-memory cache, deliberately not persisted to storage.
+ */
+type DrillState = {
+  q: string;
+  mode: 'all' | 'manual';
+  excluded: string[];
+  included: string[];
+};
+const drillStateStore = new Map<string, DrillState>();
+function drillStateKey(p: {
+  slice: string;
+  domain?: string;
+  years?: number;
+  minMb?: number;
+  months?: number;
+}): string {
+  return [p.slice, p.domain ?? '', p.years ?? '', p.minMb ?? '', p.months ?? ''].join('|');
+}
+
 export function CleanupMessages() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -44,6 +68,12 @@ export function CleanupMessages() {
   const minMb = numParam(params.get('minMb'));
   const months = numParam(params.get('months'));
   const actionable = DELETE_ELIGIBLE.has(slice);
+
+  // Restore any in-progress selection/filter for this exact drill (see drillStateStore). Read
+  // once at mount via the useState initialisers below; a fresh drill simply has no saved entry.
+  const stateKey = drillStateKey({ slice, domain, years, minMb, months });
+  const saved = drillStateStore.get(stateKey);
+  const restoredRef = useRef(saved != null);
 
   const [messages, setMessages] = useState<CleanupMessageDto[]>([]);
   const [total, setTotal] = useState(0);
@@ -55,8 +85,8 @@ export function CleanupMessages() {
 
   // Subject/sender filter — debounced so each keystroke doesn't refetch. The whole-sender
   // express path is hidden while a filter is active (it would trash beyond what's shown).
-  const [q, setQ] = useState('');
-  const [qDebounced, setQDebounced] = useState('');
+  const [q, setQ] = useState(saved?.q ?? '');
+  const [qDebounced, setQDebounced] = useState(saved?.q ?? '');
   useEffect(() => {
     const t = setTimeout(() => setQDebounced(q.trim()), 300);
     return () => clearTimeout(t);
@@ -70,9 +100,9 @@ export function CleanupMessages() {
   //  - 'manual' : nothing is selected by default; `included` holds the messages the user picked.
   // A search filter (`q`) forces explicit ids regardless of mode — the whole-slice express can't
   // express "matching the filter", so we only ever trash the loaded+checked rows while filtering.
-  const [mode, setMode] = useState<'all' | 'manual'>('all');
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [included, setIncluded] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'all' | 'manual'>(saved?.mode ?? 'all');
+  const [excluded, setExcluded] = useState<Set<string>>(() => new Set(saved?.excluded));
+  const [included, setIncluded] = useState<Set<string>>(() => new Set(saved?.included));
 
   // Execution lifecycle for the trash action: idle → running (queue draining) → done / error.
   const [exec, setExec] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
@@ -124,11 +154,16 @@ export function CleanupMessages() {
         setHasMore(res.truncated);
         // A fresh load (slice/sender/thresholds/search change) returns to the all-selected
         // default; appended pages inherit the mode (no per-page bookkeeping — 'all' covers new
-        // rows implicitly, 'manual' leaves them unchecked).
+        // rows implicitly, 'manual' leaves them unchecked). The exception is the very first
+        // load after remounting onto a restored drill — there we keep the saved selection.
         if (offset === 0) {
-          setMode('all');
-          setExcluded(new Set());
-          setIncluded(new Set());
+          if (restoredRef.current) {
+            restoredRef.current = false;
+          } else {
+            setMode('all');
+            setExcluded(new Set());
+            setIncluded(new Set());
+          }
         }
       } catch {
         setError(true);
@@ -164,6 +199,23 @@ export function CleanupMessages() {
     setMode('manual');
     setIncluded(new Set());
   };
+
+  // Persist the in-progress selection/filter so tapping into a message and coming back keeps it.
+  // Only while reviewing (actionable + idle); once a trash run finishes the saved state is stale,
+  // so drop it (a later revisit of the same sender starts fresh from the server's new totals).
+  useEffect(() => {
+    if (!actionable) return;
+    if (exec === 'done') {
+      drillStateStore.delete(stateKey);
+      return;
+    }
+    drillStateStore.set(stateKey, {
+      q,
+      mode,
+      excluded: [...excluded],
+      included: [...included],
+    });
+  }, [actionable, exec, stateKey, q, mode, excluded, included]);
 
   // Whether the whole-slice express path applies: 'all' mode and no active search filter. Then
   // "select all" really means every match (incl. unloaded pages), trashed via `excludeMessageIds`.
