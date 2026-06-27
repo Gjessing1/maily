@@ -149,6 +149,12 @@ export interface EditableCard {
   birthday: string | null;
   note: string | null;
   categories: string[];
+  /**
+   * Profile photo to write: a `data:` URI / `https:` URL (set), `null` (remove), or
+   * `undefined` (leave the card's existing PHOTO untouched). Unlike the other fields PHOTO
+   * is tri-state because it is large/binary — a blank edit must not wipe an existing photo.
+   */
+  photo?: string | null;
 }
 
 /** A parsed card: the editable fields, plus read-only display extras (UID, photo). */
@@ -325,7 +331,7 @@ export function splitVCards(text: string): string[] {
   return (text.match(/BEGIN:VCARD[\s\S]*?END:VCARD/gi) ?? []).map((c) => c.trim());
 }
 
-/** Narrow a parsed `CardDetail` to the editable subset (drops UID + PHOTO). */
+/** Narrow a parsed `CardDetail` to the editable subset (drops UID; carries PHOTO through). */
 export function toEditableCard(d: CardDetail): EditableCard {
   return {
     name: d.name,
@@ -339,7 +345,27 @@ export function toEditableCard(d: CardDetail): EditableCard {
     birthday: d.birthday,
     note: d.note,
     categories: d.categories,
+    // Keep the photo so a round-trip / import re-emits it rather than silently dropping it.
+    photo: d.photo,
   };
+}
+
+/**
+ * Serialise a renderable photo source to a vCard 3.0 PHOTO line, or null when unusable.
+ * A `data:image/*;base64,…` URI becomes the inline `PHOTO;ENCODING=b;TYPE=…` form that
+ * {@link photoSrc} reads back; an `https:` URL becomes a `PHOTO;VALUE=URI` reference.
+ */
+function photoLine(src: string): string | null {
+  const s = src.trim();
+  if (!s) return null;
+  const data = /^data:image\/([a-z0-9.+-]+);base64,([\s\S]*)$/i.exec(s);
+  if (data) {
+    const kind = (data[1] || 'jpeg').toUpperCase();
+    const b64 = data[2]!.replace(/\s+/g, '');
+    return b64 ? `PHOTO;ENCODING=b;TYPE=${kind}:${b64}` : null;
+  }
+  if (/^https?:/i.test(s)) return `PHOTO;VALUE=URI:${s}`;
+  return null;
 }
 
 /** Property keys maily owns; a build/merge rewrites exactly these and keeps the rest. */
@@ -413,11 +439,13 @@ function managedLines(card: EditableCard): string[] {
  * compatible with Radicale and other clients. `N` is derived best-effort from the name.
  */
 export function buildVCard(uid: string, card: EditableCard): string {
+  const photo = typeof card.photo === 'string' ? photoLine(card.photo) : null;
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
     `UID:${escapeValue(uid)}`,
     ...managedLines(card),
+    ...(photo ? [photo] : []),
     'END:VCARD',
   ];
   return lines.join('\r\n') + '\r\n';
@@ -434,11 +462,16 @@ export function mergeVCard(uid: string, raw: string | null, card: EditableCard):
   const kept: string[] = [];
   let inserted = false;
   const managed = managedLines(card);
+  // PHOTO is rewritten only when the edit explicitly sets it (string) or clears it (null);
+  // an omitted photo (undefined) leaves the card's existing PHOTO line untouched below.
+  const managePhoto = card.photo !== undefined;
+  const newPhoto = typeof card.photo === 'string' ? photoLine(card.photo) : null;
 
   for (const physical of unfold(raw)) {
     const line = parseLine(physical);
     const prop = line?.prop ?? physical.split(/[;:]/)[0]!.toUpperCase();
     if (prop === 'BEGIN' || prop === 'END') continue; // re-emitted by the wrapper
+    if (managePhoto && prop === 'PHOTO') continue; // drop the old photo; re-added below
     if (line && MANAGED_PROPS.has(prop)) {
       // Drop the old managed line; splice the rebuilt block in at the first hit so
       // managed props stay grouped roughly where they were.
@@ -451,6 +484,7 @@ export function mergeVCard(uid: string, raw: string | null, card: EditableCard):
     kept.push(physical);
   }
   if (!inserted) kept.push(...managed);
+  if (managePhoto && newPhoto) kept.push(newPhoto);
 
   return ['BEGIN:VCARD', ...kept, 'END:VCARD'].join('\r\n') + '\r\n';
 }

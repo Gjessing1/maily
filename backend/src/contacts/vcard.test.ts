@@ -231,6 +231,54 @@ test('mergeVCard rewrites managed fields but preserves PHOTO and X-* extensions'
   assert.match(merged, /REV:20200101T000000Z/);
 });
 
+test('mergeVCard sets a new PHOTO from a data URI when one is supplied', () => {
+  const original = ['BEGIN:VCARD', 'UID:u', 'FN:Old', 'EMAIL:o@example.com', 'END:VCARD'].join(
+    CRLF,
+  );
+  const merged = mergeVCard(
+    'u',
+    original,
+    editable({ name: 'Old', emails: ['o@example.com'], photo: 'data:image/png;base64,ZZZZ' }),
+  );
+  assert.match(merged, /PHOTO;ENCODING=b;TYPE=PNG:ZZZZ/);
+  // It round-trips back to a renderable data URI.
+  assert.equal(parseCardDetail(merged).photo, 'data:image/png;base64,ZZZZ');
+});
+
+test('mergeVCard replaces an existing PHOTO and clears it on null', () => {
+  const original = [
+    'BEGIN:VCARD',
+    'UID:u',
+    'FN:Name',
+    'EMAIL:n@example.com',
+    'PHOTO;ENCODING=b;TYPE=JPEG:OLD',
+    'END:VCARD',
+  ].join(CRLF);
+  const replaced = mergeVCard(
+    'u',
+    original,
+    editable({ name: 'Name', emails: ['n@example.com'], photo: 'data:image/jpeg;base64,NEW' }),
+  );
+  assert.match(replaced, /PHOTO;ENCODING=b;TYPE=JPEG:NEW/);
+  assert.doesNotMatch(replaced, /:OLD/);
+
+  const cleared = mergeVCard(
+    'u',
+    original,
+    editable({ name: 'Name', emails: ['n@example.com'], photo: null }),
+  );
+  assert.doesNotMatch(cleared, /PHOTO/);
+});
+
+test('buildVCard emits an inline PHOTO line for a data URI', () => {
+  const vcard = buildVCard(
+    'u',
+    editable({ name: 'Pic', emails: ['p@example.com'], photo: 'data:image/jpeg;base64,QUJD' }),
+  );
+  assert.match(vcard, /PHOTO;ENCODING=b;TYPE=JPEG:QUJD/);
+  assert.equal(parseCardDetail(vcard).photo, 'data:image/jpeg;base64,QUJD');
+});
+
 test('mergeVCard falls back to a from-scratch build when raw is missing', () => {
   const merged = mergeVCard('fresh', null, editable({ name: 'Fresh', emails: ['f@example.com'] }));
   assert.match(merged, /BEGIN:VCARD/);
@@ -263,7 +311,7 @@ test('splitVCards returns nothing for a file with no card', () => {
   assert.deepEqual(splitVCards('not a vcard at all'), []);
 });
 
-test('toEditableCard narrows a parsed detail to the editable subset (drops uid/photo)', () => {
+test('toEditableCard narrows a parsed detail to the editable subset (drops uid, keeps photo)', () => {
   const vcard = [
     'BEGIN:VCARD',
     'VERSION:3.0',
@@ -278,7 +326,7 @@ test('toEditableCard narrows a parsed detail to the editable subset (drops uid/p
   assert.equal(editableCard.name, 'Carol Smith');
   assert.deepEqual(editableCard.emails, ['carol@example.com']);
   assert.equal(editableCard.phones[0]!.value, '+123');
-  // The narrowed shape carries no uid/photo keys (those are read-only display extras).
+  // UID is a read-only identity extra; PHOTO is carried so an import/round-trip re-emits it.
   assert.equal('uid' in editableCard, false);
-  assert.equal('photo' in editableCard, false);
+  assert.equal(editableCard.photo, 'data:image/jpeg;base64,AAAA');
 });

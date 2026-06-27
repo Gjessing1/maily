@@ -211,6 +211,12 @@ export interface ContactCardInput {
   birthday?: string | null;
   note?: string | null;
   categories?: string[];
+  /**
+   * Profile photo: a `data:` URI (set/replace) or an `https:` URL, `null` to remove the
+   * existing PHOTO, or omitted/`undefined` to leave whatever the card already has untouched
+   * (other unmodelled properties are always preserved server-side regardless).
+   */
+  photo?: string | null;
 }
 
 /** Outcome of a vCard import: how many cards were created vs. skipped. */

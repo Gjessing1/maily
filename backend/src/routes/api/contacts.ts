@@ -80,6 +80,13 @@ function normalizeCard(body: ContactCardInput | undefined): {
     birthday: body?.birthday?.trim() || null,
     note: body?.note?.trim() || null,
     categories: (body?.categories ?? []).map((c) => String(c).trim()).filter(Boolean),
+    // Tri-state PHOTO: absent ⇒ leave untouched; a non-empty string ⇒ set; anything else ⇒ clear.
+    photo:
+      body && 'photo' in body
+        ? typeof body.photo === 'string' && body.photo.trim()
+          ? body.photo.trim()
+          : null
+        : undefined,
   };
   return { card, addressbook };
 }

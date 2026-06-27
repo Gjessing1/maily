@@ -5,7 +5,7 @@
  * backend, which PUTs the vCard (preserving unmodelled properties like PHOTO) and
  * re-syncs the cache, so Radicale stays the source of truth.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type {
   ContactAddressDto,
   ContactCardDto,
@@ -13,8 +13,42 @@ import type {
   TypedValueDto,
 } from '@maily/shared';
 import { api } from '../api/client';
+import { avatarHue, initials } from '../ui/format';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CloseIcon, PlusIcon, TrashIcon } from '../ui/icons';
+
+/** Longest edge (px) an uploaded avatar is scaled to before it's stored in the vCard. */
+const AVATAR_MAX_PX = 512;
+
+/**
+ * Read an image file and re-encode it as a compact JPEG data URI (longest edge ≤
+ * {@link AVATAR_MAX_PX}). Contact photos ride inside the vCard, so a multi-MB camera
+ * photo must be shrunk before it's PUT to Radicale.
+ */
+async function fileToAvatarDataUrl(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('Could not read image'));
+    el.src = dataUrl;
+  });
+  const scale = Math.min(1, AVATAR_MAX_PX / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataUrl; // no canvas — fall back to the original (still works, just larger)
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
 
 /** Suggested labels for typed values; the user can still type a custom one. */
 const PHONE_LABELS = ['Mobile', 'Home', 'Work', 'Other'];
@@ -53,6 +87,11 @@ export function ContactEditor({
   onSaved,
 }: Props) {
   const editing = card !== null;
+  // Photo is tri-state on the wire (set / clear / leave-as-is); `photoDirty` decides whether
+  // we send the field at all, so an unrelated edit never rewrites an existing PHOTO.
+  const [photo, setPhoto] = useState<string | null>(card?.photo ?? null);
+  const [photoDirty, setPhotoDirty] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(card?.name ?? initialName ?? '');
   const [nickname, setNickname] = useState(card?.nickname ?? '');
   const [org, setOrg] = useState(card?.org ?? '');
@@ -75,6 +114,24 @@ export function ContactEditor({
     setEmails((prev) => prev.map((e, idx) => (idx === i ? v : e)));
   const removeEmail = (i: number) =>
     setEmails((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+
+  // ── Photo ───────────────────────────────────────────────────────────────────
+  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be re-picked after a remove
+    if (!file) return;
+    try {
+      setPhoto(await fileToAvatarDataUrl(file));
+      setPhotoDirty(true);
+      setError(null);
+    } catch {
+      setError('Could not read that image.');
+    }
+  }
+  const removePhoto = () => {
+    setPhoto(null);
+    setPhotoDirty(true);
+  };
 
   async function save() {
     const cleanedEmails = emails.map((e) => e.trim()).filter(Boolean);
@@ -99,6 +156,8 @@ export function ContactEditor({
         .split(',')
         .map((c) => c.trim())
         .filter(Boolean),
+      // Only send PHOTO when it actually changed, so editing other fields preserves it.
+      ...(photoDirty ? { photo } : {}),
     };
     try {
       if (card) {
@@ -146,6 +205,48 @@ export function ContactEditor({
         </h2>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 no-scrollbar">
+          {/* Avatar — tap to add/replace; a small remove button clears it. */}
+          <div className="mb-4 flex flex-col items-center gap-2">
+            <button
+              type="button"
+              onClick={() => photoInputRef.current?.click()}
+              className="group relative size-24 overflow-hidden rounded-full active:opacity-90"
+              aria-label={photo ? 'Replace photo' : 'Add photo'}
+            >
+              {photo ? (
+                <img src={photo} alt="" className="size-24 rounded-full object-cover" />
+              ) : (
+                <span
+                  className="flex size-24 items-center justify-center rounded-full text-2xl font-semibold text-white"
+                  style={{
+                    backgroundColor: `hsl(${avatarHue(emails[0] || name || '')} 45% 42%)`,
+                  }}
+                >
+                  {initials(name || null, emails[0] || null)}
+                </span>
+              )}
+              <span className="absolute inset-x-0 bottom-0 bg-black/45 py-1 text-center text-[11px] font-medium text-white">
+                {photo ? 'Change' : 'Add'}
+              </span>
+            </button>
+            {photo && (
+              <button
+                type="button"
+                onClick={removePhoto}
+                className="text-xs font-medium text-danger active:opacity-70"
+              >
+                Remove photo
+              </button>
+            )}
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              onChange={onPickPhoto}
+              className="hidden"
+            />
+          </div>
+
           <Field label="Name">
             <Text value={name} onChange={setName} placeholder="Full name" />
           </Field>
