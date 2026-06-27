@@ -130,9 +130,31 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * True if a string carries a recognizable HTML tag. Used to spot a `text/plain`
+ * part that's actually polluted with markup — some senders (e.g. Eloqua) leak an
+ * `<html …>`/preheader tag into the plaintext alternative, which would otherwise
+ * surface verbatim in the inbox snippet. Matches a known tag name so prose with a
+ * stray `a < b` or an `<email@addr>` doesn't trip it.
+ */
+function containsHtmlTag(s: string): boolean {
+  return /<\/?(?:!doctype|html|head|body|meta|title|style|div|span|table|tr|td|th|tbody|thead|p|br|hr|a|img|ul|ol|li|h[1-6]|font|center|b|strong|i|em)\b[^>]*>/i.test(
+    s,
+  );
+}
+
 /** Build a short preview snippet from the available bodies. */
 export function makeSnippet(text: string | null, html: string | null, max = 200): string | null {
-  const source = text?.trim() || (html ? htmlToText(html) : '');
+  const plain = text?.trim();
+  // Prefer the plaintext part, but if it's contaminated with HTML markup run it
+  // through the same tag-stripper as the HTML body so the snippet stays readable.
+  const source = plain
+    ? containsHtmlTag(plain)
+      ? htmlToText(plain)
+      : plain
+    : html
+      ? htmlToText(html)
+      : '';
   if (!source) return null;
   const collapsed = source.replace(/\s+/g, ' ').trim();
   return collapsed.length > max ? `${collapsed.slice(0, max).trimEnd()}…` : collapsed;

@@ -21,6 +21,7 @@ import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 import { startCleanupCache } from './cleanup/cache.js';
+import { backfillSnippets } from './cleanup/snippetBackfill.js';
 import { backfillSourceBytes } from './cleanup/sourceBytesBackfill.js';
 import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
 
@@ -79,6 +80,18 @@ async function main(): Promise<void> {
       backfillSourceBytes();
     } catch (err) {
       log.error('source_bytes backfill failed (non-fatal):', err);
+    }
+  });
+
+  // Self-healing preview fix: rewrite any inbox snippet that still holds raw HTML
+  // markup leaked from a contaminated text/plain part (makeSnippet now strips it). A
+  // no-op once every contaminated snippet has been cleaned. Deferred off the listen
+  // path so a large backlog can't gate the HTTP server coming up.
+  setImmediate(() => {
+    try {
+      backfillSnippets();
+    } catch (err) {
+      log.error('snippet backfill failed (non-fatal):', err);
     }
   });
 
