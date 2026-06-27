@@ -570,6 +570,57 @@ function ActionSliceCard({
   );
 }
 
+/**
+ * Built-in protected-safety words shown (read-only) in the "Protected mail" editor — mirrors the
+ * backend's PROTECTED_KEYWORDS (cleanup/keywords.ts). Display only: the real gate is server-side,
+ * so this list is for context; the user's additions are what's editable.
+ */
+const PROTECTED_BUILTINS = [
+  'invoice',
+  'receipt',
+  'payment',
+  'tax',
+  'vat',
+  'refund',
+  'faktura',
+  'kvittering',
+  'betaling',
+  'skatt',
+  'mva',
+  'regning',
+  'kid',
+  'refusjon',
+  'contract',
+  'agreement',
+  'terms',
+  'kontrakt',
+  'avtale',
+  'vilkår',
+  'password',
+  'security',
+  'verify',
+  'verification',
+  'otp',
+  'account',
+  'passord',
+  'sikkerhet',
+  'verifiser',
+  'innlogging',
+  'konto',
+  'engangskode',
+  'health',
+  'medical',
+  'prescription',
+  'patient',
+  'passport',
+  'helse',
+  'lege',
+  'resept',
+  'pasient',
+  'personnummer',
+  'fødselsnummer',
+];
+
 /** Per-slice metadata for the config card: display label + (where relevant) its threshold. */
 const SLICE_META: Record<
   ActionSlice,
@@ -676,7 +727,7 @@ function KeywordEditor({
   onChange,
 }: {
   title: string;
-  hint: string;
+  hint?: string;
   builtins: string[];
   value: string[];
   onChange: (list: string[]) => void;
@@ -691,7 +742,7 @@ function KeywordEditor({
   return (
     <div className="mt-3 border-t border-border pt-3">
       <p className="text-xs font-medium uppercase tracking-wide text-faint">{title}</p>
-      <p className="mt-1 text-xs text-muted">{hint}</p>
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {builtins.map((b) => (
           <span key={b} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-faint">
@@ -916,7 +967,10 @@ export function Cleanup() {
   // Apply a custom-keyword list: persist it, push it to the server now (the keyword sets feed
   // the slice FTS queries), then refresh the dashboard so the new terms take effect immediately.
   const applyKeywords = useCallback(
-    (key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords', list: string[]) => {
+    (
+      key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords' | 'cleanupProtectedKeywords',
+      list: string[],
+    ) => {
       setPref(key, list);
       void api
         .putSettings(getPrefs() as unknown as Record<string, unknown>)
@@ -1015,6 +1069,21 @@ export function Cleanup() {
 
             {/* Per-slice config — pick which angles to surface and tune their thresholds. */}
             <SliceConfigCard prefs={prefs} />
+
+            {/* Protected mail — the HARD safety gate, extendable with your own words. */}
+            <section className="rounded-xl border border-border bg-surface p-4">
+              <h2 className="text-base font-semibold text-fg">Protected mail</h2>
+              <p className="mt-1 text-sm text-muted">
+                Mail whose body contains one of these words is never offered for cleanup. Add your
+                own to protect more — the built-ins always apply, so this only ever protects more.
+              </p>
+              <KeywordEditor
+                title="Protected words"
+                builtins={PROTECTED_BUILTINS}
+                value={prefs.cleanupProtectedKeywords}
+                onChange={(list) => applyKeywords('cleanupProtectedKeywords', list)}
+              />
+            </section>
 
             {/* Guarded mail — manually shielded messages, with a one-tap release. */}
             {(summary?.keptMessages ?? 0) > 0 && (

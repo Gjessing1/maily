@@ -112,6 +112,12 @@ export interface Prefs {
   /** Extra newsletter/bulk-mail markers the user added, merged with the built-ins server-side. */
   cleanupNewsletterKeywords: string[];
   /**
+   * Extra protected-safety markers the user added, merged with the built-in HARD gate
+   * server-side: mail whose body carries one is never offered for cleanup. Additive only —
+   * the built-ins always apply, so this can only ever protect *more* mail.
+   */
+  cleanupProtectedKeywords: string[];
+  /**
    * Hrefs of address books collapsed (hidden) in the Contacts manager. A view-only
    * preference — it never affects which books feed composer autocomplete (that's the
    * server-side "active" set); it only hides a book's section in the manager list.
@@ -157,6 +163,7 @@ const DEFAULTS: Prefs = {
   cleanupUnreadMonths: 12,
   cleanupColdKeepKeywords: [],
   cleanupNewsletterKeywords: [],
+  cleanupProtectedKeywords: [],
   hiddenContactBooks: [],
   undoSendSeconds: 10,
 };

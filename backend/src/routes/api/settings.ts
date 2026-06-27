@@ -9,7 +9,11 @@ import { getPrefs as getStoredPrefs, putPrefs as putStoredPrefs } from '../../db
 import { bumpCleanupCache } from '../../cleanup/cache.js';
 
 /** Prefs keys whose change alters cleanup slice membership and must bust the analytics cache. */
-const CLEANUP_KEYWORD_KEYS = ['cleanupColdKeepKeywords', 'cleanupNewsletterKeywords'] as const;
+const CLEANUP_KEYWORD_KEYS = [
+  'cleanupColdKeepKeywords',
+  'cleanupNewsletterKeywords',
+  'cleanupProtectedKeywords',
+] as const;
 
 /** Did any cleanup-keyword list change between the stored prefs and the incoming body? */
 function cleanupKeywordsChanged(

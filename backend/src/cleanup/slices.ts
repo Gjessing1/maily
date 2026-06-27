@@ -26,9 +26,8 @@ import type {
   CleanupSummaryDto,
 } from '@maily/shared';
 import { db } from '../db/client.js';
-import { getPrefs } from '../db/settings.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
-import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
+import { customKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
 import { SENDER_KEY, senderKeyOf } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
@@ -71,24 +70,6 @@ interface RawGroup {
 }
 
 const iso = (ms: number | null): string | null => (ms != null ? new Date(ms).toISOString() : null);
-
-/**
- * User-added keyword markers from the synced prefs blob, merged on top of the built-in sets
- * (the Cleanup screen lets the user tune the cold-storage "keep" and newsletter lists). Each
- * term is lowercased, stripped of double quotes (they'd break the FTS phrase wrapper in
- * {@link ftsOrMatch}) and de-duped; an absent/garbled pref yields no extra terms.
- */
-function customKeywords(key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords'): string[] {
-  const raw = (getPrefs() as Record<string, unknown>)[key];
-  if (!Array.isArray(raw)) return [];
-  const out = new Set<string>();
-  for (const x of raw) {
-    if (typeof x !== 'string') continue;
-    const term = x.trim().toLowerCase().replace(/"/g, '');
-    if (term) out.add(term);
-  }
-  return [...out];
-}
 
 const toGroup = (r: RawGroup): CleanupGroupDto => ({
   domain: r.domain,
@@ -557,7 +538,7 @@ export function cleanupSummary(): CleanupSummaryDto {
   const prot = db.get(
     sql`SELECT COUNT(*) AS n FROM messages m
         WHERE ${LIVE}
-        AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${PROTECTED_MATCH})`,
+        AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})`,
   ) as { n: number };
   // "Freed so far" — messages the cleanup queue has finished moving to Trash. The local
   // tombstones persist, so this is a durable running tally of what cleanup achieved.
