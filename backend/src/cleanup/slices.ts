@@ -26,6 +26,7 @@ import type {
   CleanupSummaryDto,
 } from '@maily/shared';
 import { db } from '../db/client.js';
+import { getPrefs } from '../db/settings.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
 import { ftsOrMatch, notProtected, PROTECTED_MATCH } from './safety.js';
 import { SENDER_KEY, senderKeyOf } from './senders.js';
@@ -70,6 +71,24 @@ interface RawGroup {
 }
 
 const iso = (ms: number | null): string | null => (ms != null ? new Date(ms).toISOString() : null);
+
+/**
+ * User-added keyword markers from the synced prefs blob, merged on top of the built-in sets
+ * (the Cleanup screen lets the user tune the cold-storage "keep" and newsletter lists). Each
+ * term is lowercased, stripped of double quotes (they'd break the FTS phrase wrapper in
+ * {@link ftsOrMatch}) and de-duped; an absent/garbled pref yields no extra terms.
+ */
+function customKeywords(key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords'): string[] {
+  const raw = (getPrefs() as Record<string, unknown>)[key];
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<string>();
+  for (const x of raw) {
+    if (typeof x !== 'string') continue;
+    const term = x.trim().toLowerCase().replace(/"/g, '');
+    if (term) out.add(term);
+  }
+  return [...out];
+}
 
 const toGroup = (r: RawGroup): CleanupGroupDto => ({
   domain: r.domain,
@@ -242,7 +261,10 @@ export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
  */
 function coldStorageWhere(years: number): SQL {
   const cutoff = Date.now() - years * MS_PER_YEAR;
-  const coldMatch = ftsOrMatch(COLD_KEEP_KEYWORDS);
+  const coldMatch = ftsOrMatch([
+    ...COLD_KEEP_KEYWORDS,
+    ...customKeywords('cleanupColdKeepKeywords'),
+  ]);
   return sql`${ELIGIBLE}
     AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
     AND ${notProtected('m')}
@@ -287,7 +309,10 @@ function unreadWhere(months: number): SQL {
  * — the deterministic bulk-mail heuristic, riding the FTS index. The bulk-mail angle.
  */
 function newslettersWhere(): SQL {
-  const match = ftsOrMatch(NEWSLETTER_KEYWORDS);
+  const match = ftsOrMatch([
+    ...NEWSLETTER_KEYWORDS,
+    ...customKeywords('cleanupNewsletterKeywords'),
+  ]);
   return sql`${ELIGIBLE} AND ${notProtected('m')}
     AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${match})`;
 }
@@ -540,11 +565,47 @@ export function cleanupSummary(): CleanupSummaryDto {
     sql`SELECT COUNT(*) AS n, COALESCE(SUM(${BYTES}), 0) AS b FROM messages m
         WHERE m.id IN (SELECT message_id FROM cleanup_queue WHERE status = 'done')`,
   ) as { n: number; b: number };
+  // Manually guarded (cleanup_keep) live mail — the "Guarded mail" section's badge count.
+  const kept = db.get(
+    sql`SELECT COUNT(*) AS n FROM messages m WHERE ${LIVE} AND m.cleanup_keep = 1`,
+  ) as { n: number };
   return {
     totalMessages,
     totalBytes,
     protectedMessages: prot.n,
     trashedMessages: trashed.n,
     trashedBytes: trashed.b,
+    keptMessages: kept.n,
   };
+}
+
+/**
+ * The manually-guarded messages (cleanup_keep set), newest first — the list behind the
+ * Cleanup screen's "Guarded mail" section. Paged like {@link sliceMessages}; lets the user
+ * see (and release) anything they shielded by mistake. Not a delete-eligible slice, so it
+ * carries no safety predicate — guarded mail is, by definition, the user's keep set.
+ */
+export function keptMessages(opts: { limit?: number; offset?: number } = {}): {
+  messages: CleanupMessageDto[];
+  total: number;
+  truncated: boolean;
+} {
+  const limit = opts.limit ?? MESSAGE_LIMIT;
+  const offset = opts.offset && opts.offset > 0 ? opts.offset : 0;
+  const where = sql`${LIVE} AND m.cleanup_keep = 1`;
+
+  const agg = db.get(sql`SELECT COUNT(*) AS total FROM messages m WHERE ${where}`) as {
+    total: number;
+  };
+
+  const rows = db.all(
+    sql`SELECT m.id AS id, m.subject AS subject, m.from_name AS fromName,
+               m.from_address AS fromAddress, m.received_at AS receivedAt, ${BYTES} AS bytes
+        FROM messages m
+        WHERE ${where}
+        ORDER BY m.received_at DESC
+        LIMIT ${limit} OFFSET ${offset}`,
+  ) as RawMessage[];
+
+  return { messages: rows.map(toMessage), total: agg.total, truncated: offset + limit < agg.total };
 }

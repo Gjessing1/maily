@@ -18,10 +18,12 @@ import type {
   CleanupExecuteResultDto,
   CleanupKeepRequest,
   CleanupKeepResultDto,
+  CleanupKeptDto,
   CleanupMessagesDto,
 } from '@maily/shared';
 import {
   isDeleteSlice,
+  keptMessages,
   paginateSlice,
   sliceMessageIds,
   sliceMessages,
@@ -148,6 +150,19 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     });
     return { slice, domain: domain || null, ...res };
   });
+
+  // The manually-guarded messages (cleanup_keep) — the "Guarded mail" section, so a message
+  // shielded by mistake can be found and released (via POST /keep with keep:false).
+  app.get<{ Querystring: { limit?: string; offset?: string } }>(
+    '/api/cleanup/kept',
+    async (req): Promise<CleanupKeptDto> => {
+      const lim = posNum(req.query.limit);
+      return keptMessages({
+        limit: lim ? Math.min(lim, 500) : undefined,
+        offset: posNum(req.query.offset),
+      });
+    },
+  );
 
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.

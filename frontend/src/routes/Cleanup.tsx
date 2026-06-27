@@ -26,20 +26,27 @@ import type {
   CleanupSliceDto,
 } from '@maily/shared';
 import { api } from '../api/client';
-import { setPref, usePrefs } from '../state/prefs';
+import { getPrefs, setPref, usePrefs, type Prefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
-import { PRESETS, PRESET_ORDER, type ActionSlice, type SliceParams } from '../state/cleanupPresets';
+import {
+  enabledSlices,
+  SLICE_ORDER,
+  type ActionSlice,
+  type SliceParams,
+} from '../state/cleanupConfig';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
   ChevronDownIcon,
+  CloseIcon,
   MailOpenIcon,
+  PlusIcon,
   SearchIcon,
   ShieldIcon,
   SparklesIcon,
 } from '../ui/icons';
 
-export type { SliceParams } from '../state/cleanupPresets';
+export type { SliceParams } from '../state/cleanupConfig';
 
 /** Human-readable byte size (1 KB = 1024 B). */
 export function formatBytes(n: number): string {
@@ -88,12 +95,15 @@ export function CleanupMessageRow({
   selected = false,
   onToggle,
   onKeep,
+  onUnkeep,
 }: {
   m: CleanupMessageDto;
   selectable?: boolean;
   selected?: boolean;
   onToggle?: () => void;
   onKeep?: () => void;
+  /** Release a guarded message back into cleanup (the "Guarded mail" section's action). */
+  onUnkeep?: () => void;
 }) {
   const body = (
     <>
@@ -114,6 +124,18 @@ export function CleanupMessageRow({
       aria-label="Keep — never clean up"
       title="Keep — exclude from cleanup"
       className="shrink-0 rounded-full p-2 text-faint active:bg-surface-2 active:text-accent"
+    >
+      <ShieldIcon className="size-5" />
+    </button>
+  );
+
+  const unkeepButton = onUnkeep && (
+    <button
+      type="button"
+      onClick={onUnkeep}
+      aria-label="Stop guarding — allow cleanup"
+      title="Stop guarding — allow cleanup"
+      className="shrink-0 rounded-full p-2 text-accent active:bg-surface-2"
     >
       <ShieldIcon className="size-5" />
     </button>
@@ -149,6 +171,17 @@ export function CleanupMessageRow({
           <MailOpenIcon className="size-5" />
         </Link>
         {keepButton ?? <span className="pr-3" />}
+      </div>
+    );
+  }
+
+  if (unkeepButton) {
+    return (
+      <div className="flex w-full items-center active:bg-surface-2">
+        <Link to={`/m/${m.id}`} className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3">
+          {body}
+        </Link>
+        {unkeepButton}
       </div>
     );
   }
@@ -402,6 +435,7 @@ function ActionSliceCard({
   slice,
   params,
   onExecuted,
+  footer,
 }: {
   title: string;
   description: string;
@@ -409,6 +443,8 @@ function ActionSliceCard({
   slice: CleanupSliceDto | null;
   params?: SliceParams;
   onExecuted: () => void;
+  /** Extra controls rendered at the bottom of the card (e.g. a keyword editor). */
+  footer?: React.ReactNode;
 }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
@@ -529,6 +565,278 @@ function ActionSliceCard({
           </div>
         </>
       )}
+      {footer}
+    </section>
+  );
+}
+
+/** Per-slice metadata for the config card: display label + (where relevant) its threshold. */
+const SLICE_META: Record<
+  ActionSlice,
+  {
+    label: string;
+    threshold?: {
+      prefKey: 'cleanupLargeMinMb' | 'cleanupColdYears' | 'cleanupUnreadMonths';
+      unit: string;
+      cmp: string;
+      min: number;
+      max: number;
+    };
+  }
+> = {
+  large: {
+    label: 'Large messages',
+    threshold: { prefKey: 'cleanupLargeMinMb', unit: 'MB', cmp: '≥', min: 1, max: 500 },
+  },
+  'never-replied': { label: 'Never replied to' },
+  newsletters: { label: 'Newsletters & bulk mail' },
+  unread: {
+    label: 'Never opened',
+    threshold: { prefKey: 'cleanupUnreadMonths', unit: 'months', cmp: '>', min: 1, max: 120 },
+  },
+  'cold-storage': {
+    label: 'Cold storage',
+    threshold: { prefKey: 'cleanupColdYears', unit: 'years', cmp: '>', min: 1, max: 30 },
+  },
+};
+
+/**
+ * The cleanup config card — replaces the old fixed presets. Each slice has an independent
+ * on/off toggle and (where it has one) an inline threshold. Settings persist in synced prefs;
+ * the dashboard re-fetches when a threshold changes (the values flow through as query params).
+ */
+function SliceConfigCard({ prefs }: { prefs: Prefs }) {
+  const slices = enabledSlices(prefs);
+  return (
+    <section className="rounded-xl border border-border bg-surface p-4">
+      <h2 className="text-base font-semibold text-fg">Cleanup suggestions</h2>
+      <p className="mt-1 text-sm text-muted">
+        Choose which angles to surface and tune their thresholds. You always confirm before anything
+        moves.
+      </p>
+      <div className="mt-3 divide-y divide-border">
+        {SLICE_ORDER.map((id) => {
+          const meta = SLICE_META[id];
+          const on = slices[id];
+          const t = meta.threshold;
+          return (
+            <div key={id} className="flex items-center gap-3 py-2.5">
+              <label className="flex min-w-0 flex-1 items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => setPref('cleanupSlices', { ...slices, [id]: e.target.checked })}
+                  className="size-4 shrink-0 accent-accent"
+                />
+                <span className="min-w-0 flex-1 truncate text-sm text-fg">{meta.label}</span>
+              </label>
+              {t && (
+                <div
+                  className={`flex shrink-0 items-center gap-1.5 text-sm ${on ? 'text-muted' : 'text-faint'}`}
+                >
+                  <span>{t.cmp}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={t.min}
+                    max={t.max}
+                    value={prefs[t.prefKey]}
+                    disabled={!on}
+                    onChange={(e) => {
+                      const n = Math.round(Number(e.target.value));
+                      if (Number.isFinite(n) && n >= t.min && n <= t.max) setPref(t.prefKey, n);
+                    }}
+                    className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-right tabular-nums text-fg outline-none focus:border-accent disabled:opacity-50"
+                  />
+                  <span className="w-12">{t.unit}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+        Financial, security, legal and medical mail is always protected, and nothing moves without
+        your confirmation.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Editable keyword list for a slice (cold-storage "keep" words / newsletter markers). The
+ * built-ins are shown read-only (they always apply); the user's additions are removable chips.
+ * Changes are persisted + pushed to the server by the parent's `onChange`.
+ */
+function KeywordEditor({
+  title,
+  hint,
+  builtins,
+  value,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  builtins: string[];
+  value: string[];
+  onChange: (list: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const add = () => {
+    const term = draft.trim().toLowerCase();
+    setDraft('');
+    if (!term || value.includes(term) || builtins.includes(term)) return;
+    onChange([...value, term]);
+  };
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-faint">{title}</p>
+      <p className="mt-1 text-xs text-muted">{hint}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {builtins.map((b) => (
+          <span key={b} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-faint">
+            {b}
+          </span>
+        ))}
+        {value.map((term) => (
+          <span
+            key={term}
+            className="flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent"
+          >
+            {term}
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((x) => x !== term))}
+              aria-label={`Remove ${term}`}
+              className="active:opacity-70"
+            >
+              <CloseIcon className="size-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add a word…"
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-fg outline-none focus:border-accent"
+        />
+        <button
+          type="button"
+          onClick={add}
+          className="flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-accent active:bg-surface-2"
+        >
+          <PlusIcon className="size-4" /> Add
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-faint">
+        Built-in words (grey) always apply; your additions are highlighted.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The "Guarded mail" section — the messages the user has manually shielded (cleanup_keep). A
+ * collapsible, paged list with a one-tap release per row, so a message guarded by mistake can
+ * be let back into the slices. `onChanged` refreshes the dashboard summary after a release.
+ */
+function GuardedMailSection({ count, onChanged }: { count: number; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<CleanupMessageDto[] | null>(null);
+  const [total, setTotal] = useState(count);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const load = useCallback((offset: number) => {
+    if (offset === 0) setMessages(null);
+    else setLoadingMore(true);
+    setError(false);
+    api.cleanup
+      .kept({ offset: offset || undefined })
+      .then((res) => {
+        setMessages((prev) => (offset === 0 || !prev ? res.messages : [...prev, ...res.messages]));
+        setTotal(res.total);
+        setHasMore(res.truncated);
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoadingMore(false));
+  }, []);
+
+  useEffect(() => {
+    if (open && messages === null) load(0);
+  }, [open, messages, load]);
+
+  const release = (id: string) => {
+    setMessages((prev) => prev?.filter((m) => m.id !== id) ?? prev);
+    setTotal((t) => Math.max(0, t - 1));
+    void api.cleanup
+      .keep([id], false)
+      .then(onChanged)
+      .catch(() => load(0));
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-surface p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-baseline justify-between gap-3 text-left"
+      >
+        <span className="flex items-center gap-2 text-base font-semibold text-fg">
+          <ShieldIcon className="size-5 text-accent" /> Guarded mail
+        </span>
+        <span className="shrink-0 text-sm tabular-nums text-muted">
+          {total.toLocaleString()} {open ? '▴' : '▾'}
+        </span>
+      </button>
+      <p className="mt-1 text-sm text-muted">
+        Messages you’ve shielded from cleanup. Release any you guarded by mistake.
+      </p>
+      {open && (
+        <div className="mt-3">
+          {messages === null ? (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          ) : error && messages.length === 0 ? (
+            <p className="px-1 py-3 text-center text-sm text-danger">Couldn’t load guarded mail.</p>
+          ) : messages.length === 0 ? (
+            <p className="px-1 py-3 text-center text-sm text-muted">Nothing guarded.</p>
+          ) : (
+            <>
+              <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+                {messages.map((m) => (
+                  <li key={m.id}>
+                    <CleanupMessageRow m={m} onUnkeep={() => release(m.id)} />
+                  </li>
+                ))}
+              </ul>
+              {hasMore && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => load(messages.length)}
+                    disabled={loadingMore}
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-1.5 text-sm font-medium text-fg active:bg-surface-2 disabled:opacity-50"
+                  >
+                    {loadingMore ? <Spinner /> : 'Load more'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -536,8 +844,12 @@ function ActionSliceCard({
 export function Cleanup() {
   const navigate = useNavigate();
   const prefs = usePrefs();
-  const preset = PRESETS[prefs.cleanupPreset] ? prefs.cleanupPreset : 'balanced';
-  const { coldYears, largeMinMb, unreadMonths } = PRESETS[preset];
+  const { coldYears, largeMinMb, unreadMonths } = {
+    coldYears: prefs.cleanupColdYears,
+    largeMinMb: prefs.cleanupLargeMinMb,
+    unreadMonths: prefs.cleanupUnreadMonths,
+  };
+  const slices = enabledSlices(prefs);
 
   // Stale-while-revalidate: render the last-known dashboard instantly (prefetched on app
   // idle / cached from the previous visit), refresh in the background, swap in the result.
@@ -601,15 +913,29 @@ export function Cleanup() {
   const unread = dash?.unread ?? null;
   const newsletters = dash?.newsletters ?? null;
 
-  // An action slice renders as a full card only when the active preset surfaces it.
+  // Apply a custom-keyword list: persist it, push it to the server now (the keyword sets feed
+  // the slice FTS queries), then refresh the dashboard so the new terms take effect immediately.
+  const applyKeywords = useCallback(
+    (key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords', list: string[]) => {
+      setPref(key, list);
+      void api
+        .putSettings(getPrefs() as unknown as Record<string, unknown>)
+        .then(refresh)
+        .catch(() => undefined);
+    },
+    [refresh],
+  );
+
+  // An action slice renders as a full card only when its toggle is on.
   const renderAction = (
     sliceId: ActionSlice,
     title: string,
     description: string,
     slice: CleanupSliceDto | null,
     params?: SliceParams,
+    footer?: React.ReactNode,
   ) => {
-    if (!PRESETS[preset].slices.includes(sliceId)) return null;
+    if (!slices[sliceId]) return null;
     return (
       <ActionSliceCard
         key={sliceId}
@@ -619,6 +945,7 @@ export function Cleanup() {
         slice={slice}
         params={params}
         onExecuted={refresh}
+        footer={footer}
       />
     );
   };
@@ -686,62 +1013,13 @@ export function Cleanup() {
               )}
             </section>
 
-            {/* 1-click aggressiveness preset — a profile over the action slices below. */}
-            <section className="rounded-xl border border-border bg-surface p-4">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-base font-semibold text-fg">Cleanup style</h2>
-              </div>
-              <p className="mt-1 text-sm text-muted">
-                How aggressively to suggest cleanup. You always confirm before anything moves.
-              </p>
-              <div
-                role="radiogroup"
-                aria-label="Cleanup style"
-                className="mt-3 flex gap-1 rounded-full bg-surface-2 p-1"
-              >
-                {PRESET_ORDER.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    role="radio"
-                    aria-checked={preset === p}
-                    onClick={() => setPref('cleanupPreset', p)}
-                    className={`flex-1 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                      preset === p ? 'bg-accent text-white' : 'text-muted active:bg-surface'
-                    }`}
-                  >
-                    {PRESETS[p].label}
-                  </button>
-                ))}
-              </div>
-              {/* Spell out what the active style actually surfaces, so the choice isn't opaque. */}
-              <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
-                <p>
-                  <span className="font-medium text-fg">{PRESETS[preset].label}</span> changes which
-                  suggestion cards appear below and their thresholds:
-                </p>
-                <ul className="mt-1 list-inside list-disc space-y-0.5">
-                  <li>
-                    mail older than {coldYears} year{coldYears === 1 ? '' : 's'} with no invoice,
-                    tax or contract
-                  </li>
-                  <li>messages over {largeMinMb} MB</li>
-                  {PRESETS[preset].slices.includes('unread') && (
-                    <li>mail still unopened after {unreadMonths} months</li>
-                  )}
-                  {PRESETS[preset].slices.includes('never-replied') && (
-                    <li>senders you’ve never replied to</li>
-                  )}
-                  {PRESETS[preset].slices.includes('newsletters') && (
-                    <li>newsletters &amp; bulk mail (unsubscribe link)</li>
-                  )}
-                </ul>
-                <p className="mt-1">
-                  Financial, security, legal and medical mail is always protected, and nothing moves
-                  without your confirmation.
-                </p>
-              </div>
-            </section>
+            {/* Per-slice config — pick which angles to surface and tune their thresholds. */}
+            <SliceConfigCard prefs={prefs} />
+
+            {/* Guarded mail — manually shielded messages, with a one-tap release. */}
+            {(summary?.keptMessages ?? 0) > 0 && (
+              <GuardedMailSection count={summary!.keptMessages} onChanged={refresh} />
+            )}
 
             <InfoSliceCard
               title="Storage by sender"
@@ -766,6 +1044,14 @@ export function Cleanup() {
               'Newsletters & bulk mail',
               'Mail carrying an unsubscribe link — newsletters, promotions and other bulk sends.',
               newsletters,
+              undefined,
+              <KeywordEditor
+                title="Words that flag bulk mail"
+                hint="Mail whose body contains one of these is treated as a newsletter."
+                builtins={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
+                value={prefs.cleanupNewsletterKeywords}
+                onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
+              />,
             )}
             {renderAction(
               'unread',
@@ -780,6 +1066,22 @@ export function Cleanup() {
               `Mail older than ${coldYears} year${coldYears === 1 ? '' : 's'} with no invoice, tax or contract — safe to let go.`,
               cold,
               { years: coldYears },
+              <KeywordEditor
+                title="Words that keep mail"
+                hint="An old message whose body contains one of these is spared from this slice."
+                builtins={[
+                  'invoice',
+                  'faktura',
+                  'tax',
+                  'skatt',
+                  'mva',
+                  'contract',
+                  'kontrakt',
+                  'avtale',
+                ]}
+                value={prefs.cleanupColdKeepKeywords}
+                onChange={(list) => applyKeywords('cleanupColdKeepKeywords', list)}
+              />,
             )}
 
             <p className="px-1 pb-4 text-center text-xs text-faint">

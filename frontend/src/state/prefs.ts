@@ -24,12 +24,8 @@ export type SwipeAction = 'none' | 'read' | 'delete';
  */
 export type ReadingPane = 'none' | 'right' | 'below';
 
-/**
- * Cleanup aggressiveness preset (ROADMAP Phase 6b.2). A 1-click profile over the
- * deterministic cleanup slices: how old "cold storage" must be and whether the
- * never-replied heuristic is surfaced at all. 'strict' keeps the most.
- */
-export type CleanupPreset = 'strict' | 'balanced' | 'aggressive';
+/** A delete-eligible cleanup slice id (matches the backend's DELETE_SLICES). */
+export type CleanupSliceId = 'large' | 'cold-storage' | 'unread' | 'newsletters' | 'never-replied';
 
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
@@ -96,8 +92,25 @@ export interface Prefs {
    * (e.g. "github.com"). Lowercased host part of the From address. Empty = trust none.
    */
   trustedImageDomains: string[];
-  /** Cleanup Dashboard aggressiveness profile (ROADMAP Phase 6b.2). */
-  cleanupPreset: CleanupPreset;
+  /**
+   * Which delete-eligible cleanup slices are surfaced as suggestion cards (ROADMAP Phase 6b).
+   * Replaces the old fixed strict/balanced/aggressive presets — each slice is toggled
+   * independently. A missing key falls back to the slice's built-in default in the UI.
+   */
+  cleanupSlices: Record<CleanupSliceId, boolean>;
+  /** Cold-storage age threshold (years) — older mail without value markers is a candidate. */
+  cleanupColdYears: number;
+  /** Large-message size threshold (MB). */
+  cleanupLargeMinMb: number;
+  /** Unread-and-old age threshold (months). */
+  cleanupUnreadMonths: number;
+  /**
+   * Extra cold-storage "keep" markers the user added, merged with the built-ins server-side:
+   * an old message whose body carries one is spared from the cold-storage slice.
+   */
+  cleanupColdKeepKeywords: string[];
+  /** Extra newsletter/bulk-mail markers the user added, merged with the built-ins server-side. */
+  cleanupNewsletterKeywords: string[];
   /**
    * Hrefs of address books collapsed (hidden) in the Contacts manager. A view-only
    * preference — it never affects which books feed composer autocomplete (that's the
@@ -132,7 +145,18 @@ const DEFAULTS: Prefs = {
   hiddenFolderIds: [],
   collapseAccountsByDefault: false,
   trustedImageDomains: [],
-  cleanupPreset: 'balanced',
+  cleanupSlices: {
+    large: true,
+    'cold-storage': true,
+    unread: true,
+    newsletters: true,
+    'never-replied': true,
+  },
+  cleanupColdYears: 2,
+  cleanupLargeMinMb: 10,
+  cleanupUnreadMonths: 12,
+  cleanupColdKeepKeywords: [],
+  cleanupNewsletterKeywords: [],
   hiddenContactBooks: [],
   undoSendSeconds: 10,
 };

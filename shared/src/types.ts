@@ -442,6 +442,19 @@ export interface CleanupSummaryDto {
   trashedMessages: number;
   /** Estimated bytes those trashed messages were occupying. */
   trashedBytes: number;
+  /** Messages the user has manually guarded (cleanup_keep) — excluded from every slice. */
+  keptMessages: number;
+}
+
+/**
+ * The manually-guarded messages (cleanup_keep set), newest first — the list behind the
+ * Cleanup screen's "Guarded mail" section, so a message guarded by mistake can be released.
+ */
+export interface CleanupKeptDto {
+  messages: CleanupMessageDto[];
+  /** Total guarded messages (before the page `limit`). */
+  total: number;
+  truncated: boolean;
 }
 
 /**

@@ -12,7 +12,7 @@
 import type { CleanupDashboardDto } from '@maily/shared';
 import { api } from '../api/client';
 import { getPrefs } from './prefs';
-import { presetThresholds, type SliceParams } from './cleanupPresets';
+import { cleanupThresholds, type SliceParams } from './cleanupConfig';
 
 const KEY = 'maily.cleanupDash';
 
@@ -58,13 +58,13 @@ export async function loadDashboard(t: SliceParams): Promise<CleanupDashboardDto
 let prefetched = false;
 
 /**
- * Warm the client cache for the active preset's thresholds in the background. Idempotent
+ * Warm the client cache for the active config's thresholds in the background. Idempotent
  * per session; failures are silent (the dashboard falls back to fetching on entry).
  */
 export function prefetchCleanupDashboard(): void {
   if (prefetched) return;
   prefetched = true;
-  void loadDashboard(presetThresholds(getPrefs().cleanupPreset)).catch(() => {
+  void loadDashboard(cleanupThresholds(getPrefs())).catch(() => {
     prefetched = false; // didn't land — allow a later attempt
   });
 }

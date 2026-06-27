@@ -13,6 +13,7 @@ import type {
   CleanupExecuteRequest,
   CleanupExecuteResultDto,
   CleanupKeepResultDto,
+  CleanupKeptDto,
   CleanupMessagesDto,
   CleanupQueueStatusDto,
   CleanupSliceDto,
@@ -442,6 +443,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ messageIds, keep }),
       }),
+    /** The manually-guarded messages (cleanup_keep) — the "Guarded mail" section. */
+    kept: (opts: { limit?: number; offset?: number } = {}) => {
+      const q = new URLSearchParams();
+      if (opts.limit) q.set('limit', String(opts.limit));
+      if (opts.offset) q.set('offset', String(opts.offset));
+      const qs = q.toString();
+      return request<CleanupKeptDto>(`/api/cleanup/kept${qs ? `?${qs}` : ''}`);
+    },
     /** Trash-queue progress for the "Moving N to Trash…" readout. */
     queueStatus: () => request<CleanupQueueStatusDto>('/api/cleanup/queue'),
   },
