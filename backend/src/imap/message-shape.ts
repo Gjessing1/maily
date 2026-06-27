@@ -99,7 +99,7 @@ export function buildParsedMessage(
     fromAddress: from?.address ?? null,
     to: mapAddrs(envelope?.to),
     cc: mapAddrs(envelope?.cc),
-    snippet: makeSnippet(body.bodyText, body.bodyHtml),
+    snippet: makeSnippet(body.bodyText, body.bodyHtml, envelope?.subject ?? null),
     bodyText: body.bodyText,
     bodyHtml: body.bodyHtml,
     bodyCalendar: body.bodyCalendar,

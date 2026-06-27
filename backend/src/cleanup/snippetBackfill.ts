@@ -26,6 +26,15 @@ const log = createLogger('snippet-backfill');
 const HTML_TAG_RE =
   /<\/?(?:!doctype|html|head|body|meta|title|style|div|span|table|tr|td|th|tbody|thead|p|br|hr|a|img|ul|ol|li|h[1-6]|font|center|b|strong|i|em)\b[^>]*>/i;
 
+/** Mailparser link artifact (`label [https://…]` / `[mailto:…]`) leaked into a preview. */
+const LINK_ARTIFACT_RE = /\[(?:https?:\/\/|mailto:)/i;
+
+/** True if the stored snippet still opens with a verbatim copy of the subject. */
+function startsWithSubject(snippet: string, subject: string | null): boolean {
+  const subj = subject?.replace(/\s+/g, ' ').trim();
+  return !!subj && subj.length >= 8 && snippet.startsWith(subj);
+}
+
 export interface SnippetBackfillResult {
   /** Rows whose stored snippet still contained an HTML tag when the pass started. */
   pending: number;
@@ -35,11 +44,14 @@ export interface SnippetBackfillResult {
 
 /** Recompute and rewrite contaminated snippets. Returns a small summary. */
 export function backfillSnippets(): SnippetBackfillResult {
-  // Cheap SQL pre-filter (`snippet LIKE '%<%'`) narrows the scan to rows that could
-  // hold a tag; the regex then confirms an actual HTML tag before we recompute.
+  // Recompute any preview still showing one of the three known contaminations: raw
+  // HTML markup, a mailparser link artifact (`[https://…]` tracking blob), or a
+  // verbatim leading copy of the subject (newsletters repeat it as the first line,
+  // which surfaced the subject twice instead of the preheader).
   const candidates = db
     .select({
       id: messages.id,
+      subject: messages.subject,
       snippet: messages.snippet,
       bodyText: messages.bodyText,
       bodyHtml: messages.bodyHtml,
@@ -47,14 +59,20 @@ export function backfillSnippets(): SnippetBackfillResult {
     .from(messages)
     .where(isNotNull(messages.snippet))
     .all()
-    .filter((r) => r.snippet !== null && r.snippet.includes('<') && HTML_TAG_RE.test(r.snippet));
+    .filter(
+      (r) =>
+        r.snippet !== null &&
+        ((r.snippet.includes('<') && HTML_TAG_RE.test(r.snippet)) ||
+          LINK_ARTIFACT_RE.test(r.snippet) ||
+          startsWithSubject(r.snippet, r.subject)),
+    );
 
   if (candidates.length === 0) return { pending: 0, fixed: 0 };
-  log.info(`snippet backfill — ${candidates.length} row(s) have a markup-contaminated snippet`);
+  log.info(`snippet backfill — ${candidates.length} row(s) have a contaminated snippet`);
 
   const updates: Array<{ id: string; snippet: string | null }> = [];
   for (const row of candidates) {
-    const next = makeSnippet(row.bodyText, row.bodyHtml);
+    const next = makeSnippet(row.bodyText, row.bodyHtml, row.subject);
     if (next !== row.snippet) updates.push({ id: row.id, snippet: next });
   }
 

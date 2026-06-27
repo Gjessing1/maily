@@ -143,8 +143,40 @@ function containsHtmlTag(s: string): boolean {
   );
 }
 
+/**
+ * Strip mailparser's plaintext link artifacts. When it derives a `text/plain`
+ * alternative from HTML, an `<a href="url">label</a>` becomes `label [url]` and a
+ * bare/auto link becomes `[url]`. Those bracketed URLs (often long tracking links)
+ * are noise in a one-line preview, so drop them along with the space in front.
+ */
+function stripLinkArtifacts(s: string): string {
+  return s.replace(/[ \t]*\[(?:https?:\/\/|mailto:)[^\]]*\]/gi, '');
+}
+
+/**
+ * Drop a leading copy of the subject from a body preview. Newsletters routinely
+ * repeat the subject as the first visible line of the body (e.g. Self-Host Weekly),
+ * which otherwise makes the inbox show the subject twice instead of the preheader.
+ * Only fires on a confident, reasonably long exact prefix match, and never returns
+ * an empty string (a body that is *only* the subject keeps the subject).
+ */
+function stripLeadingSubject(body: string, subject: string | null): string {
+  const subj = subject?.replace(/\s+/g, ' ').trim();
+  if (!subj || subj.length < 8 || !body.startsWith(subj)) return body;
+  const rest = body
+    .slice(subj.length)
+    .replace(/^[\s|>·•\-–—:]+/, '')
+    .trim();
+  return rest || body;
+}
+
 /** Build a short preview snippet from the available bodies. */
-export function makeSnippet(text: string | null, html: string | null, max = 200): string | null {
+export function makeSnippet(
+  text: string | null,
+  html: string | null,
+  subject: string | null = null,
+  max = 200,
+): string | null {
   const plain = text?.trim();
   // Prefer the plaintext part, but if it's contaminated with HTML markup run it
   // through the same tag-stripper as the HTML body so the snippet stays readable.
@@ -156,8 +188,10 @@ export function makeSnippet(text: string | null, html: string | null, max = 200)
       ? htmlToText(html)
       : '';
   if (!source) return null;
-  const collapsed = source.replace(/\s+/g, ' ').trim();
-  return collapsed.length > max ? `${collapsed.slice(0, max).trimEnd()}…` : collapsed;
+  const collapsed = stripLinkArtifacts(source).replace(/\s+/g, ' ').trim();
+  const deduped = stripLeadingSubject(collapsed, subject);
+  if (!deduped) return null;
+  return deduped.length > max ? `${deduped.slice(0, max).trimEnd()}…` : deduped;
 }
 
 /** Extract a single header value (handling folded continuation lines) from raw header bytes. */

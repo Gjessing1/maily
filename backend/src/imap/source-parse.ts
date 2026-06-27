@@ -111,6 +111,6 @@ export async function parseSourceContent(path: string): Promise<RebuiltContent> 
     bodyText: body.bodyText,
     bodyHtml: body.bodyHtml,
     bodyCalendar: body.bodyCalendar,
-    snippet: makeSnippet(body.bodyText, body.bodyHtml),
+    snippet: makeSnippet(body.bodyText, body.bodyHtml, parsed.subject ?? null),
   };
 }

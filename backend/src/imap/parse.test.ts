@@ -46,7 +46,37 @@ test('makeSnippet returns null when nothing usable is present', () => {
 });
 
 test('makeSnippet truncates with an ellipsis past the max length', () => {
-  const snip = makeSnippet('x'.repeat(250), null, 200);
+  const snip = makeSnippet('x'.repeat(250), null, null, 200);
   assert.equal(snip?.length, 201); // 200 chars + ellipsis
   assert.equal(snip?.endsWith('…'), true);
+});
+
+test('makeSnippet strips mailparser link artifacts from the preview', () => {
+  // mailparser renders <a href> in a derived text/plain part as `label [url]`.
+  assert.equal(
+    makeSnippet('Read the latest [https://email.example/c/eJw0z0] now', null),
+    'Read the latest now',
+  );
+});
+
+test('makeSnippet drops a leading copy of the subject (doubled-subject newsletter)', () => {
+  // Real-world Self-Host Weekly breakage: the plaintext body repeats the subject
+  // (followed by a tracking link) before the readable preheader. The preview must
+  // surface the preheader, not the subject a second time.
+  const body =
+    '\n\n\n\nSelf-Host Weekly (26 June 2026) [https://email.mail.selfh.st/c/eJw0z0]\n\n\n' +
+    "We've been trying to reach you about your self-hosted identity stack";
+  assert.equal(
+    makeSnippet(body, null, 'Self-Host Weekly (26 June 2026)'),
+    "We've been trying to reach you about your self-hosted identity stack",
+  );
+});
+
+test('makeSnippet keeps the subject when the body is only the subject', () => {
+  assert.equal(makeSnippet('Order shipped', null, 'Order shipped'), 'Order shipped');
+});
+
+test('makeSnippet ignores a too-short subject when deduping', () => {
+  // Guards against stripping a legitimate short opener that happens to match.
+  assert.equal(makeSnippet('Hi there, welcome aboard', null, 'Hi'), 'Hi there, welcome aboard');
 });
