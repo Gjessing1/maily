@@ -10,11 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, before } from 'node:test';
 import Database from 'better-sqlite3';
+import type * as BackupModule from './backup.js';
 
 const tmpRoot = mkdtempSync(join(tmpdir(), 'maily-backup-test-'));
 process.env.MAILY_DATA_DIR = tmpRoot;
 
-let backupDatabaseTo: typeof import('./backup.js').backupDatabaseTo;
+let backupDatabaseTo: typeof BackupModule.backupDatabaseTo;
 
 before(async () => {
   ({ backupDatabaseTo } = await import('./backup.js'));
