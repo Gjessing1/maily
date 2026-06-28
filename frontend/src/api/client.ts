@@ -50,7 +50,27 @@ const unauthorizedListeners = new Set<() => void>();
 // the deployment is fronted by an external auth gateway (tinyauth). In that mode a
 // 401 can only mean the gateway expired the session, so we re-auth through it rather
 // than showing maily's (unusable) login screen.
-let externalAuthGateway = false;
+//
+// Persisted: when the gateway expires/reconfigures the session, its redirect to a
+// cross-origin login page makes the config probe's fetch throw a CORS error — at
+// which point we can no longer read the backend's authRequired flag. Remembering
+// that this deployment IS gateway-fronted lets us bounce back through the gateway on
+// that failure instead of dropping to maily's (disabled, unusable) login screen.
+const EXTERNAL_AUTH_KEY = 'maily.externalAuth';
+let externalAuthGateway = localStorage.getItem(EXTERNAL_AUTH_KEY) === 'true';
+
+function setExternalAuthGateway(on: boolean): void {
+  externalAuthGateway = on;
+  if (on) localStorage.setItem(EXTERNAL_AUTH_KEY, 'true');
+  else localStorage.removeItem(EXTERNAL_AUTH_KEY);
+}
+
+// Loop guard: a hard-navigate through the gateway lands back on the app shell (served
+// from the SW cache) and re-runs the probe. If the gateway keeps failing the probe we
+// must not machine-gun reloads, so suppress a fresh bounce within this window and let
+// the caller fall through instead.
+const RELOGIN_AT_KEY = 'maily.reloginAt';
+const RELOGIN_MIN_INTERVAL_MS = 15_000;
 
 /**
  * Hard-navigate the document through the external auth gateway so it can show its
@@ -58,9 +78,14 @@ let externalAuthGateway = false;
  * deliberate: the service worker serves the app shell from cache (so a plain reload
  * never reaches the gateway), but passes /api straight to the network, where the
  * gateway intercepts the expired session. See backend GET /api/auth/relogin.
+ * Returns false (without navigating) when guarded against a too-recent bounce.
  */
-function gatewayRelogin(): void {
+function gatewayRelogin(): boolean {
+  const last = Number(sessionStorage.getItem(RELOGIN_AT_KEY) ?? 0);
+  if (Date.now() - last < RELOGIN_MIN_INTERVAL_MS) return false;
+  sessionStorage.setItem(RELOGIN_AT_KEY, String(Date.now()));
   window.location.assign(`${API_BASE}/api/auth/relogin`);
+  return true;
 }
 
 export function getToken(): string | null {
@@ -161,7 +186,7 @@ export const api = {
       const res = await fetch(`${API_BASE}/api/auth/config`);
       if (res.ok) {
         const cfg = (await res.json()) as { authRequired: boolean };
-        externalAuthGateway = !cfg.authRequired;
+        setExternalAuthGateway(!cfg.authRequired);
         return cfg;
       }
       // A 401/403 (or a redirect to a login page) on this PUBLIC endpoint can only
@@ -170,16 +195,26 @@ export const api = {
       // login. Other failures (5xx) fall through to the maily-login fallback, which
       // also avoids a redirect loop when the backend itself is down.
       if (res.status === 401 || res.status === 403 || res.redirected) {
-        externalAuthGateway = true;
+        setExternalAuthGateway(true);
         gatewayRelogin();
         return { authRequired: false }; // navigating away; the value is moot
       }
     } catch {
-      // Network/CORS error (incl. a blocked cross-origin gateway redirect). Can't tell
-      // a logged-out gateway from a dead backend here, so fall through rather than risk
-      // a reload loop.
+      // Network/CORS error. The most common cause on a gateway-fronted deployment is
+      // exactly the logged-out case: the gateway answers the probe with a redirect to
+      // its own cross-origin login page, which the browser blocks (no CORS), throwing
+      // here. If we already know this deployment sits behind a gateway, treat that as
+      // an expired session and bounce back through it — never fall through to maily's
+      // disabled login screen. The relogin loop guard keeps a persistently-failing
+      // gateway (or a genuine offline) from machine-gunning reloads.
+      if (externalAuthGateway && gatewayRelogin()) {
+        return { authRequired: false }; // navigating away; the value is moot
+      }
     }
-    return { authRequired: true };
+    // Only reached on a true ambiguity (no prior gateway knowledge, or the loop guard
+    // suppressed a bounce): when we DO know a gateway fronts us, stay out of the login
+    // screen and let the cached shell ride until the gateway recovers.
+    return { authRequired: !externalAuthGateway };
   },
 
   /** Exchange the master password for a JWT. Does not auto-attach a token. */

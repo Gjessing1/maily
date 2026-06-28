@@ -97,7 +97,26 @@ export async function staticSite(app: FastifyInstance): Promise<void> {
 
   // wildcard:false serves real files and lets everything else fall through to the
   // not-found handler, which we use for the SPA fallback below.
-  await app.register(fastifyStatic, { root, wildcard: false });
+  //
+  // Cache policy (the reason CSS changes used to need a "clear site data"): Vite
+  // fingerprints everything under /assets/ with a content hash, so those bytes are
+  // immutable and can be cached forever — a changed file ships under a new name.
+  // Everything else (index.html, sw.js, the web manifest, icons) keeps its name
+  // across deploys, so it MUST revalidate ('no-cache' = cache but always check the
+  // ETag). The service worker only discovers a new build when the browser re-fetches
+  // sw.js from the network; an HTTP-cached sw.js silently pins the stale precached
+  // shell — including the old CSS hash — until the cache is cleared by hand.
+  await app.register(fastifyStatic, {
+    root,
+    wildcard: false,
+    cacheControl: false,
+    setHeaders(res, filePath) {
+      const cache = /[\\/]assets[\\/]/.test(filePath)
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache';
+      res.setHeader('Cache-Control', cache);
+    },
+  });
 
   // SPA fallback: client-side routes (e.g. /reader/:id) have no file on disk, so
   // serve the app shell for any unmatched GET that isn't an API or socket path.
