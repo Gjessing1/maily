@@ -349,6 +349,23 @@ export function isDeleteSlice(slice: string): slice is DeleteSlice {
   return DELETE_SLICES.has(slice);
 }
 
+/**
+ * The slices the execute path can trash. The destructive heuristics PLUS the unguarded
+ * `storage` audit: storage isn't a safety-gated heuristic, but the user can trash whole
+ * senders straight from the storage view (single or multi-domain). It resolves over
+ * {@link ELIGIBLE} (honours the Keep flag) and skips the HARD safety gate by design — so the
+ * route MUST require a positive scope for storage (it would otherwise match the whole mailbox).
+ */
+export type ExecuteSlice = DeleteSlice | 'storage';
+
+/** Runtime guard for {@link ExecuteSlice} — the execute route's input validation. */
+export const EXECUTE_SLICES: ReadonlySet<string> = new Set<string>([...DELETE_SLICES, 'storage']);
+
+/** Narrow an untrusted slice id to an {@link ExecuteSlice}. */
+export function isExecuteSlice(slice: string): slice is ExecuteSlice {
+  return EXECUTE_SLICES.has(slice);
+}
+
 /** Per-slice tunable thresholds (each ignored by the slices it doesn't apply to). */
 export interface SliceThresholds {
   /** Cold-storage age threshold (years). */
@@ -392,6 +409,17 @@ function sliceWhere(slice: DeleteSlice, t: SliceThresholds): SQL {
   }
 }
 
+/**
+ * The execution predicate of an {@link ExecuteSlice}. Delete-eligible slices reuse their shared
+ * {@link sliceWhere} (safety gate + filters). `storage` instead resolves over {@link ELIGIBLE}:
+ * live mail honouring the user's Keep flag but WITHOUT the HARD safety gate — the unguarded
+ * audit deletes exactly what it shows (minus Keep-flagged mail). Always domain-scoped by the
+ * caller, never run unscoped (the route enforces that).
+ */
+function executeWhere(slice: ExecuteSlice, t: SliceThresholds): SQL {
+  return slice === 'storage' ? ELIGIBLE : sliceWhere(slice, t);
+}
+
 /** Every slice id the dashboard previews — the destructive ones plus the storage audit. */
 export type PreviewSlice = 'storage' | DeleteSlice;
 
@@ -421,6 +449,8 @@ export interface CleanupMessageRef {
  * client-driven selection safe:
  *  - `domain` (a lowercased sender key — domain, or full address for freemail senders):
  *    restrict to one sender — "trash all from this sender".
+ *  - `domains` (lowercased sender keys): restrict to several senders — the storage view's
+ *    multi-select "trash these senders". Intersected with `domain` when both are sent.
  *  - `messageIds`: an explicit selection; the result is the **intersection** with the eligible
  *    set, so a stale/forged/now-protected id simply isn't in the set and is silently dropped.
  *  - `excludeDomains` (lowercased sender keys): spare senders from the whole-slice
@@ -428,33 +458,39 @@ export interface CleanupMessageRef {
  *  - `excludeMessageIds`: spare individual messages — the drill-down's "select all,
  *    uncheck a few" path (subtracted last, after every narrowing scope).
  *
- * Only the destructive slices resolve — 'storage' is informational and throws.
+ * Every {@link ExecuteSlice} resolves — the destructive heuristics via their safety-gated
+ * predicate, `storage` via {@link executeWhere} (unguarded but Keep-honouring). Storage is
+ * resolved over the whole mailbox, so a positive scope (domain/domains/messageIds) is the
+ * caller's responsibility — the route refuses an unscoped storage run.
  */
 export function sliceMessageIds(
-  slice: DeleteSlice,
+  slice: ExecuteSlice,
   opts: SliceThresholds & {
     domain?: string;
+    domains?: string[];
     messageIds?: string[];
     excludeDomains?: string[];
     excludeMessageIds?: string[];
   } = {},
 ): CleanupMessageRef[] {
-  if (!DELETE_SLICES.has(slice)) {
+  if (!EXECUTE_SLICES.has(slice)) {
     throw new Error(`slice '${slice as string}' is not delete-eligible`);
   }
   const exclude = new Set((opts.excludeDomains ?? []).map((d) => d.toLowerCase()));
   const only = opts.domain?.toLowerCase();
+  const onlyMany = opts.domains?.length ? new Set(opts.domains.map((d) => d.toLowerCase())) : null;
   const ids = opts.messageIds ? new Set(opts.messageIds) : null;
   const spared = new Set(opts.excludeMessageIds ?? []);
 
   const rows = db.all(
     sql`SELECT m.id AS id, m.account_id AS accountId, ${SENDER_KEY} AS domain
-        FROM messages m WHERE ${sliceWhere(slice, opts)}`,
+        FROM messages m WHERE ${executeWhere(slice, opts)}`,
   ) as { id: string; accountId: string; domain: string }[];
 
   return rows
     .filter((r) => !exclude.has(r.domain))
     .filter((r) => !only || r.domain === only)
+    .filter((r) => !onlyMany || onlyMany.has(r.domain))
     .filter((r) => !ids || ids.has(r.id))
     .filter((r) => !spared.has(r.id))
     .map((r) => ({ id: r.id, accountId: r.accountId }));

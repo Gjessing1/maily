@@ -23,6 +23,7 @@ import type {
 } from '@maily/shared';
 import {
   isDeleteSlice,
+  isExecuteSlice,
   keptMessages,
   paginateSlice,
   sliceMessageIds,
@@ -189,22 +190,39 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
   app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
-    const { slice, years, minMb, months, messageIds, domain, excludeDomains, excludeMessageIds } =
-      req.body ?? {};
-    if (!slice || !isDeleteSlice(slice)) {
+    const {
+      slice,
+      years,
+      minMb,
+      months,
+      messageIds,
+      domain,
+      domains,
+      excludeDomains,
+      excludeMessageIds,
+    } = req.body ?? {};
+    if (!slice || !isExecuteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not delete-eligible' });
     }
+    // The unguarded `storage` audit resolves over the whole mailbox (no safety/heuristic gate),
+    // so it MUST be scoped — refuse a storage run that names no sender or message, which would
+    // otherwise resolve to "trash everything". The gated heuristics may run whole-slice.
+    if (slice === 'storage' && !domain && !domains?.length && !messageIds?.length) {
+      return reply.code(400).send({ error: 'storage cleanup requires a sender or message scope' });
+    }
 
-    // The scope (messageIds/domain/excludeDomains/excludeMessageIds) only narrows the
-    // server-resolved eligible set — the HARD safety gate is re-applied inside sliceMessageIds,
-    // never trusting the client. `excludeMessageIds` is the "select all, uncheck a few" path:
-    // trash the whole (optionally sender-scoped) slice except the spared ids.
+    // The scope (messageIds/domain/domains/excludeDomains/excludeMessageIds) only narrows the
+    // server-resolved eligible set — the HARD safety gate is re-applied inside sliceMessageIds
+    // (skipped only for the unguarded storage audit, which still honours the Keep flag), never
+    // trusting the client. `excludeMessageIds` is the "select all, uncheck a few" path: trash the
+    // whole (optionally sender-scoped) slice except the spared ids.
     const refs = sliceMessageIds(slice, {
       years,
       minMb,
       months,
       messageIds,
       domain,
+      domains,
       excludeDomains,
       excludeMessageIds,
     });

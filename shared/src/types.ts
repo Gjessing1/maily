@@ -478,11 +478,17 @@ export interface CleanupDashboardDto {
  * the slice and re-applies the HARD safety gate at execution time, then **intersects** that
  * eligible set with whatever scope the client sends — so a forged/stale/protected id can never
  * be trashed (it simply isn't in the eligible set). Scope precedence: `messageIds` (explicit
- * selection) and/or `domain` (single sender) narrow the set; `excludeDomains` spares senders
- * from the whole-slice "Clean all" path. Sending none of them targets the entire slice.
+ * selection) and/or `domain`/`domains` (one or many senders) narrow the set; `excludeDomains`
+ * spares senders from the whole-slice "Clean all" path. Sending none of them targets the entire
+ * slice — EXCEPT the unguarded `storage` audit, which has no safety gate, so the server requires
+ * a positive scope (`domain`/`domains`/`messageIds`) and refuses an unscoped storage run.
+ *
+ * `storage` is the unguarded query tool: its execute path honours the per-message Keep flag but
+ * deliberately SKIPS the HARD safety gate (financial/legal/medical) — what the audit shows (minus
+ * Keep-flagged mail) is what gets trashed. Still recoverable from Trash (never expunged).
  */
 export interface CleanupExecuteRequest {
-  slice: 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
+  slice: 'storage' | 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
   /** Cold-storage age threshold (years); ignored for other slices. */
   years?: number;
   /** Large-message size threshold (MB); ignored for other slices. */
@@ -493,6 +499,8 @@ export interface CleanupExecuteRequest {
   messageIds?: string[];
   /** Restrict to a single sender key (lowercased) — "trash all from this sender". */
   domain?: string;
+  /** Restrict to several sender keys (lowercased) — the storage multi-select "trash these senders". */
+  domains?: string[];
   /** Sender keys to spare from a whole-slice run (lowercased). */
   excludeDomains?: string[];
   /** Message ids to spare — the "select all, uncheck a few" drill-down path. */

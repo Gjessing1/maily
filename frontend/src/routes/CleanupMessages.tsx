@@ -20,8 +20,13 @@ import { CleanupMessageRow, SLICE_LABELS, formatBytes } from './Cleanup';
 /** Messages fetched per page; "Load more" pulls the next page. */
 const PAGE_SIZE = 100;
 
-/** Delete-eligible slices that this drill-down can execute (backend DELETE_SLICES). */
+/**
+ * Slices whose drill-down can execute a trash run (backend EXECUTE_SLICES). The delete-eligible
+ * heuristics plus the unguarded `storage` audit — drilling a storage sender lets you trash that
+ * sender's mail too (the backend resolves storage over live, Keep-honouring mail, no safety gate).
+ */
 const DELETE_ELIGIBLE = new Set([
+  'storage',
   'never-replied',
   'cold-storage',
   'large',

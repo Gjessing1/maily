@@ -535,8 +535,40 @@ test('slice group list: offset + q paginate and filter, truncated flags more pag
   assert.equal(found.truncated, false);
 });
 
-test('sliceMessageIds: storage slice is not delete-eligible', () => {
-  assert.throws(() => S.sliceMessageIds('storage' as 'cold-storage'), /not delete-eligible/);
+test('sliceMessageIds(storage): unguarded — trashes protected mail, but spares Keep-flagged', () => {
+  const acct = seedAccount();
+  // A protected (financial) message — the storage path has NO safety gate, so it IS eligible.
+  const protId = seedMessage(acct, {
+    fromAddress: 'noreply@bank.example',
+    bodyText: 'invoice payment',
+  });
+  // A Keep-flagged message from the same sender — honoured (ELIGIBLE), so spared.
+  seedMessage(acct, {
+    fromAddress: 'noreply@bank.example',
+    bodyText: 'statement',
+    cleanupKeep: true,
+  });
+
+  const refs = S.sliceMessageIds('storage', { domain: 'bank.example' });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [protId],
+    'protected mail is trashable from storage, but the Keep flag still spares its message',
+  );
+});
+
+test('sliceMessageIds(storage): domains scopes to several senders at once', () => {
+  const acct = seedAccount();
+  const a = seedMessage(acct, { fromAddress: 'a@alpha.example' });
+  const b = seedMessage(acct, { fromAddress: 'b@beta.example' });
+  seedMessage(acct, { fromAddress: 'c@gamma.example' });
+
+  const refs = S.sliceMessageIds('storage', { domains: ['alpha.example', 'beta.example'] });
+  assert.deepEqual(
+    new Set(refs.map((r) => r.id)),
+    new Set([a, b]),
+    'only the selected senders resolve; gamma.example is left out',
+  );
 });
 
 test('sliceMessages(cold-storage): lists the in-scope messages, scoped to a domain', () => {

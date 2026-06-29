@@ -44,6 +44,7 @@ import {
   SearchIcon,
   ShieldIcon,
   SparklesIcon,
+  TrashIcon,
 } from '../ui/icons';
 
 export type { SliceParams } from '../state/cleanupConfig';
@@ -213,11 +214,15 @@ export function drillQuery(
 /**
  * Collapsible "Review by sender" — a searchable, paginated per-domain list. Owns its own
  * fetching so it can page the long tail (Load more) and filter by a domain substring (the
- * search box) without re-rendering the whole dashboard. For action slices each row navigates
- * to the message drill-down (where messages are selected + trashed); the informational storage
- * slice has no drill, so its rows are static.
+ * search box) without re-rendering the whole dashboard. Each row drills into the message
+ * drill-down (where messages are selected + trashed).
+ *
+ * For the unguarded `storage` audit the list is also **multi-select**: each row gets a
+ * checkbox, and the selected senders can be trashed in one confirmed run (`onExecuted` lets
+ * the dashboard refresh once the queue drains). Selecting reaches every message from those
+ * senders — what the audit shows minus Keep-flagged mail — without paging through them.
  */
-function SenderBrowser({ source }: { source: BrowseSource }) {
+function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecuted?: () => void }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -236,6 +241,21 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
   const { years, minMb, months } = source.params ?? {};
   const minMsgsNum = Number(minMsgs) > 0 ? Math.floor(Number(minMsgs)) : undefined;
   const minSizeMbNum = Number(minSizeMb) > 0 ? Number(minSizeMb) : undefined;
+
+  // Multi-select trash, storage-only: the audit has no safety gate, so a row checkbox can scope
+  // a whole-sender (or many-sender) trash run. `selected` holds the chosen sender keys; the
+  // trash lifecycle mirrors ActionSliceCard (idle → confirm → running → done/error).
+  const selectable = kind === 'storage';
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exec, setExec] = useState<'idle' | 'confirm' | 'running' | 'done' | 'error'>('idle');
+  const [queued, setQueued] = useState(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(
+    () => () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    },
+    [],
+  );
 
   const fetchPage = useCallback(
     (opts: { offset?: number }): Promise<CleanupSliceDto> => {
@@ -278,6 +298,10 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
             if (cancelled) return;
             setGroups(res.groups);
             setHasMore(res.truncated);
+            // A fresh list (search/sort/filter changed, or just opened) drops any selection —
+            // it could otherwise point at senders the new filter no longer shows.
+            setSelected(new Set());
+            setExec('idle');
           })
           .catch(() => {
             if (!cancelled) setError(true);
@@ -308,11 +332,60 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
       .finally(() => setLoadingMore(false));
   };
 
-  // Every sender row drills down — delete-eligible slices into a selectable trash list, the
-  // informational storage audit into a read-only per-sender message list.
+  // Every sender row drills down to its per-sender message list — where individual messages can
+  // be inspected and (for delete-eligible slices and the storage audit) trashed.
   const drillInto = (domain: string) => {
     navigate(`/cleanup/messages?${drillQuery(kind, source.params, domain)}`);
   };
+
+  // Multi-select (storage) — toggle one sender, and the running totals of the selection. Counts
+  // are summed over the loaded rows (you can only select what's visible), so they reflect exactly
+  // the senders chosen; the server re-resolves the actual eligible set on execute.
+  const toggleSelect = (domain: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(domain)) next.delete(domain);
+      else next.add(domain);
+      return next;
+    });
+    if (exec !== 'idle') setExec('idle');
+  };
+  const selectedGroups = groups.filter((g) => selected.has(g.domain));
+  const selCount = selectedGroups.reduce((n, g) => n + g.messageCount, 0);
+  const selBytes = selectedGroups.reduce((n, g) => n + g.bytes, 0);
+
+  // Trash every message from the selected senders (storage's unguarded path: no safety gate, but
+  // Keep-flagged mail is still spared server-side). Polls the global queue until it drains, then
+  // refreshes the dashboard and reloads this list so the trashed senders drop away.
+  async function trashSelected() {
+    if (selected.size === 0) return;
+    setExec('running');
+    try {
+      const res = await api.cleanup.execute({ slice: 'storage', domains: [...selected] });
+      setQueued(res.queued);
+      pollRef.current = setInterval(() => {
+        void api.cleanup
+          .queueStatus()
+          .then((status) => {
+            if (status.pending === 0) {
+              if (pollRef.current) clearInterval(pollRef.current);
+              setExec('done');
+              setSelected(new Set());
+              onExecuted?.();
+              void fetchPage({}).then((r) => {
+                setGroups(r.groups);
+                setHasMore(r.truncated);
+              });
+            }
+          })
+          .catch(() => {
+            /* transient — keep polling */
+          });
+      }, 2000);
+    } catch {
+      setExec('error');
+    }
+  }
 
   return (
     <div className="mt-3">
@@ -396,14 +469,51 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
             </p>
           ) : (
             <>
+              {/* Storage multi-select hint + a quick select-all/clear for the loaded rows. */}
+              {selectable && (
+                <div className="mt-2 flex items-center justify-between gap-2 px-1 text-xs text-muted">
+                  <span>Tick senders to trash; tap a name to review first.</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelected(
+                        selected.size === groups.length
+                          ? new Set()
+                          : new Set(groups.map((g) => g.domain)),
+                      )
+                    }
+                    className="shrink-0 font-medium text-accent active:opacity-80"
+                  >
+                    {selected.size === groups.length ? 'Clear' : 'Select all'}
+                  </button>
+                </div>
+              )}
               <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
                 {groups.map((g) => (
-                  <li key={g.domain}>
+                  <li key={g.domain} className="flex w-full items-center active:bg-surface-2">
+                    {selectable && (
+                      <button
+                        type="button"
+                        onClick={() => toggleSelect(g.domain)}
+                        aria-label={`Select ${g.domain}`}
+                        aria-pressed={selected.has(g.domain)}
+                        className="shrink-0 py-2 pl-3 pr-1"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.has(g.domain)}
+                          readOnly
+                          tabIndex={-1}
+                          aria-hidden
+                          className="size-4 accent-accent"
+                        />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => drillInto(g.domain)}
                       aria-label={`Review messages from ${g.domain}`}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm active:bg-surface-2"
+                      className={`flex min-w-0 flex-1 items-center gap-3 py-2 pr-3 text-left text-sm ${selectable ? 'pl-1' : 'pl-3'}`}
                     >
                       <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
                       <span className="shrink-0 tabular-nums text-muted">{g.messageCount} msg</span>
@@ -432,6 +542,70 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
                   Couldn’t load more — try again.
                 </p>
               )}
+
+              {/* Storage multi-select trash bar — appears once a sender is ticked, with an
+                  explicit confirm step before the (unguarded, Keep-honouring) trash run. */}
+              {selectable && (selected.size > 0 || exec === 'running' || exec === 'done') && (
+                <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
+                  {exec === 'done' ? (
+                    <p className="text-sm text-fg">
+                      Moved {queued.toLocaleString()} to Trash — recoverable there if you need them
+                      back.
+                    </p>
+                  ) : exec === 'running' ? (
+                    <div className="flex items-center gap-3 text-sm text-fg">
+                      <Spinner />
+                      <span>Moving {(queued || selCount).toLocaleString()} to Trash…</span>
+                    </div>
+                  ) : exec === 'confirm' ? (
+                    <>
+                      <p className="text-sm text-fg">
+                        Move all <span className="font-medium">{selCount.toLocaleString()}</span>{' '}
+                        message{selCount === 1 ? '' : 's'} from{' '}
+                        <span className="font-medium">{selected.size.toLocaleString()}</span> sender
+                        {selected.size === 1 ? '' : 's'} to Trash and free{' '}
+                        <span className="font-medium">{formatBytes(selBytes)}</span>? They’re
+                        recoverable from Trash. Mail you’ve marked Keep is spared.
+                      </p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void trashSelected()}
+                          className="flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80"
+                        >
+                          <TrashIcon className="size-4" />
+                          Move to Trash
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExec('idle')}
+                          className="rounded-full px-4 py-1.5 text-sm font-medium text-muted active:bg-surface-3"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <span className="min-w-0 flex-1 text-sm text-fg">
+                        {selected.size.toLocaleString()} sender{selected.size === 1 ? '' : 's'} ·{' '}
+                        {selCount.toLocaleString()} msg · {formatBytes(selBytes)}
+                      </span>
+                      {exec === 'error' && (
+                        <span className="shrink-0 text-xs text-danger">Failed — retry</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setExec('confirm')}
+                        className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80"
+                      >
+                        <TrashIcon className="size-4" />
+                        Trash…
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -440,15 +614,21 @@ function SenderBrowser({ source }: { source: BrowseSource }) {
   );
 }
 
-/** A read-only (informational) slice card — the storage audit. */
+/**
+ * The storage-audit card. Informational at heart (it shows where space goes, with no safety
+ * gate), but its sender list is multi-select: ticked senders can be trashed in one confirmed
+ * run. `onExecuted` refreshes the dashboard totals once that run's queue drains.
+ */
 function InfoSliceCard({
   title,
   description,
   slice,
+  onExecuted,
 }: {
   title: string;
   description: string;
   slice: CleanupSliceDto | null;
+  onExecuted: () => void;
 }) {
   return (
     <section className="rounded-xl border border-border bg-surface p-4">
@@ -466,7 +646,7 @@ function InfoSliceCard({
           <Spinner />
         </div>
       ) : (
-        <SenderBrowser source={{ slice: 'storage' }} />
+        <SenderBrowser source={{ slice: 'storage' }} onExecuted={onExecuted} />
       )}
     </section>
   );
@@ -1159,8 +1339,9 @@ export function Cleanup() {
 
             <InfoSliceCard
               title="Storage by sender"
-              description="Which senders take up the most space — personal-mail providers (gmail, hotmail, …) are split per address. Informational — a storage audit, not a delete list."
+              description="Which senders take up the most space — personal-mail providers (gmail, hotmail, …) are split per address. Tick senders to trash the lot; there's no safety gate here, but Keep-flagged mail is spared and everything stays recoverable in Trash."
               slice={storage}
+              onExecuted={refresh}
             />
             {renderAction(
               'large',

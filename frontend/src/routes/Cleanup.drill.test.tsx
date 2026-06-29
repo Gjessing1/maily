@@ -83,6 +83,7 @@ vi.mock('../api/client', () => ({
         }),
       ),
       queueStatus: vi.fn(() => Promise.resolve({ pending: 0, failed: 0, done: 0 })),
+      execute: vi.fn(() => Promise.resolve({ slice: 'storage', queued: 7 })),
     },
   },
 }));
@@ -145,7 +146,7 @@ describe('Cleanup review-by-sender drill', () => {
     expect(lastPath).toContain('domain=foo.com');
   });
 
-  test('the informational storage audit drills by sender too (read-only)', async () => {
+  test('the storage audit drills by sender too', async () => {
     const { Cleanup } = await import('./Cleanup');
     const { CleanupMessages } = await import('./CleanupMessages');
     render(
@@ -167,5 +168,33 @@ describe('Cleanup review-by-sender drill', () => {
     await waitFor(() => expect(lastPath).toContain('/cleanup/messages'));
     expect(lastPath).toContain('slice=storage');
     expect(lastPath).toContain('domain=bar.com');
+  });
+
+  test('storage multi-select trashes the ticked senders after a confirm', async () => {
+    const { Cleanup } = await import('./Cleanup');
+    const { api } = await import('../api/client');
+    render(
+      <MemoryRouter initialEntries={['/cleanup']}>
+        <Routes>
+          <Route path="/cleanup" element={<Cleanup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: 'Storage by sender' });
+    // Open the storage card's "Review by sender" (the first on the page).
+    fireEvent.click(screen.getAllByText(/Review by sender/)[0]!);
+    // Tick the sender, then trash → confirm.
+    const checkbox = await screen.findByRole('button', { name: /Select bar.com/ });
+    fireEvent.click(checkbox);
+    fireEvent.click(await screen.findByRole('button', { name: /^Trash…$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Move to Trash$/ }));
+
+    await waitFor(() =>
+      expect(api.cleanup.execute).toHaveBeenCalledWith({
+        slice: 'storage',
+        domains: ['bar.com'],
+      }),
+    );
   });
 });
