@@ -318,6 +318,10 @@ export const api = {
       method: 'POST',
     }),
 
+  /** Restore a trashed message → MOVE back to the Inbox and clear the tombstone (awaited). */
+  restoreMessage: (id: string) =>
+    request<{ ok: boolean }>(`/api/messages/${id}/restore`, { method: 'POST' }),
+
   /**
    * Queue a send into the server-owned outbox. Returns the outbox id + `dueAt` (when it will
    * actually fire). The send commits server-side at `dueAt` even if the app closes; cancel
@@ -500,6 +504,12 @@ export const api = {
     },
     /** Trash-queue progress for the "Moving N to Trash…" readout. */
     queueStatus: () => request<CleanupQueueStatusDto>('/api/cleanup/queue'),
+    /** Empty a trash folder LOCALLY — reclaim disk, keep a no-resync tombstone (provider untouched). */
+    purgeTrash: (folderId: string) =>
+      request<{ purged: number }>('/api/cleanup/purge-trash', {
+        method: 'POST',
+        body: JSON.stringify({ folderId }),
+      }),
   },
 
   /** Detach-to-local (delete from the provider, keep the full copy on this server). */

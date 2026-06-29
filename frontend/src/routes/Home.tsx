@@ -9,6 +9,7 @@ import { groupConversations } from '../state/threads';
 import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ReaderView } from './Reader';
 import { isArchivedView } from '../state/archived';
 import { isStarredView } from '../state/starred';
@@ -256,6 +257,26 @@ export function Home() {
     clearSelect();
   }, [selectedIds, expandIds, clearSelect]);
 
+  // Purge Trash (local only): shown when viewing a concrete account's trash folder. Reclaims the
+  // disk used by everything in it, keeping a no-resync tombstone; the provider's Trash is untouched.
+  const isTrashFolder = folder?.role === 'trash';
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const purgeTrash = useCallback(() => {
+    if (!folder || purging) return;
+    setPurging(true);
+    api.cleanup
+      .purgeTrash(folder.id)
+      .then((r) =>
+        showNotice(`Purged ${r.purged.toLocaleString()} from Trash — local disk reclaimed`),
+      )
+      .catch(() => showNotice('Couldn’t purge Trash — try again'))
+      .finally(() => {
+        setPurging(false);
+        setConfirmPurge(false);
+      });
+  }, [folder, purging]);
+
   // Infinite scroll sentinel.
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -325,6 +346,16 @@ export function Home() {
               </button>
             )}
             <h1 className="flex-1 truncate px-2 text-lg font-semibold capitalize">{folderName}</h1>
+            {isTrashFolder && ((messages?.length ?? 0) > 0 || purging) && (
+              <button
+                onClick={() => setConfirmPurge(true)}
+                disabled={purging}
+                className="rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
+                aria-label="Empty Trash"
+              >
+                {purging ? 'Emptying…' : 'Empty Trash'}
+              </button>
+            )}
             {isWide && (
               <Link
                 to="/search"
@@ -473,6 +504,16 @@ export function Home() {
         selectedFolderId={folderId}
         onSelect={(f) => setParams({ folder: f.id })}
         swipeToOpen={!isWide}
+      />
+
+      <ConfirmDialog
+        open={confirmPurge}
+        title="Empty Trash?"
+        message="Permanently removes this Trash's local copies and reclaims disk on this server. It does NOT delete from your mail provider — those copies stay in the provider's Trash and auto-purge on their own schedule. This can't be undone locally."
+        confirmLabel="Empty Trash"
+        danger
+        onConfirm={purgeTrash}
+        onCancel={() => setConfirmPurge(false)}
       />
 
       {menu &&

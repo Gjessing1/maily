@@ -153,6 +153,17 @@ export const messages = sqliteTable(
     localOnly: integer('local_only', { mode: 'boolean' }).notNull().default(false),
     /** When the message was detached to local-only (audit). Null ⇒ never detached. */
     detachedAt: integer('detached_at', { mode: 'timestamp_ms' }),
+    /**
+     * "Purged from this server" timestamp (migration 0023). Non-null ⇒ the trashed message's
+     * heavy data (the `.eml` source file, downloaded attachment files, and the body columns)
+     * has been reclaimed locally, leaving only a lightweight tombstone. The row + its identity
+     * (`message_id`/`gm_msg_id`) + its trash folder mapping are KEPT so the provider's still-
+     * present Trash copy is not re-downloaded on resync (`upsertMessage` dedups on those ids and
+     * never re-stores a body). Unlike `deleted_at`, a purged shell is hidden EVERYWHERE — trash
+     * folders deliberately show tombstoned mail, so they exclude `purged_at` too (queries.ts).
+     * Local-only: no provider EXPUNGE — the provider auto-purges its own Trash.
+     */
+    purgedAt: integer('purged_at', { mode: 'timestamp_ms' }),
     createdAt: now(),
   },
   (t) => [

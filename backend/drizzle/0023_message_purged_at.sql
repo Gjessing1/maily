@@ -1,0 +1,11 @@
+-- messages.purged_at: "purge from this server" for trashed mail. A purge reclaims local disk
+-- (the `.eml` source file + downloaded attachment files are unlinked, and the body/source columns
+-- nulled) while KEEPING a lightweight tombstone row: the row retains its identity (message_id /
+-- gm_msg_id) and its trash folder mapping so the provider's still-present Trash copy is NOT
+-- re-downloaded on the next sync — `upsertMessage` dedups on those ids and only touches mappings,
+-- never re-storing a body (store.ts). `deleted_at` alone can't express this: trash-role folders
+-- deliberately show tombstoned mail (queries.ts), so a purged shell needs its own flag to stay
+-- hidden everywhere, including Trash. Deliberately local-only — no provider EXPUNGE; the provider
+-- auto-purges its own Trash. Additive, safe on the live DB (no backfill). No index: a low-selectivity
+-- flag added to the existing trash-folder predicates' WHERE.
+ALTER TABLE `messages` ADD `purged_at` integer;

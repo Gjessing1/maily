@@ -162,6 +162,13 @@
       "when": 1783000000000,
       "tag": "0022_contacts_email_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1783500000000,
+      "tag": "0023_message_purged_at",
+      "breakpoints": true
     }
   ]
 }

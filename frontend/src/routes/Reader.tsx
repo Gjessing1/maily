@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
-import { requestArchiveMany, requestDeleteMany } from '../state/undo';
+import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
 import { ConversationThread } from '../components/ConversationThread';
 import { usePrefs } from '../state/prefs';
@@ -22,6 +22,7 @@ import {
   ChevronDownIcon,
   ExpandIcon,
   ForwardIcon,
+  InboxIcon,
   MailIcon,
   MailOpenIcon,
   PencilIcon,
@@ -67,6 +68,7 @@ export function ReaderView({
   const [showImages, setShowImages] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   // Quick-create-from-reply: when set, the contact editor is open seeded with the sender.
   const [addSender, setAddSender] = useState<{ name: string | null; email: string } | null>(null);
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
@@ -242,6 +244,24 @@ export function ReaderView({
   const isDraft = Boolean(
     detail && folders?.some((f) => f.role === 'drafts' && detail.folderIds.includes(f.id)),
   );
+  // A message in Trash offers Restore instead of delete/archive — the "undo a mistaken delete" path.
+  const isTrashed = Boolean(
+    detail && folders?.some((f) => f.role === 'trash' && detail.folderIds.includes(f.id)),
+  );
+
+  // Restore a trashed message: MOVE it back to the Inbox + clear the tombstone (awaited server-side),
+  // then leave the reader. The `mail:restored` signal re-pulls it so it reappears in the inbox.
+  function restore() {
+    if (!detail || restoring) return;
+    setRestoring(true);
+    api
+      .restoreMessage(detail.id)
+      .then(() => onClose())
+      .catch(() => {
+        setRestoring(false);
+        showNotice('Couldn’t restore — message no longer on the server');
+      });
+  }
 
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
@@ -310,20 +330,34 @@ export function ReaderView({
         >
           <CalendarIcon className="text-fg" />
         </button>
-        <button
-          onClick={archive}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Archive"
-        >
-          <ArchiveIcon className="text-fg" />
-        </button>
-        <button
-          onClick={() => setConfirmDelete(true)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Delete"
-        >
-          <TrashIcon className="text-fg" />
-        </button>
+        {isTrashed ? (
+          <button
+            onClick={restore}
+            disabled={restoring}
+            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-50"
+            aria-label="Restore to Inbox"
+            title="Restore to Inbox"
+          >
+            <InboxIcon className="text-accent" />
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={archive}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Archive"
+            >
+              <ArchiveIcon className="text-fg" />
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Delete"
+            >
+              <TrashIcon className="text-fg" />
+            </button>
+          </>
+        )}
         {isDraft ? (
           <button
             onClick={editDraft}

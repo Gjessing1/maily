@@ -32,6 +32,7 @@ import {
   type GroupSort,
 } from '../../cleanup/slices.js';
 import { bumpCleanupCache, cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
+import { purgeTrashFolder } from '../../cleanup/purge.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
 import { markMessageDeleted, setCleanupKeep } from '../../imap/store.js';
 import { emitSignal } from '../../events.js';
@@ -254,4 +255,20 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
 
   // Trash-queue progress (pending / failed / done) for the dashboard's "Moving N…" readout.
   app.get('/api/cleanup/queue', async () => queueStatus());
+
+  // Empty Trash LOCALLY: reclaim the disk used by a trash folder's messages (the `.eml` source +
+  // downloaded attachment files), keeping a no-resync tombstone (`purged_at`) so the provider's
+  // still-present Trash copy isn't re-downloaded. Deliberately local-only — no provider EXPUNGE.
+  // Scoped to the one trash folder the client is viewing; non-trash folders are rejected.
+  app.post<{ Body: { folderId?: string } }>('/api/cleanup/purge-trash', async (req, reply) => {
+    const folderId = req.body?.folderId;
+    if (!folderId) {
+      return reply.code(400).send({ error: 'folderId is required' });
+    }
+    try {
+      return purgeTrashFolder(folderId);
+    } catch {
+      return reply.code(400).send({ error: 'folder is not a trash folder' });
+    }
+  });
 }

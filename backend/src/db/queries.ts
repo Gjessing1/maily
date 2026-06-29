@@ -42,6 +42,9 @@ export function listFolders(accountId: string): (typeof folders.$inferSelect)[] 
  * Tombstoned messages (§13) are hidden everywhere EXCEPT trash-role folders: a delete/cleanup
  * tombstones the row and MOVEs it to Trash, so in Trash the tombstone IS the expected content —
  * hiding it there would make the move look like a hard delete (nothing ever "arrives" in Trash).
+ * Purged shells (`purged_at`, migration 0023) are the exception even in Trash: their heavy data is
+ * gone and only a no-resync tombstone remains, so the trash branches swap the `deleted_at` filter
+ * for `isNull(purged_at)` rather than dropping the filter entirely.
  */
 function isTrashFolder(folderId: string): boolean {
   return (
@@ -59,7 +62,7 @@ export function folderMessageCount(folderId: string): number {
     .where(
       and(
         eq(messageFolders.folderId, folderId),
-        isTrashFolder(folderId) ? undefined : isNull(messages.deletedAt),
+        isTrashFolder(folderId) ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
       ),
     )
     .get();
@@ -93,7 +96,7 @@ export function isMessageLocalOnly(id: string): boolean {
 export function listMessages(folderId: string, limit: number, beforeMs?: number): MessageRow[] {
   const where = and(
     eq(messageFolders.folderId, folderId),
-    isTrashFolder(folderId) ? undefined : isNull(messages.deletedAt),
+    isTrashFolder(folderId) ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
     beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
   );
   return db
@@ -151,8 +154,9 @@ export function listUnifiedByRole(
     .where(
       and(
         eq(folders.role, role),
-        // In the unified Trash, tombstones mapped into a trash folder are the content itself.
-        role === 'trash' ? undefined : isNull(messages.deletedAt),
+        // In the unified Trash, tombstones mapped into a trash folder are the content itself;
+        // only purged shells (heavy data reclaimed) are hidden there.
+        role === 'trash' ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
       ),
     )
