@@ -127,15 +127,42 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe) return;
+    // Fixed-width desktop emails (e.g. a table with min-width:600px) are wider than
+    // a phone viewport and can't be reflowed narrower. Rather than let them spill out
+    // of the frame, lay the email out at its natural width and scale the whole body
+    // down to fit — the "zoom to fit" Gmail/Apple Mail do. Content that already fits
+    // is left untouched (scale 1), so centered-card layouts aren't shrunk needlessly.
     const measure = () => {
       const doc = iframe.contentDocument;
-      if (doc?.body) setHeight(doc.documentElement.scrollHeight);
+      const body = doc?.body;
+      if (!body) return;
+      const el = doc.documentElement;
+      // Reset any prior fit so we can read the email's natural dimensions.
+      body.style.transform = '';
+      body.style.width = '';
+      const avail = iframe.clientWidth;
+      const naturalW = el.scrollWidth;
+      let scale = 1;
+      if (avail > 0 && naturalW > avail + 1) {
+        scale = avail / naturalW;
+        // Pin the body to its natural width so the scaled result lands exactly on
+        // `avail`, and so the layout height is measured at the wide (un-reflowed) size.
+        body.style.width = `${naturalW}px`;
+      }
+      const naturalH = el.scrollHeight;
+      if (scale !== 1) {
+        body.style.transformOrigin = 'top left';
+        body.style.transform = `scale(${scale})`;
+      }
+      setHeight(Math.ceil(naturalH * scale));
     };
     iframe.addEventListener('load', measure);
+    window.addEventListener('resize', measure);
     // Re-measure shortly after load for late image reflow.
     const t = setTimeout(measure, 600);
     return () => {
       iframe.removeEventListener('load', measure);
+      window.removeEventListener('resize', measure);
       clearTimeout(t);
     };
   }, [srcDoc]);
