@@ -113,6 +113,8 @@ const authDisabled = optional('MAILY_DISABLE_AUTH', 'false') === 'true';
 export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   port: Number(optional('PORT', '3000')),
+  /** Short git SHA this image was built from (Dockerfile `GIT_SHA` build-arg; 'dev' locally). */
+  buildId: optional('GIT_SHA', '').slice(0, 7) || 'dev',
   /** True when MAILY_DISABLE_AUTH=true — see note above. */
   disableAuth: authDisabled,
   dataDir,

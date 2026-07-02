@@ -27,6 +27,10 @@ COPY . .
 RUN npm run format:check && npm run lint && npm run typecheck && npm test
 RUN npm run build -w @maily/backend
 # Build the PWA too; its dist/ is served by the backend in production (no proxy).
+# GIT_SHA (CI build-arg; .git is dockerignored so it can't be derived here) is baked
+# into the bundle as the build id shown in Settings → About.
+ARG GIT_SHA=
+ENV GIT_SHA=$GIT_SHA
 RUN npm run build -w @maily/frontend
 # Drop dev dependencies (vite, typescript, eslint, drizzle-kit, @types, …) so the
 # runtime image ships only production deps. better-sqlite3 was already compiled
@@ -36,6 +40,9 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Same build id for the backend (/api/config), so Settings can compare app vs server.
+ARG GIT_SHA=
+ENV GIT_SHA=$GIT_SHA
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/backend/package.json ./backend/

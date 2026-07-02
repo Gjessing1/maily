@@ -31,6 +31,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     '/api/config',
     async (): Promise<ServerConfigDto> => ({
       cacheWindowDays: env.cacheWindowDays,
+      buildId: env.buildId,
     }),
   );
 

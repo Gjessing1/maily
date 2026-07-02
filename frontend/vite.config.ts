@@ -7,7 +7,16 @@ import { VitePWA } from 'vite-plugin-pwa';
 // own origin, so production serving sits the API behind the same host.
 const BACKEND = process.env.VITE_BACKEND_URL ?? 'http://localhost:3000';
 
+// Build identity baked into the bundle (Settings → About). GIT_SHA is a CI/Dockerfile
+// build-arg; the bundled value is what proves which build the service worker is
+// actually serving, so it must come from `define`, not a runtime fetch.
+const BUILD_ID = (process.env.GIT_SHA ?? '').slice(0, 7) || 'dev';
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+    __BUILT_AT__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [
     react(),
     tailwindcss(),

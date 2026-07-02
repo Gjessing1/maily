@@ -1010,6 +1010,21 @@ export function Settings() {
             and Local archive stay put — you’ll need the master password to unlock again.
           </p>
         </section>
+
+        {/* About: the bundled build id is what the service worker is actually serving —
+            comparing it against the server's proves whether an update has landed here. */}
+        <section className="mb-8 px-4 text-center text-xs text-faint">
+          <p>
+            maily · build <span className="font-mono">{__BUILD_ID__}</span> ·{' '}
+            {new Date(__BUILT_AT__).toLocaleString()}
+          </p>
+          {config && config.buildId !== __BUILD_ID__ && (
+            <p className="mt-1 text-accent">
+              Server is on build <span className="font-mono">{config.buildId}</span> — an app update
+              is pending; close and reopen (or reload) to switch over.
+            </p>
+          )}
+        </section>
       </main>
 
       <ConfirmDialog

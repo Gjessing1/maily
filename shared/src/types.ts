@@ -319,6 +319,12 @@ export interface AccountSyncStatusDto {
 export interface ServerConfigDto {
   /** Backend `MAILY_CACHE_WINDOW_DAYS`: days of mail synced into the local SQLite cache. */
   cacheWindowDays: number;
+  /**
+   * Short git SHA the backend image was built from (`GIT_SHA` build-arg; 'dev' locally).
+   * Settings → About compares it against the bundle's baked-in `__BUILD_ID__` to prove
+   * whether the service worker is serving the current build or a stale one.
+   */
+  buildId: string;
 }
 
 /** Row counts for one slice of the enrichment ledger (Settings → Enrichment). */
