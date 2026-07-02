@@ -208,6 +208,21 @@ function groupQuery(opts: GroupPage): string {
   return s ? `?${s}` : '';
 }
 
+/** Shared options for the paged list endpoints; `unread` asks for only-unseen rows. */
+interface ListOpts {
+  limit?: number;
+  before?: number;
+  unread?: boolean;
+}
+
+function listQs(opts: ListOpts): string {
+  const qs = new URLSearchParams();
+  if (opts.limit) qs.set('limit', String(opts.limit));
+  if (opts.before) qs.set('before', String(opts.before));
+  if (opts.unread) qs.set('unread', '1');
+  return qs.toString() ? `?${qs}` : '';
+}
+
 export const api = {
   /**
    * Public probe (no token): whether the backend requires in-app login. Returns
@@ -281,49 +296,23 @@ export const api = {
       body: JSON.stringify(prefs),
     }),
 
-  messages: (folderId: string, opts: { limit?: number; before?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (opts.limit) qs.set('limit', String(opts.limit));
-    if (opts.before) qs.set('before', String(opts.before));
-    const suffix = qs.toString() ? `?${qs}` : '';
-    return request<MessageDto[]>(`/api/folders/${folderId}/messages${suffix}`);
-  },
+  messages: (folderId: string, opts: ListOpts = {}) =>
+    request<MessageDto[]>(`/api/folders/${folderId}/messages${listQs(opts)}`),
 
   /** Virtual "Unified Inbox": every account's inbox merged newest-first. */
-  unifiedInbox: (opts: { limit?: number; before?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (opts.limit) qs.set('limit', String(opts.limit));
-    if (opts.before) qs.set('before', String(opts.before));
-    const suffix = qs.toString() ? `?${qs}` : '';
-    return request<MessageDto[]>(`/api/inbox${suffix}`);
-  },
+  unifiedInbox: (opts: ListOpts = {}) => request<MessageDto[]>(`/api/inbox${listQs(opts)}`),
 
   /** Virtual unified view for any mergeable role ("All sent", "All drafts", …). */
-  unified: (role: string, opts: { limit?: number; before?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (opts.limit) qs.set('limit', String(opts.limit));
-    if (opts.before) qs.set('before', String(opts.before));
-    const suffix = qs.toString() ? `?${qs}` : '';
-    return request<MessageDto[]>(`/api/unified/${role}${suffix}`);
-  },
+  unified: (role: string, opts: ListOpts = {}) =>
+    request<MessageDto[]>(`/api/unified/${role}${listQs(opts)}`),
 
   /** Virtual "Archived" view for an account (archive folder minus inbox/sent/…). */
-  archived: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (opts.limit) qs.set('limit', String(opts.limit));
-    if (opts.before) qs.set('before', String(opts.before));
-    const suffix = qs.toString() ? `?${qs}` : '';
-    return request<MessageDto[]>(`/api/accounts/${accountId}/archived${suffix}`);
-  },
+  archived: (accountId: string, opts: ListOpts = {}) =>
+    request<MessageDto[]>(`/api/accounts/${accountId}/archived${listQs(opts)}`),
 
   /** Virtual "Starred" view for an account (every \Flagged message, provider-agnostic). */
-  starred: (accountId: string, opts: { limit?: number; before?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (opts.limit) qs.set('limit', String(opts.limit));
-    if (opts.before) qs.set('before', String(opts.before));
-    const suffix = qs.toString() ? `?${qs}` : '';
-    return request<MessageDto[]>(`/api/accounts/${accountId}/starred${suffix}`);
-  },
+  starred: (accountId: string, opts: ListOpts = {}) =>
+    request<MessageDto[]>(`/api/accounts/${accountId}/starred${listQs(opts)}`),
 
   message: (id: string) => request<MessageDetailDto>(`/api/messages/${id}`),
 

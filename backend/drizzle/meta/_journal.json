@@ -169,6 +169,13 @@
       "when": 1783500000000,
       "tag": "0023_message_purged_at",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1783600000000,
+      "tag": "0024_messages_unseen_idx",
+      "breakpoints": true
     }
   ]
 }

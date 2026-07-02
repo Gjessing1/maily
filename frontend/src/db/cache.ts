@@ -11,6 +11,24 @@ import { getPrefs } from '../state/prefs';
 /** Cached list-view message: the DTO plus bookkeeping for eviction. */
 export interface CachedMessage extends MessageDto {
   cachedAt: number;
+  /**
+   * Sparse index key for the "unread at top" read path: equals `receivedAt` while the
+   * message is unseen, absent once read. Rows without the key aren't in the index at
+   * all, so walking `unreadAt` visits ONLY unread rows — never the whole cache.
+   * Maintained by every write that touches `seen` (cacheMessages/cacheBody/
+   * patchCachedFlags); derived, never sent to the server.
+   */
+  unreadAt?: string;
+}
+
+/** Set/clear the sparse `unreadAt` key from the row's own seen/receivedAt state. */
+function withUnreadKey<T extends { seen: boolean; receivedAt: string | null }>(
+  m: T,
+): T & { unreadAt?: string } {
+  const row = m as T & { unreadAt?: string };
+  if (row.seen || !row.receivedAt) delete row.unreadAt;
+  else row.unreadAt = row.receivedAt;
+  return row;
 }
 
 /** Cached full message body, kept apart from the light list rows. */
@@ -96,6 +114,18 @@ class MailyCache extends Dexie {
     this.version(2).stores({
       drafts: 'id, updatedAt',
     });
+    // v3 adds the sparse unreadAt index (unread-at-top read path); backfill it from
+    // the rows' existing seen/receivedAt so pre-upgrade caches float correctly.
+    this.version(3)
+      .stores({
+        messages: 'id, receivedAt, threadId, accountId, cachedAt, *folderIds, unreadAt',
+      })
+      .upgrade((tx) =>
+        tx
+          .table('messages')
+          .toCollection()
+          .modify((m: CachedMessage) => withUnreadKey(m)),
+      );
   }
 }
 
@@ -112,31 +142,33 @@ export async function cacheFolders(rows: FolderDto[]): Promise<void> {
 export async function cacheMessages(rows: MessageDto[]): Promise<void> {
   const now = Date.now();
   const fresh = rows.filter((m) => !isTombstoned(m.id));
-  await cache.messages.bulkPut(fresh.map((m) => ({ ...m, cachedAt: now })));
+  await cache.messages.bulkPut(fresh.map((m) => withUnreadKey({ ...m, cachedAt: now })));
 }
 
 export async function cacheBody(detail: MessageDetailDto): Promise<void> {
   if (isTombstoned(detail.id)) return;
   await cache.bodies.put({ ...detail, cachedAt: Date.now() });
   // Keep the list row's flags/snippet in sync with the freshly fetched detail.
-  await cache.messages.put({
-    id: detail.id,
-    accountId: detail.accountId,
-    threadId: detail.threadId,
-    subject: detail.subject,
-    fromName: detail.fromName,
-    fromAddress: detail.fromAddress,
-    to: detail.to,
-    snippet: detail.snippet,
-    sentAt: detail.sentAt,
-    receivedAt: detail.receivedAt,
-    seen: detail.seen,
-    flagged: detail.flagged,
-    localOnly: detail.localOnly,
-    folderIds: detail.folderIds,
-    attachments: detail.attachments,
-    cachedAt: Date.now(),
-  });
+  await cache.messages.put(
+    withUnreadKey({
+      id: detail.id,
+      accountId: detail.accountId,
+      threadId: detail.threadId,
+      subject: detail.subject,
+      fromName: detail.fromName,
+      fromAddress: detail.fromAddress,
+      to: detail.to,
+      snippet: detail.snippet,
+      sentAt: detail.sentAt,
+      receivedAt: detail.receivedAt,
+      seen: detail.seen,
+      flagged: detail.flagged,
+      localOnly: detail.localOnly,
+      folderIds: detail.folderIds,
+      attachments: detail.attachments,
+      cachedAt: Date.now(),
+    }),
+  );
 }
 
 /** Optimistically reflect a flag change locally (server is still authoritative). */
@@ -144,7 +176,13 @@ export async function patchCachedFlags(
   id: string,
   flags: { seen?: boolean; flagged?: boolean },
 ): Promise<void> {
-  await cache.messages.where('id').equals(id).modify(flags);
+  await cache.messages
+    .where('id')
+    .equals(id)
+    .modify((m) => {
+      Object.assign(m, flags);
+      withUnreadKey(m); // seen changed → the sparse unread index key must follow
+    });
   await cache.bodies.where('id').equals(id).modify(flags);
 }
 
@@ -196,6 +234,36 @@ export async function reconcileHeadPage(
   const ids = [...stale];
   await cache.messages.bulkDelete(ids);
   await cache.bodies.bulkDelete(ids);
+}
+
+/**
+ * Reconcile cached unread state against a freshly fetched UNREAD page of a folder
+ * view (`?unread=1`, no cursor — the newest unseen rows). A cached unseen row in
+ * the fetched scope that is absent from the response — and provably inside the
+ * fetched window (newer than the oldest returned row, or any row when the response
+ * was short) — was read elsewhere while signals were missed: flip it seen locally
+ * so it doesn't sit pinned-bold at the top of the list until eviction. Flag-only —
+ * the row itself stays cached.
+ */
+export async function reconcileUnreadPage(
+  folderIds: string[],
+  rows: MessageDto[],
+  sawFullPage: boolean,
+  excludeFolderIds?: Set<string>,
+): Promise<void> {
+  if (folderIds.length === 0) return;
+  const present = new Set(rows.map((m) => m.id));
+  const oldest = rows.length ? Math.min(...rows.map(receivedMs)) : 0;
+  const stale = new Set<string>();
+  await cache.messages
+    .where('folderIds')
+    .anyOf(folderIds)
+    .each((m) => {
+      if (m.seen || present.has(m.id) || stale.has(m.id)) return;
+      if (excludeFolderIds && m.folderIds.some((id) => excludeFolderIds.has(id))) return;
+      if (!sawFullPage || receivedMs(m) > oldest) stale.add(m.id);
+    });
+  for (const id of stale) await patchCachedFlags(id, { seen: true });
 }
 
 /**

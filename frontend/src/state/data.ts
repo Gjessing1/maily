@@ -18,6 +18,7 @@ import {
   cacheMessages,
   reconcileHeadPage,
   reconcileStarredPage,
+  reconcileUnreadPage,
   type CachedMessage,
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
@@ -30,6 +31,14 @@ function receivedMs(m: { receivedAt: string | null }): number {
 
 /** How many of the top list rows to warm the body cache for (see prefetch below). */
 const PREFETCH_BODIES = 8;
+
+/**
+ * Page size for the dedicated unread fetch (`?unread=1`) and cap for the unread section
+ * of the list. Matches the server's MAX_PAGE — with "unread at top" on, EVERY unread
+ * message of the view (up to this cap) is served on page one straight from the server,
+ * regardless of how deep the date-ordered pages have been scrolled.
+ */
+const UNREAD_PAGE = 200;
 
 export function useAccounts(): AccountDto[] | undefined {
   const accounts = useLiveQuery(() => cache.accounts.toArray());
@@ -138,19 +147,31 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     } else {
       match = (m) => m.folderIds.includes(folderId);
     }
-    const rows = await cache.messages
-      .orderBy('receivedAt')
+    if (!unreadAtTop) {
+      return cache.messages
+        .orderBy('receivedAt')
+        .reverse()
+        .filter(match)
+        .limit(displayLimit)
+        .toArray();
+    }
+    // Unread-at-top: the unread section comes off the sparse `unreadAt` index, which
+    // holds ONLY unseen rows — so every cached unread message of the view surfaces on
+    // page one (not just ones inside the scrolled window), at the cost of walking the
+    // handful of unread rows. The read section fills the date-ordered window below it.
+    const unread = await cache.messages
+      .orderBy('unreadAt')
       .reverse()
       .filter(match)
+      .limit(UNREAD_PAGE)
+      .toArray();
+    const read = await cache.messages
+      .orderBy('receivedAt')
+      .reverse()
+      .filter((m) => m.seen && match(m))
       .limit(displayLimit)
       .toArray();
-    // Already newest-first from the index; optionally float unread above read
-    // (stable within the loaded window — same contract as the server paging).
-    if (!unreadAtTop) return rows;
-    return rows.sort((a, b) => {
-      if (a.seen !== b.seen) return a.seen ? 1 : -1;
-      return receivedMs(b) - receivedMs(a);
-    });
+    return [...unread, ...read]; // both sections are newest-first from their index
   }, [
     folderId,
     archived,
@@ -165,17 +186,24 @@ export function useMessages(folderId: string | undefined): MessagesResult {
 
   // One page fetch for a unified view, an archived view, or a real folder. The inbox
   // keeps its dedicated endpoint; other roles go through the generic unified route.
+  // `unread: true` asks for the newest unseen rows only (no cursor, bigger cap).
   const fetchPage = useCallback(
-    (before?: number) =>
-      starred && starredFor
-        ? api.starred(starredFor, { limit: PAGE, before })
+    (opts: { before?: number; unread?: boolean } = {}) => {
+      const q = {
+        limit: opts.unread ? UNREAD_PAGE : PAGE,
+        before: opts.before,
+        unread: opts.unread,
+      };
+      return starred && starredFor
+        ? api.starred(starredFor, q)
         : unifiedFor
           ? unifiedFor === 'inbox'
-            ? api.unifiedInbox({ limit: PAGE, before })
-            : api.unified(unifiedFor, { limit: PAGE, before })
+            ? api.unifiedInbox(q)
+            : api.unified(unifiedFor, q)
           : archived && accountId
-            ? api.archived(accountId, { limit: PAGE, before })
-            : api.messages(folderId!, { limit: PAGE, before }),
+            ? api.archived(accountId, q)
+            : api.messages(folderId!, q);
+    },
     [starred, starredFor, unifiedFor, archived, accountId, folderId, PAGE],
   );
 
@@ -218,6 +246,32 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     [starred, starredFor, unified, unifiedFor, archived, accountId, folderId],
   );
 
+  // Reconcile the unread page (see reconcileUnreadPage): a cached-unseen row inside the
+  // fetched window but absent from the response was read elsewhere — unbold it locally.
+  // Starred is flag-scoped, not folder-scoped, so it has no scope to reconcile against.
+  const reconcileUnread = useCallback(
+    async (rows: MessageDto[]) => {
+      const sawFullPage = rows.length === UNREAD_PAGE;
+      if (unified && unifiedFor) {
+        const scope = (await cache.folders.toArray())
+          .filter((f) => f.role === unifiedFor)
+          .map((f) => f.id);
+        await reconcileUnreadPage(scope, rows, sawFullPage);
+      } else if (archived && accountId) {
+        const folders = await cache.folders.where('accountId').equals(accountId).toArray();
+        const archiveId = folders.find((f) => f.role === 'archive')?.id;
+        if (!archiveId) return;
+        const excluded = new Set(
+          folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
+        );
+        await reconcileUnreadPage([archiveId], rows, sawFullPage, excluded);
+      } else if (!starred && folderId) {
+        await reconcileUnreadPage([folderId], rows, sawFullPage);
+      }
+    },
+    [unified, unifiedFor, archived, accountId, starred, folderId],
+  );
+
   const refresh = useCallback(() => {
     if (!folderId) return;
     if (refreshingViewRef.current === folderId) return; // already refreshing this view
@@ -225,12 +279,17 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     const view = folderId;
     setRefreshing(true);
     setError(null);
-    fetchPage()
-      .then(async (rows) => {
+    // With unread-at-top on, the unread page rides along with the head page so page
+    // one always carries every unread message — the server serves both from its
+    // first-page cache, so this is two cheap requests, not two heavy queries.
+    Promise.all([fetchPage(), unreadAtTop ? fetchPage({ unread: true }) : null])
+      .then(async ([rows, unreadRows]) => {
         // Cache + reconcile unconditionally — the data is valid for the view it was
         // fetched for regardless of where the user has navigated since.
         await cacheMessages(rows);
+        if (unreadRows) await cacheMessages(unreadRows);
         await reconcile(rows, rows.length === PAGE);
+        if (unreadRows) await reconcileUnread(unreadRows);
         if (viewRef.current === view) setHasMore(rows.length === PAGE);
       })
       .catch((e: Error) => {
@@ -240,7 +299,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         if (refreshingViewRef.current === view) refreshingViewRef.current = null;
         if (viewRef.current === view) setRefreshing(false);
       });
-  }, [folderId, PAGE, fetchPage, reconcile]);
+  }, [folderId, PAGE, unreadAtTop, fetchPage, reconcile, reconcileUnread]);
 
   const loadMore = useCallback(() => {
     if (!folderId || !messages?.length) return;
@@ -254,7 +313,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     setDisplayLimit((n) => n + PAGE);
     const view = folderId;
     setRefreshing(true);
-    fetchPage(before)
+    fetchPage({ before })
       .then(async (rows) => {
         await cacheMessages(rows);
         if (viewRef.current === view) setHasMore(rows.length === PAGE);

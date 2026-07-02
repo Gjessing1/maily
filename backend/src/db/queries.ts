@@ -92,12 +92,25 @@ export function isMessageLocalOnly(id: string): boolean {
   );
 }
 
+/**
+ * Unread-only filter for the list queries (`?unread=1`). MUST stay a literal `= 0`, not a
+ * bound parameter: the `messages_unseen_received_idx` partial index (migration 0024) only
+ * matches when SQLite can prove the predicate at compile time, and `seen = ?` can't.
+ */
+const unseen = sql`${messages.seen} = 0`;
+
 /** Messages in a folder, newest first, keyset-paginated by receivedAt. Tombstones hidden (§13) except in trash. */
-export function listMessages(folderId: string, limit: number, beforeMs?: number): MessageRow[] {
+export function listMessages(
+  folderId: string,
+  limit: number,
+  beforeMs?: number,
+  unseenOnly = false,
+): MessageRow[] {
   const where = and(
     eq(messageFolders.folderId, folderId),
     isTrashFolder(folderId) ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
     beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+    unseenOnly ? unseen : undefined,
   );
   return db
     .select(getTableColumns(messages))
@@ -145,6 +158,7 @@ export function listUnifiedByRole(
   role: UnifiedRole,
   limit: number,
   beforeMs?: number,
+  unseenOnly = false,
 ): MessageRow[] {
   return db
     .select(getTableColumns(messages))
@@ -158,6 +172,7 @@ export function listUnifiedByRole(
         // only purged shells (heavy data reclaimed) are hidden there.
         role === 'trash' ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+        unseenOnly ? unseen : undefined,
       ),
     )
     .orderBy(desc(messages.receivedAt))
@@ -166,8 +181,12 @@ export function listUnifiedByRole(
 }
 
 /** Back-compat alias for the unified inbox (the `/api/inbox` endpoint). */
-export function listUnifiedInbox(limit: number, beforeMs?: number): MessageRow[] {
-  return listUnifiedByRole('inbox', limit, beforeMs);
+export function listUnifiedInbox(
+  limit: number,
+  beforeMs?: number,
+  unseenOnly = false,
+): MessageRow[] {
+  return listUnifiedByRole('inbox', limit, beforeMs, unseenOnly);
 }
 
 /** Roles whose presence disqualifies a message from the virtual "Archived" view. */
@@ -180,7 +199,12 @@ const NON_ARCHIVE_ROLES = ['inbox', 'sent', 'trash', 'junk', 'drafts'] as const;
  * on providers with a real Archive folder the subtraction is a harmless no-op.
  * Tombstones hidden (§13); newest first, keyset-paginated by receivedAt.
  */
-export function listArchived(accountId: string, limit: number, beforeMs?: number): MessageRow[] {
+export function listArchived(
+  accountId: string,
+  limit: number,
+  beforeMs?: number,
+  unseenOnly = false,
+): MessageRow[] {
   const mf2 = alias(messageFolders, 'mf2');
   const f2 = alias(folders, 'f2');
   return db
@@ -194,6 +218,7 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
         eq(folders.role, 'archive'),
         isNull(messages.deletedAt),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+        unseenOnly ? unseen : undefined,
         notExists(
           db
             .select({ one: sql`1` })
@@ -215,7 +240,12 @@ export function listArchived(accountId: string, limit: number, beforeMs?: number
  * (the frontend hides the real Gmail folder and uses this everywhere). Tombstones —
  * including trashed mail — are hidden; keyset-paginated by receivedAt.
  */
-export function listStarred(accountId: string, limit: number, beforeMs?: number): MessageRow[] {
+export function listStarred(
+  accountId: string,
+  limit: number,
+  beforeMs?: number,
+  unseenOnly = false,
+): MessageRow[] {
   return db
     .select()
     .from(messages)
@@ -225,6 +255,7 @@ export function listStarred(accountId: string, limit: number, beforeMs?: number)
         eq(messages.flagged, true),
         isNull(messages.deletedAt),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+        unseenOnly ? unseen : undefined,
       ),
     )
     .orderBy(desc(messages.receivedAt))
