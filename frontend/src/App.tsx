@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { onSocketReconnect } from './api/socket';
 import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
@@ -28,8 +29,27 @@ export function App() {
 
   // Pull server-side preferences once authenticated so settings are consistent
   // across devices (the server is the source of truth; local storage is a cache).
+  // Re-hydrate (throttled) when the app comes back to the foreground or the
+  // socket reconnects, so a preference flipped on another device shows up here
+  // without a full app restart. Pending local edits win (see hydratePrefs).
   useEffect(() => {
-    if (authed) void hydratePrefs();
+    if (!authed) return;
+    void hydratePrefs();
+    let last = Date.now();
+    const rehydrate = () => {
+      if (Date.now() - last < 30_000) return;
+      last = Date.now();
+      void hydratePrefs();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') rehydrate();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const offReconnect = onSocketReconnect(rehydrate);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      offReconnect();
+    };
   }, [authed]);
 
   // Once the initial screens have had the network to themselves, warm the Cleanup

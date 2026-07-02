@@ -198,12 +198,24 @@ function notify(): void {
 // Debounced write-back to the server so rapid edits (e.g. typing a signature)
 // coalesce into one request. The whole prefs object is sent; the server owns it.
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
+// Local edits not yet confirmed by the server. While set, hydratePrefs must not
+// overwrite `current` — a re-hydration racing the debounced push would silently
+// revert what the user just changed.
+let dirty = false;
 function schedulePush(): void {
+  dirty = true;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
-    void api.putSettings(current as unknown as Record<string, unknown>).catch(() => {
-      // Offline / unauthorized — local cache holds the change; it re-syncs next save.
-    });
+    const pushed = current;
+    void api
+      .putSettings(current as unknown as Record<string, unknown>)
+      .then(() => {
+        // Only clean if nothing changed while the request was in flight.
+        if (current === pushed) dirty = false;
+      })
+      .catch(() => {
+        // Offline / unauthorized — local cache holds the change; it re-syncs next save.
+      });
   }, 600);
 }
 
@@ -227,6 +239,8 @@ export function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): void {
 export async function hydratePrefs(): Promise<void> {
   try {
     const server = await api.getSettings();
+    // Unpushed local edits win — they're about to overwrite the server anyway.
+    if (dirty) return;
     if (server && Object.keys(server).length > 0) {
       current = { ...DEFAULTS, ...(server as Partial<Prefs>) };
       saveLocal();

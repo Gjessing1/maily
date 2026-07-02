@@ -114,6 +114,21 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * How long a request may sit without an answer before we abort it. Mobile radios
+ * love half-open connections (backgrounded PWA, dead Wi-Fi, tunnel): without a
+ * deadline a fetch can hang for minutes, wedging the refresh spinner and the
+ * in-flight guards that coalesce refreshes.
+ */
+const REQUEST_TIMEOUT_MS = 25_000;
+const RETRY_DELAY_MS = 750;
+
+function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
@@ -121,7 +136,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  // GETs are idempotent, so a network failure/timeout gets one quick retry —
+  // enough to ride out a Wi-Fi↔cellular handover or a dropped radio wake-up
+  // without turning every list refresh into a user-visible error. Mutations
+  // (POST/PATCH/DELETE) never retry: a timed-out send may still have committed.
+  const method = (init.method ?? 'GET').toUpperCase();
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers });
+  } catch (err) {
+    if (method !== 'GET') {
+      throw new ApiError(0, err instanceof DOMException ? 'request timed out' : 'network error');
+    }
+    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+    try {
+      res = await fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers });
+    } catch (err2) {
+      throw new ApiError(0, err2 instanceof DOMException ? 'request timed out' : 'network error');
+    }
+  }
 
   if (res.status === 401) {
     // Gateway-fronted deployment: the 401 is the external gateway, not maily.

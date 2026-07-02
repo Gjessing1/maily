@@ -15,7 +15,13 @@
  */
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
-import { cache, removeCachedMessage, type CachedBody, type CachedMessage } from '../db/cache';
+import {
+  cache,
+  clearRemovalTombstone,
+  removeCachedMessage,
+  type CachedBody,
+  type CachedMessage,
+} from '../db/cache';
 
 /** Fallback window if the server didn't return a dueAt (kept in sync with the backend default). */
 const FALLBACK_WINDOW_MS = 5000;
@@ -138,6 +144,7 @@ async function stage(kind: 'delete' | 'archive', ids: string[], label?: string):
   if (failed.length > 0) {
     // Couldn't queue the move server-side — restore those rows so they don't silently vanish.
     for (const id of failed) {
+      clearRemovalTombstone(id); // let refreshes cache it again right away
       const m = snapMessages.get(id);
       const b = snapBodies.get(id);
       if (m) await cache.messages.put(m);
@@ -219,7 +226,10 @@ export async function undoAction(): Promise<void> {
 
   // Restore snapshots (delete/archive). A send has no local snapshot — the backend saves the
   // canceled send back to \Drafts; if the cancel was too late it already went out.
-  for (const m of messages) await cache.messages.put(m);
+  for (const m of messages) {
+    clearRemovalTombstone(m.id); // let refreshes cache it again right away
+    await cache.messages.put(m);
+  }
   for (const b of bodies) await cache.bodies.put(b);
   if (kind === 'send') {
     showNotice(tooLate ? 'Already sent — too late to undo' : 'Send canceled — saved to Drafts');

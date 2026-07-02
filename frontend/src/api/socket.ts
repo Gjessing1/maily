@@ -16,7 +16,10 @@ const reconnectListeners = new Set<() => void>();
 export function connectSocket(): Socket {
   if (socket) return socket;
   socket = io(API_BASE || '/', {
-    auth: { token: getToken() ?? '' },
+    // Callback form so every (re)connection handshake reads the CURRENT token —
+    // a captured value goes stale when the user re-logs in while the socket is
+    // still retrying, leaving it permanently rejected with the old token.
+    auth: (cb) => cb({ token: getToken() ?? '' }),
     transports: ['websocket'],
   });
   socket.on('signal', (signal: SocketSignal) => {

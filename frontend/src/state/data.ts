@@ -4,9 +4,9 @@
  * of truth (§6); the cache is a disposable accelerator, so a cold/empty cache just
  * shows a spinner until the network fills it.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import type { AccountDto, FolderDto, MessageDetailDto } from '@maily/shared';
+import type { AccountDto, FolderDto, MessageDetailDto, MessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { onSocketReconnect } from '../api/socket';
 import { usePrefs } from './prefs';
@@ -16,6 +16,8 @@ import {
   cacheBody,
   cacheFolders,
   cacheMessages,
+  reconcileHeadPage,
+  reconcileStarredPage,
   type CachedMessage,
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
@@ -150,32 +152,90 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     [starred, starredFor, unifiedFor, archived, accountId, folderId, PAGE],
   );
 
+  // The view the hook currently renders; async completions compare against it so a
+  // slow response from a previous folder can't set this view's hasMore/error state.
+  const viewRef = useRef(folderId);
+  viewRef.current = folderId;
+  // Head-refresh in flight for which view (coalesces the visibility/online/socket
+  // triggers, which often fire together) — a view SWITCH still refreshes immediately.
+  const refreshingViewRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+
+  // After a successful head fetch, drop cached rows that vanished from the fetched
+  // view server-side (moved/deleted on another device while signals were missed).
+  // Scoped to the view that was FETCHED, so it stays valid even if the user has
+  // already navigated elsewhere by the time the response lands.
+  const reconcile = useCallback(
+    async (rows: MessageDto[], sawFullPage: boolean) => {
+      if (starred && starredFor) {
+        await reconcileStarredPage(starredFor, rows, sawFullPage);
+      } else if (unified && unifiedFor) {
+        const scope = (await cache.folders.toArray())
+          .filter((f) => f.role === unifiedFor)
+          .map((f) => f.id);
+        await reconcileHeadPage(scope, rows, sawFullPage);
+      } else if (archived && accountId) {
+        const folders = await cache.folders.where('accountId').equals(accountId).toArray();
+        const archiveId = folders.find((f) => f.role === 'archive')?.id;
+        if (!archiveId) return;
+        // The Archived view subtracts inbox/sent/… members server-side, so their
+        // absence from the response proves nothing — spare them.
+        const excluded = new Set(
+          folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
+        );
+        await reconcileHeadPage([archiveId], rows, sawFullPage, excluded);
+      } else if (folderId) {
+        await reconcileHeadPage([folderId], rows, sawFullPage);
+      }
+    },
+    [starred, starredFor, unified, unifiedFor, archived, accountId, folderId],
+  );
+
   const refresh = useCallback(() => {
     if (!folderId) return;
+    if (refreshingViewRef.current === folderId) return; // already refreshing this view
+    refreshingViewRef.current = folderId;
+    const view = folderId;
     setRefreshing(true);
     setError(null);
     fetchPage()
       .then(async (rows) => {
+        // Cache + reconcile unconditionally — the data is valid for the view it was
+        // fetched for regardless of where the user has navigated since.
         await cacheMessages(rows);
-        setHasMore(rows.length === PAGE);
+        await reconcile(rows, rows.length === PAGE);
+        if (viewRef.current === view) setHasMore(rows.length === PAGE);
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setRefreshing(false));
-  }, [folderId, PAGE, fetchPage]);
+      .catch((e: Error) => {
+        if (viewRef.current === view) setError(e.message);
+      })
+      .finally(() => {
+        if (refreshingViewRef.current === view) refreshingViewRef.current = null;
+        if (viewRef.current === view) setRefreshing(false);
+      });
+  }, [folderId, PAGE, fetchPage, reconcile]);
 
   const loadMore = useCallback(() => {
     if (!folderId || !messages?.length) return;
+    if (loadingMoreRef.current) return; // scroll handlers fire in bursts — one page at a time
     const oldest = messages[messages.length - 1];
     const before = oldest ? receivedMs(oldest) : 0;
     if (!before) return;
+    loadingMoreRef.current = true;
+    const view = folderId;
     setRefreshing(true);
     fetchPage(before)
       .then(async (rows) => {
         await cacheMessages(rows);
-        setHasMore(rows.length === PAGE);
+        if (viewRef.current === view) setHasMore(rows.length === PAGE);
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setRefreshing(false));
+      .catch((e: Error) => {
+        if (viewRef.current === view) setError(e.message);
+      })
+      .finally(() => {
+        loadingMoreRef.current = false;
+        if (viewRef.current === view) setRefreshing(false);
+      });
   }, [folderId, messages, PAGE, fetchPage]);
 
   // Refetch the head of the folder whenever it changes.

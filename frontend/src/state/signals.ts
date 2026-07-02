@@ -6,7 +6,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { onSignal } from '../api/socket';
-import { cacheBody, patchCachedFlags, removeCachedMessage } from '../db/cache';
+import {
+  cacheBody,
+  clearRemovalTombstone,
+  patchCachedFlags,
+  removeCachedMessage,
+} from '../db/cache';
 import { showNotice } from './undo';
 
 export interface SyncProgress {
@@ -47,7 +52,9 @@ export function useSignals(): { progress: SyncProgress | null } {
           break;
         case 'mail:restored':
           // A deferred delete/archive was undone (possibly on another device) before it
-          // committed — re-pull the message so it reappears in the inbox.
+          // committed — re-pull the message so it reappears in the inbox. Clear the
+          // removal tombstone first or the cache write would be silently skipped.
+          clearRemovalTombstone(signal.messageId);
           api
             .message(signal.messageId)
             .then(cacheBody)
