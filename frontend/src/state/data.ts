@@ -90,6 +90,12 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const { unreadAtTop, pageSize } = usePrefs();
   const PAGE = pageSize;
 
+  // How many rows the view currently shows. The cache can hold up to a year of rows
+  // (clientCacheDays), so both the Dexie read and the DOM must stay bounded to a
+  // window that grows page-by-page with scrolling — never "everything cached".
+  const [displayLimit, setDisplayLimit] = useState(PAGE);
+  useEffect(() => setDisplayLimit(PAGE), [folderId, PAGE]);
+
   // The virtual "Archived" view has no real folder id; it reads its own endpoint
   // and, offline, filters the cached archive-folder rows by the same role subtraction.
   const archived = isArchivedView(folderId);
@@ -105,18 +111,22 @@ export function useMessages(folderId: string | undefined): MessagesResult {
 
   const messages = useLiveQuery(async () => {
     if (!folderId) return [];
-    let rows: CachedMessage[];
+    // Resolve the view to a membership predicate, then walk the receivedAt index
+    // newest-first and stop once the display window is full. receivedAt is an ISO
+    // string, so index order IS chronological order; for the dense default views
+    // (inbox, unified inbox) this reads ~displayLimit rows instead of the whole
+    // table, which is what made a cold Home remount take seconds. Rows with a null
+    // receivedAt aren't in the index and are skipped — keyset paging (`before`)
+    // could never reach past them anyway.
+    let match: (m: CachedMessage) => boolean;
     if (starred && starredFor) {
-      rows = (await cache.messages.where('accountId').equals(starredFor).toArray()).filter(
-        (m) => m.flagged,
-      );
+      match = (m) => m.accountId === starredFor && m.flagged;
     } else if (unified && unifiedFor) {
-      const roleFolderIds = (await cache.folders.toArray())
-        .filter((f) => f.role === unifiedFor)
-        .map((f) => f.id);
-      rows = roleFolderIds.length
-        ? await cache.messages.where('folderIds').anyOf(roleFolderIds).toArray()
-        : [];
+      const roleFolderIds = new Set(
+        (await cache.folders.toArray()).filter((f) => f.role === unifiedFor).map((f) => f.id),
+      );
+      if (roleFolderIds.size === 0) return [];
+      match = (m) => m.folderIds.some((id) => roleFolderIds.has(id));
     } else if (archived && accountId) {
       const folders = await cache.folders.where('accountId').equals(accountId).toArray();
       const archiveId = folders.find((f) => f.role === 'archive')?.id;
@@ -124,17 +134,34 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       const excluded = new Set(
         folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
       );
-      const inArchive = await cache.messages.where('folderIds').equals(archiveId).toArray();
-      rows = inArchive.filter((m) => !m.folderIds.some((id) => excluded.has(id)));
+      match = (m) => m.folderIds.includes(archiveId) && !m.folderIds.some((id) => excluded.has(id));
     } else {
-      rows = await cache.messages.where('folderIds').equals(folderId).toArray();
+      match = (m) => m.folderIds.includes(folderId);
     }
-    // Newest-first always; optionally float unread above read as the primary key.
+    const rows = await cache.messages
+      .orderBy('receivedAt')
+      .reverse()
+      .filter(match)
+      .limit(displayLimit)
+      .toArray();
+    // Already newest-first from the index; optionally float unread above read
+    // (stable within the loaded window — same contract as the server paging).
+    if (!unreadAtTop) return rows;
     return rows.sort((a, b) => {
-      if (unreadAtTop && a.seen !== b.seen) return a.seen ? 1 : -1;
+      if (a.seen !== b.seen) return a.seen ? 1 : -1;
       return receivedMs(b) - receivedMs(a);
     });
-  }, [folderId, archived, accountId, unified, unifiedFor, starred, starredFor, unreadAtTop]);
+  }, [
+    folderId,
+    archived,
+    accountId,
+    unified,
+    unifiedFor,
+    starred,
+    starredFor,
+    unreadAtTop,
+    displayLimit,
+  ]);
 
   // One page fetch for a unified view, an archived view, or a real folder. The inbox
   // keeps its dedicated endpoint; other roles go through the generic unified route.
@@ -222,6 +249,9 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     const before = oldest ? receivedMs(oldest) : 0;
     if (!before) return;
     loadingMoreRef.current = true;
+    // Reveal the next window of already-cached rows right away (works offline);
+    // the fetch below tops the cache up where the window outruns it.
+    setDisplayLimit((n) => n + PAGE);
     const view = folderId;
     setRefreshing(true);
     fetchPage(before)

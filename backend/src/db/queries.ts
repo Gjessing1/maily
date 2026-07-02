@@ -246,8 +246,26 @@ export function listStarred(accountId: string, limit: number, beforeMs?: number)
  * length rather than character count. The body text/html term reads the precomputed
  * `content_bytes` column (migration 0018) — length() over the bodies inside the
  * aggregate would read + decode every body on each Settings visit.
+ *
+ * Memoized with a short TTL: even on the fast path the scan must skip past the inline
+ * body columns of every row (`source_bytes`/`content_bytes` were ALTER-TABLE-added, so
+ * they sit after `body_text`/`body_html` in each record) — ~115 ms of synchronous
+ * event-loop blocking per account on the N150. Settings polls /api/sync/status every
+ * 5 s, and inbox fetches queue behind each poll; a display metric this slow-moving
+ * doesn't need recomputing more than once a minute.
  */
+const contentBytesMemo = new Map<string, { at: number; bytes: number }>();
+const CONTENT_BYTES_TTL_MS = 60_000;
+
 export function accountContentBytes(accountId: string): number {
+  const hit = contentBytesMemo.get(accountId);
+  if (hit && Date.now() - hit.at < CONTENT_BYTES_TTL_MS) return hit.bytes;
+  const bytes = computeAccountContentBytes(accountId);
+  contentBytesMemo.set(accountId, { at: Date.now(), bytes });
+  return bytes;
+}
+
+function computeAccountContentBytes(accountId: string): number {
   const body = db
     .select({
       bytes: sql<number>`coalesce(sum(
