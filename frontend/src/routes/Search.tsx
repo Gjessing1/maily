@@ -7,7 +7,7 @@
  * string into the canonical IR and compiles it to FTS5 + SQL (`search/query.ts`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
@@ -144,7 +144,10 @@ export function Search() {
   const navigate = useNavigate();
   const prefs = usePrefs();
   const isWide = useMediaQuery('(min-width: 768px)');
-  const [q, setQ] = useState('');
+  // Entry points can pre-scope the search via `?q=…` — e.g. the Trash views link
+  // here with `in:trash ` so searching covers the (normally hidden) trashed mail.
+  const [params] = useSearchParams();
+  const [q, setQ] = useState(() => params.get('q') ?? '');
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
   const [results, setResults] = useState<MessageDto[] | null>(null);
@@ -452,7 +455,8 @@ export function Search() {
               <code className="text-muted">filename:</code>{' '}
               <code className="text-muted">larger:1M</code>{' '}
               <code className="text-muted">is:unread</code>{' '}
-              <code className="text-muted">is:flagged</code>
+              <code className="text-muted">is:flagged</code>{' '}
+              <code className="text-muted">in:trash</code>
             </p>
           </div>
         ) : !visible || (visible.length === 0 && !busy) ? (

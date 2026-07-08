@@ -260,6 +260,11 @@ export function Home() {
   // Purge Trash (local only): shown when viewing a concrete account's trash folder. Reclaims the
   // disk used by everything in it, keeping a no-resync tombstone; the provider's Trash is untouched.
   const isTrashFolder = folder?.role === 'trash';
+  // Trash is hidden from normal search results, so opening Search from a trash view
+  // (account or unified) pre-scopes the query with the `in:trash` operator.
+  // (Trailing space so the user can type terms straight after the prefilled operator.)
+  const searchHref =
+    isTrashFolder || uRole === 'trash' ? `/search?q=${encodeURIComponent('in:trash ')}` : '/search';
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [purging, setPurging] = useState(false);
   const purgeTrash = useCallback(() => {
@@ -358,7 +363,7 @@ export function Home() {
             )}
             {isWide && (
               <Link
-                to="/search"
+                to={searchHref}
                 className="rounded-full p-2 text-fg active:bg-surface-2"
                 aria-label="Search"
               >
@@ -477,7 +482,7 @@ export function Home() {
             <span className="text-[10px]">Folders</span>
           </button>
           <Link
-            to="/search"
+            to={searchHref}
             className="flex flex-1 flex-col items-center gap-0.5 py-2 text-faint active:text-fg"
             aria-label="Search"
           >

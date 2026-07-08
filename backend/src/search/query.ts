@@ -13,6 +13,7 @@
  *   larger:/smaller:  (or size:>/<) — attachment-size bounds (e.g. 500k, 2M)
  *   is:unread/read  is:flagged/starred  is:answered — message-state filters
  *   filename:                     — substring match on an attachment filename
+ *   in:trash                      — search the Trash (normally hidden from results)
  * Anything else is a free-text term, AND-joined into the FTS MATCH.
  */
 
@@ -39,6 +40,12 @@ export interface QueryIR {
   answered?: boolean;
   /** Substring match on a (non-inline) attachment's filename. */
   filename?: string;
+  /**
+   * Search the Trash instead of regular mail. Trashed messages are tombstoned
+   * (`deleted_at`) and hidden from every normal view, so without this flag a search
+   * from the Trash screen can never match anything.
+   */
+  inTrash?: boolean;
 }
 
 const SIZE_UNITS: Record<string, number> = {
@@ -157,6 +164,11 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
       case 'file':
         if (value) ir.filename = value;
         break;
+      case 'in':
+        if (value.toLowerCase() === 'trash') ir.inTrash = true;
+        // Unknown scope → keep the whole token as a free-text term.
+        else ir.terms.push(token);
+        break;
       case 'larger':
       case 'bigger': {
         const n = parseSize(value);
@@ -202,6 +214,7 @@ export function isEmptyQuery(ir: QueryIR): boolean {
     ir.unread === undefined &&
     ir.flagged === undefined &&
     ir.answered === undefined &&
-    ir.filename === undefined
+    ir.filename === undefined &&
+    ir.inTrash === undefined
   );
 }

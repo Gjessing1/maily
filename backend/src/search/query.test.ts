@@ -48,6 +48,14 @@ test('is: state filters — unread/read/flagged/starred/answered', () => {
   assert.deepEqual(parseQuery('is:blue').terms, ['is:blue']);
 });
 
+test('in:trash scope operator; unknown scope stays free text', () => {
+  const ir = parseQuery('invoice in:trash');
+  assert.equal(ir.inTrash, true);
+  assert.deepEqual(ir.terms, ['invoice']);
+  assert.equal(isEmptyQuery(parseQuery('in:trash')), false);
+  assert.deepEqual(parseQuery('in:spam').terms, ['in:spam']);
+});
+
 test('filename: attachment-name operator (file: alias)', () => {
   assert.equal(parseQuery('filename:report.pdf').filename, 'report.pdf');
   assert.equal(parseQuery('file:"tax 2025.xlsx"').filename, 'tax 2025.xlsx');

@@ -83,13 +83,16 @@ function irPredicates(ir: QueryIR): SQL[] {
 }
 
 /** Hydrate ordered message ids back to rows, preserving the id order. */
-function hydrate(ids: string[]): MessageRow[] {
+function hydrate(ids: string[], inTrash: boolean): MessageRow[] {
   if (ids.length === 0) return [];
+  // In-trash results are tombstoned by design; only purged shells stay hidden there
+  // (same visibility rule as the Trash views in db/queries.ts).
+  const visible = inTrash ? isNull(messages.purgedAt) : isNull(messages.deletedAt);
   const byId = new Map(
     db
       .select()
       .from(messages)
-      .where(and(inArray(messages.id, ids), isNull(messages.deletedAt)))
+      .where(and(inArray(messages.id, ids), visible))
       .all()
       .map((m) => [m.id, m]),
   );
@@ -108,6 +111,14 @@ export function searchLocalIR(ir: QueryIR, limit: number): MessageRow[] {
   const match = toFtsMatch(ir.terms);
   const preds = irPredicates(ir);
   const predSql = preds.length ? sql` AND ${sql.join(preds, sql` AND `)}` : sql``;
+  // Base visibility: normal searches hide tombstones; `in:trash` flips the scope to
+  // messages mapped into a trash-role folder, where the tombstone IS the content and
+  // only purged shells stay hidden (mirrors the Trash views in db/queries.ts).
+  const visibleSql = ir.inTrash
+    ? sql`m.purged_at IS NULL AND EXISTS (
+            SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+            WHERE mf.message_id = m.id AND f.role = 'trash')`
+    : sql`m.deleted_at IS NULL`;
 
   let ids: string[];
   if (match) {
@@ -118,7 +129,7 @@ export function searchLocalIR(ir: QueryIR, limit: number): MessageRow[] {
                  m.received_at AS received_at, m.flagged AS flagged
           FROM messages_fts
           JOIN messages m ON m.id = messages_fts.message_id
-          WHERE messages_fts MATCH ${match} AND m.deleted_at IS NULL${predSql}
+          WHERE messages_fts MATCH ${match} AND ${visibleSql}${predSql}
           ORDER BY rank LIMIT ${candidateLimit}`,
     ) as { id: string; bm25: number; received_at: number | null; flagged: number }[];
     const candidates: RankCandidate[] = rows.map((r) => ({
@@ -131,12 +142,12 @@ export function searchLocalIR(ir: QueryIR, limit: number): MessageRow[] {
   } else {
     const idRows = db.all(
       sql`SELECT m.id AS id FROM messages m
-          WHERE m.deleted_at IS NULL${predSql}
+          WHERE ${visibleSql}${predSql}
           ORDER BY m.received_at DESC LIMIT ${limit}`,
     ) as { id: string }[];
     ids = idRows.map((r) => r.id);
   }
-  return hydrate(ids);
+  return hydrate(ids, ir.inTrash === true);
 }
 
 /** Local search entry point: parse the user string into the IR, then compile + run. */

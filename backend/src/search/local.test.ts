@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, before, beforeEach } from 'node:test';
+import { eq } from 'drizzle-orm';
 import type * as SchemaNS from '../db/schema.js';
 import type * as DbClientNS from '../db/client.js';
 import type * as LocalNS from './local.js';
@@ -35,6 +36,8 @@ after(() => rmSync(tmpRoot, { recursive: true, force: true }));
 
 beforeEach(() => {
   db.delete(schema.attachments).run();
+  db.delete(schema.messageFolders).run();
+  db.delete(schema.folders).run();
   db.delete(schema.messages).run();
   db.delete(schema.accounts).run();
 });
@@ -114,6 +117,38 @@ test('state filters combine with free text via the FTS index', () => {
     L.searchLocal('budget is:unread', 10).map((m) => m.id),
     [hit],
   );
+});
+
+test('in:trash finds tombstoned trash mail that normal search hides', () => {
+  const acct = seedAccount();
+  const trashed = seedMessage(acct, { subject: 'old invoice', bodyText: 'invoice from trash' });
+  const kept = seedMessage(acct, { subject: 'new invoice', bodyText: 'invoice in inbox' });
+
+  // Delete = tombstone + move into the trash-role folder (queries.ts §13 semantics).
+  const folderId = randomUUID();
+  db.insert(schema.folders)
+    .values({ id: folderId, accountId: acct, path: 'Trash', name: 'Trash', role: 'trash' })
+    .run();
+  db.insert(schema.messageFolders).values({ messageId: trashed, folderId }).run();
+  db.update(schema.messages)
+    .set({ deletedAt: new Date() })
+    .where(eq(schema.messages.id, trashed))
+    .run();
+
+  assert.deepEqual(
+    L.searchLocal('invoice', 10).map((m) => m.id),
+    [kept],
+  );
+  assert.deepEqual(
+    L.searchLocal('invoice in:trash', 10).map((m) => m.id),
+    [trashed],
+  );
+  // A purged shell stays hidden even in the trash scope.
+  db.update(schema.messages)
+    .set({ purgedAt: new Date() })
+    .where(eq(schema.messages.id, trashed))
+    .run();
+  assert.deepEqual(L.searchLocal('invoice in:trash', 10), []);
 });
 
 test('filename: matches non-inline attachment names only', () => {

@@ -5,7 +5,8 @@
  * UUID and become first-class, deep-linkable) and then returned from local.
  */
 import { listFolders, type MessageRow } from '../db/queries.js';
-import { searchLocal } from './local.js';
+import { searchLocalIR } from './local.js';
+import { parseQuery } from './query.js';
 import { createLogger } from '../logger.js';
 import { withTransientConnection } from '../imap/connection.js';
 import type { FolderRow } from '../imap/folders.js';
@@ -23,9 +24,13 @@ export interface SearchOptions {
   accountId?: string;
 }
 
-/** Pick the widest folder to search server-side: archive/All Mail, else INBOX. */
-function fallbackFolder(accountId: string): FolderRow | undefined {
+/**
+ * Pick the folder to search server-side: the Trash for an `in:trash` query, else
+ * the widest regular folder (archive/All Mail, falling back to INBOX).
+ */
+function fallbackFolder(accountId: string, inTrash: boolean): FolderRow | undefined {
   const folders = listFolders(accountId);
+  if (inTrash) return folders.find((f) => f.role === 'trash');
   return (
     folders.find((f) => f.role === 'archive') ??
     folders.find((f) => f.role === 'inbox') ??
@@ -34,13 +39,17 @@ function fallbackFolder(accountId: string): FolderRow | undefined {
 }
 
 export async function searchMessages(query: string, opts: SearchOptions): Promise<MessageRow[]> {
-  const local = searchLocal(query, opts.limit);
-  // Enough local hits, or no account scope to fall back on → done.
-  if (!opts.accountId || local.length >= opts.limit) return local;
+  const ir = parseQuery(query);
+  const local = searchLocalIR(ir, opts.limit);
+  // Enough local hits, or no account scope to fall back on → done. Scope operators
+  // like `in:trash` aren't free text, so an operator-only query has nothing for the
+  // server-side TEXT search either.
+  const text = ir.terms.join(' ');
+  if (!opts.accountId || !text || local.length >= opts.limit) return local;
 
   const accountId = opts.accountId;
   const engine = getEngine(accountId);
-  const folder = fallbackFolder(accountId);
+  const folder = fallbackFolder(accountId, ir.inTrash === true);
   if (!engine || !folder) return local;
 
   try {
@@ -49,7 +58,7 @@ export async function searchMessages(query: string, opts: SearchOptions): Promis
       try {
         const ctx = syncContext(client, accountId, log);
         // IMAP TEXT search covers headers + body; ingest the most recent matches.
-        const found = (await client.search({ text: query }, { uid: true })) || [];
+        const found = (await client.search({ text }, { uid: true })) || [];
         const uids = found.slice(-FALLBACK_MAX);
         if (uids.length > 0) await fetchAndStore(ctx, folder, uids);
       } finally {
@@ -62,5 +71,5 @@ export async function searchMessages(query: string, opts: SearchOptions): Promis
   }
 
   // Re-run local search now that fallback hits are ingested.
-  return searchLocal(query, opts.limit);
+  return searchLocalIR(ir, opts.limit);
 }
