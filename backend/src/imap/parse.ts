@@ -124,10 +124,11 @@ export function flagsFromSet(flags: Set<string> | undefined): MessageFlags {
  * carry no preview value and render as gaps or tofu in a one-line snippet.
  */
 const INVISIBLE_CHARS_RE =
-  // soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel
-  // separator, zero-widths + bidi marks, bidi embeds, word joiner…invisible plus,
-  // BOM/zero-width no-break space
-  /[\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+  // combining grapheme joiner leads the class (placed after another char in a
+  // class, it trips ESLint no-misleading-character-class); then soft hyphen, Arabic
+  // letter mark, Mongolian vowel separator, zero-widths + bidi marks, bidi embeds,
+  // word joiner…invisible plus, BOM/zero-width no-break space
+  /[\u034F\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 
 /** Very light HTML→text for snippet/fallback use (not a full sanitizer). */
 function htmlToText(html: string): string {

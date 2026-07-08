@@ -39,7 +39,7 @@ const LINK_ARTIFACT_RE = /\[(?:https?:\/\/|mailto:)/i;
 const ENTITY_RE = /&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#x[0-9a-fA-F]{1,6});/;
 
 /** Invisible preheader padding (same set makeSnippet strips). */
-const INVISIBLE_RE = /[\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/;
+const INVISIBLE_RE = /[\u034F\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/;
 
 /** True if the stored snippet still opens with a verbatim copy of the subject. */
 function startsWithSubject(snippet: string, subject: string | null): boolean {
