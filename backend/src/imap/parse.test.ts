@@ -51,6 +51,24 @@ test('makeSnippet truncates with an ellipsis past the max length', () => {
   assert.equal(snip?.endsWith('…'), true);
 });
 
+test('makeSnippet decodes HTML entities beyond the basic four', () => {
+  // Real-world Coop Medlem breakage: the HTML body opens with an &zwnj;&nbsp;
+  // preheader-spacer run and encodes Norwegian letters as named entities; the
+  // preview showed "&zwnj; &zwnj; …" soup instead of the preheader prose.
+  const html =
+    '<div>' +
+    '&zwnj;&nbsp;'.repeat(18) +
+    '&Auml;nglamark drikke - et forfriskende og &oslash;kologisk valg</div>';
+  assert.equal(makeSnippet(null, html), 'Änglamark drikke - et forfriskende og økologisk valg');
+});
+
+test('makeSnippet strips raw zero-width characters from the preview', () => {
+  assert.equal(
+    makeSnippet('\u200C \u200C \u200B\uFEFF Sommertilbud på alt', null),
+    'Sommertilbud på alt',
+  );
+});
+
 test('makeSnippet strips mailparser link artifacts from the preview', () => {
   // mailparser renders <a href> in a derived text/plain part as `label [url]`.
   assert.equal(

@@ -5,10 +5,11 @@
  * the plaintext alternative; the old snippet stored that tag verbatim, so the inbox
  * preview showed raw markup ("<html xml:lang=…") instead of the readable preheader.
  *
- * Targets only rows whose stored snippet still contains an HTML tag, recomputes the
- * snippet from the same bodies with the fixed logic, and writes it back when it
- * actually changes. A row converges to a tag-free snippet and stops matching, so
- * re-running is a no-op once the backlog is clean.
+ * Targets only rows whose stored snippet still shows a known contamination (HTML
+ * tag, link artifact, undecoded entity, invisible padding, doubled subject),
+ * recomputes the snippet from the same bodies with the fixed logic, and writes it
+ * back when it actually changes. A row converges to a clean snippet and stops
+ * matching, so re-running is a no-op once the backlog is clean.
  *
  * Pure SQLite (no IMAP / filesystem). Wired into boot (index.ts) as a self-healing
  * startup pass, and runnable standalone as a CLI for a one-off.
@@ -29,6 +30,17 @@ const HTML_TAG_RE =
 /** Mailparser link artifact (`label [https://…]` / `[mailto:…]`) leaked into a preview. */
 const LINK_ARTIFACT_RE = /\[(?:https?:\/\/|mailto:)/i;
 
+/**
+ * Undecoded HTML entity (named or numeric) left verbatim in a preview — snippets
+ * written before htmlToText learned full entity decoding show `&zwnj;`/`&Auml;`
+ * spacer-and-accent soup instead of the preheader. A decoded `&` in prose ("R&D;")
+ * can false-positive, which is harmless: the recompute writes only on change.
+ */
+const ENTITY_RE = /&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#x[0-9a-fA-F]{1,6});/;
+
+/** Invisible preheader padding (same set makeSnippet strips). */
+const INVISIBLE_RE = /[\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/;
+
 /** True if the stored snippet still opens with a verbatim copy of the subject. */
 function startsWithSubject(snippet: string, subject: string | null): boolean {
   const subj = subject?.replace(/\s+/g, ' ').trim();
@@ -44,10 +56,11 @@ export interface SnippetBackfillResult {
 
 /** Recompute and rewrite contaminated snippets. Returns a small summary. */
 export function backfillSnippets(): SnippetBackfillResult {
-  // Recompute any preview still showing one of the three known contaminations: raw
-  // HTML markup, a mailparser link artifact (`[https://…]` tracking blob), or a
-  // verbatim leading copy of the subject (newsletters repeat it as the first line,
-  // which surfaced the subject twice instead of the preheader).
+  // Recompute any preview still showing a known contamination: raw HTML markup, a
+  // mailparser link artifact (`[https://…]` tracking blob), an undecoded HTML
+  // entity or invisible preheader padding (`&zwnj;` spacer soup), or a verbatim
+  // leading copy of the subject (newsletters repeat it as the first line, which
+  // surfaced the subject twice instead of the preheader).
   const candidates = db
     .select({
       id: messages.id,
@@ -64,6 +77,8 @@ export function backfillSnippets(): SnippetBackfillResult {
         r.snippet !== null &&
         ((r.snippet.includes('<') && HTML_TAG_RE.test(r.snippet)) ||
           LINK_ARTIFACT_RE.test(r.snippet) ||
+          ENTITY_RE.test(r.snippet) ||
+          INVISIBLE_RE.test(r.snippet) ||
           startsWithSubject(r.snippet, r.subject)),
     );
 

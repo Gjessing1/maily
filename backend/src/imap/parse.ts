@@ -6,6 +6,7 @@
  * BODYSTRUCTURE only and record the part id so the bytes can be fetched on demand
  * later (ARCHITECTURE §4 / KEY GOTCHA: no bulk eager attachment fetch during sync).
  */
+import { decodeHTML } from 'entities';
 import type { MessageStructureObject } from 'imapflow';
 import type { MessageFlags, ParsedAttachment } from './types.js';
 
@@ -117,17 +118,26 @@ export function flagsFromSet(flags: Set<string> | undefined): MessageFlags {
   };
 }
 
+/**
+ * Zero-width / invisible characters that senders pad previews with (the classic
+ * `&zwnj;&nbsp;` preheader-spacer hack) plus soft hyphens and bidi controls. They
+ * carry no preview value and render as gaps or tofu in a one-line snippet.
+ */
+const INVISIBLE_CHARS_RE =
+  // soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel
+  // separator, zero-widths + bidi marks, bidi embeds, word joiner…invisible plus,
+  // BOM/zero-width no-break space
+  /[\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+
 /** Very light HTML→text for snippet/fallback use (not a full sanitizer). */
 function htmlToText(html: string): string {
-  return html
+  const untagged = html
     .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/<[^>]+>/g, ' ');
+  // Full entity decode: newsletters lean on entities well beyond the basic four
+  // (&zwnj; preheader spacers, &Auml;/&oslash; for non-ASCII prose), which would
+  // otherwise surface verbatim in the inbox preview.
+  return decodeHTML(untagged).replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -188,7 +198,10 @@ export function makeSnippet(
       ? htmlToText(html)
       : '';
   if (!source) return null;
-  const collapsed = stripLinkArtifacts(source).replace(/\s+/g, ' ').trim();
+  const collapsed = stripLinkArtifacts(source)
+    .replace(INVISIBLE_CHARS_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const deduped = stripLeadingSubject(collapsed, subject);
   if (!deduped) return null;
   return deduped.length > max ? `${deduped.slice(0, max).trimEnd()}…` : deduped;
