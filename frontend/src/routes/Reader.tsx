@@ -68,7 +68,9 @@ export function ReaderView({
   const [showImages, setShowImages] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmForever, setConfirmForever] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [deletingForever, setDeletingForever] = useState(false);
   // Quick-create-from-reply: when set, the contact editor is open seeded with the sender.
   const [addSender, setAddSender] = useState<{ name: string | null; email: string } | null>(null);
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
@@ -263,6 +265,23 @@ export function ReaderView({
       });
   }
 
+  // Delete forever (trash only): EXPUNGEs the provider's copy and purges the local one.
+  // Awaited — unrecoverable, so the reader only closes once the server confirms.
+  function deleteForever() {
+    if (!detail || deletingForever) return;
+    setDeletingForever(true);
+    api
+      .deleteMessageForever(detail.id)
+      .then(() => {
+        showNotice('Deleted forever');
+        onClose();
+      })
+      .catch(() => {
+        setDeletingForever(false);
+        showNotice('Couldn’t delete — mail server unreachable');
+      });
+  }
+
   const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
   // A trusted sender domain bypasses blocking automatically; otherwise the per-message
@@ -309,39 +328,50 @@ export function ReaderView({
           </button>
         )}
         <div className="flex-1" />
-        <button
-          onClick={toggleSeen}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label={seen ? 'Mark as unread' : 'Mark as read'}
-        >
-          {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
-        </button>
-        <button
-          onClick={toggleStar}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Flag"
-        >
-          <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
-        </button>
-        <button
-          onClick={() => setAddToCalendar(true)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Add to calendar"
-        >
-          <CalendarIcon className="text-fg" />
-        </button>
         {isTrashed ? (
-          <button
-            onClick={restore}
-            disabled={restoring}
-            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-50"
-            aria-label="Restore to Inbox"
-            title="Restore to Inbox"
-          >
-            <InboxIcon className="text-accent" />
-          </button>
+          /* Trash toolbar: the message is awaiting disposal, so the only actions that
+             make sense are the two disposal outcomes — labelled, not icon soup. */
+          <>
+            <button
+              onClick={restore}
+              disabled={restoring || deletingForever}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-accent active:bg-surface-2 disabled:opacity-50"
+            >
+              <InboxIcon className="size-4" />
+              {restoring ? 'Restoring…' : 'Restore to Inbox'}
+            </button>
+            <button
+              onClick={() => setConfirmForever(true)}
+              disabled={restoring || deletingForever}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
+            >
+              <TrashIcon className="size-4" />
+              {deletingForever ? 'Deleting…' : 'Delete forever'}
+            </button>
+          </>
         ) : (
           <>
+            <button
+              onClick={toggleSeen}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label={seen ? 'Mark as unread' : 'Mark as read'}
+            >
+              {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
+            </button>
+            <button
+              onClick={toggleStar}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Flag"
+            >
+              <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
+            </button>
+            <button
+              onClick={() => setAddToCalendar(true)}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Add to calendar"
+            >
+              <CalendarIcon className="text-fg" />
+            </button>
             <button
               onClick={archive}
               className="rounded-full p-2 active:bg-surface-2"
@@ -356,39 +386,39 @@ export function ReaderView({
             >
               <TrashIcon className="text-fg" />
             </button>
-          </>
-        )}
-        {isDraft ? (
-          <button
-            onClick={editDraft}
-            className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Edit draft"
-          >
-            <PencilIcon className="text-accent" />
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={reply}
-              className="rounded-full p-2 active:bg-surface-2"
-              aria-label="Reply"
-            >
-              <ReplyIcon className="text-fg" />
-            </button>
-            <button
-              onClick={replyAll}
-              className="rounded-full p-2 active:bg-surface-2"
-              aria-label="Reply all"
-            >
-              <ReplyAllIcon className="text-fg" />
-            </button>
-            <button
-              onClick={forward}
-              className="rounded-full p-2 active:bg-surface-2"
-              aria-label="Forward"
-            >
-              <ForwardIcon className="text-fg" />
-            </button>
+            {isDraft ? (
+              <button
+                onClick={editDraft}
+                className="rounded-full p-2 active:bg-surface-2"
+                aria-label="Edit draft"
+              >
+                <PencilIcon className="text-accent" />
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={reply}
+                  className="rounded-full p-2 active:bg-surface-2"
+                  aria-label="Reply"
+                >
+                  <ReplyIcon className="text-fg" />
+                </button>
+                <button
+                  onClick={replyAll}
+                  className="rounded-full p-2 active:bg-surface-2"
+                  aria-label="Reply all"
+                >
+                  <ReplyAllIcon className="text-fg" />
+                </button>
+                <button
+                  onClick={forward}
+                  className="rounded-full p-2 active:bg-surface-2"
+                  aria-label="Forward"
+                >
+                  <ForwardIcon className="text-fg" />
+                </button>
+              </>
+            )}
           </>
         )}
       </header>
@@ -520,6 +550,19 @@ export function ReaderView({
           </article>
         ) : null}
       </main>
+
+      <ConfirmDialog
+        open={confirmForever}
+        title="Delete forever?"
+        message="Permanently deletes this message from your mail provider and from this server. This can’t be undone."
+        confirmLabel="Delete forever"
+        danger
+        onConfirm={() => {
+          setConfirmForever(false);
+          deleteForever();
+        }}
+        onCancel={() => setConfirmForever(false)}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

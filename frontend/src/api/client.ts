@@ -344,6 +344,10 @@ export const api = {
   restoreMessage: (id: string) =>
     request<{ ok: boolean }>(`/api/messages/${id}/restore`, { method: 'POST' }),
 
+  /** Delete forever (Trash only): EXPUNGE the provider's copy, then purge the local one. */
+  deleteMessageForever: (id: string) =>
+    request<{ ok: boolean }>(`/api/messages/${id}/forever`, { method: 'DELETE' }),
+
   /**
    * Queue a send into the server-owned outbox. Returns the outbox id + `dueAt` (when it will
    * actually fire). The send commits server-side at `dueAt` even if the app closes; cancel

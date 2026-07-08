@@ -26,6 +26,13 @@ const log = createLogger('cleanup-purge');
 /** Update/unlink chunk — keeps a single statement well under SQLite's bound-variable cap. */
 const CHUNK = 500;
 
+/** The columns the reclaim core needs per message. */
+interface PurgeRow {
+  id: string;
+  accountId: string;
+  sourcePath: string | null;
+}
+
 /**
  * Reclaim local disk for every (not-yet-purged) message in a trash folder, keeping a no-resync
  * tombstone. Throws if `folderId` is not a trash-role folder (the route validates too). Returns the
@@ -49,6 +56,33 @@ export function purgeTrashFolder(folderId: string): { purged: number } {
     .all();
   if (rows.length === 0) return { purged: 0 };
 
+  purgeRows(rows);
+  log.info(`purged ${rows.length} message(s) from trash folder ${folderId}`);
+  return { purged: rows.length };
+}
+
+/**
+ * Reclaim ONE message's local data — the "delete forever" companion (the route EXPUNGEs the
+ * server copy first; this drops the local heavy data and leaves the same no-resync tombstone
+ * as a folder purge). No-op if the row is unknown or already purged.
+ */
+export function purgeMessage(messageId: string): void {
+  const row = db
+    .select({
+      id: messages.id,
+      accountId: messages.accountId,
+      sourcePath: messages.sourcePath,
+    })
+    .from(messages)
+    .where(and(eq(messages.id, messageId), isNull(messages.purgedAt)))
+    .get();
+  if (!row) return;
+  purgeRows([row]);
+  log.info(`purged message ${messageId} (delete forever)`);
+}
+
+/** Shared reclaim core: null the heavy columns, unlink files, signal + refresh analytics. */
+function purgeRows(rows: PurgeRow[]): void {
   const ids = rows.map((r) => r.id);
   // Downloaded attachment files (storage_path null = never fetched, nothing on disk to unlink).
   const attFiles = db
@@ -102,7 +136,4 @@ export function purgeTrashFolder(folderId: string): { purged: number } {
     emitSignal({ type: 'mail:deleted', accountId: r.accountId, messageId: r.id });
   }
   bumpCleanupCache();
-
-  log.info(`purged ${rows.length} message(s) from trash folder ${folderId}`);
-  return { purged: rows.length };
 }

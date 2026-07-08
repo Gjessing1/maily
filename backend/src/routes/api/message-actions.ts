@@ -10,12 +10,19 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { emitSignal } from '../../events.js';
-import { folderByRole, getMessage, uidLocationForMessage } from '../../db/queries.js';
+import {
+  folderByRole,
+  getMessage,
+  isMessageLocalOnly,
+  uidLocationForMessage,
+  uidLocationInFolder,
+} from '../../db/queries.js';
 import { markMessageDeleted, restoreMessageDeleted, updateMessageFlags } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
 import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
 import { bumpCleanupCache } from '../../cleanup/cache.js';
+import { purgeMessage } from '../../cleanup/purge.js';
 import { enqueueDelete, enqueueArchive } from '../../outbox/runner.js';
 
 /** Undo window (ms) for a deferred delete/archive — how long the move is cancelable. */
@@ -121,6 +128,41 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     restoreMessageDeleted(m.id);
     bumpCleanupCache();
     emitSignal({ type: 'mail:restored', accountId: m.accountId, messageId: m.id });
+    return { ok: true };
+  });
+
+  // Delete forever (Trash only) → EXPUNGE the provider's copy, then purge the local one
+  // (same no-resync tombstone as "Empty Trash"). A deliberate, unrecoverable action, so the
+  // server step is awaited and a connection failure aborts before anything is lost locally.
+  // A local-only message (detached; no server copy) skips straight to the local purge.
+  app.delete<{ Params: { id: string } }>('/api/messages/:id/forever', async (req, reply) => {
+    const m = getMessage(req.params.id);
+    if (!m) return reply.code(404).send({ error: 'not found' });
+
+    const trash = folderByRole(m.accountId, 'trash');
+    const loc = trash ? uidLocationInFolder(m.id, trash.id) : undefined;
+    if (!isMessageLocalOnly(m.id)) {
+      if (!trash || !loc) return reply.code(409).send({ error: 'message is not in Trash' });
+      const engine = getEngine(m.accountId);
+      if (!engine) return reply.code(503).send({ error: 'account offline' });
+      try {
+        await withTransientConnection(engine.accountConfig, async (client) => {
+          const lock = await client.getMailboxLock(loc.folderPath);
+          try {
+            // \Deleted + EXPUNGE. False = UID already gone (provider auto-purged) — the
+            // goal state is reached either way, so only a thrown (connection) error aborts.
+            await client.messageDelete(String(loc.uid), { uid: true });
+          } finally {
+            lock.release();
+          }
+        });
+      } catch (err) {
+        app.log.warn(`delete forever failed: ${(err as Error).message}`);
+        return reply.code(502).send({ error: 'could not reach the mail server — nothing deleted' });
+      }
+    }
+
+    purgeMessage(m.id); // emits mail:deleted + refreshes cleanup analytics
     return { ok: true };
   });
 
