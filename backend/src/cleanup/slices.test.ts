@@ -1,9 +1,9 @@
 /**
  * Cleanup slice coverage (ROADMAP Phase 6). Pins the deterministic analytics contract:
  *  - storage audit groups every sender by estimated bytes (.eml source + body + attachments),
- *  - never-replied excludes domains the user has written back to + protected mail,
  *  - cold-storage selects old, value-marker-free, non-protected mail,
- *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices.
+ *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices,
+ *  - local-only (detached) mail never enters a delete-eligible slice (no provider copy).
  *
  * Same bootstrap as pipeline.test.ts: point MAILY_DATA_DIR at a throwaway dir BEFORE the
  * dynamic import so the shared db/env pick it up, then run migrations (creates the FTS5
@@ -75,6 +75,7 @@ function seedMessage(
     seen?: boolean;
     flagged?: boolean;
     cleanupKeep?: boolean;
+    localOnly?: boolean;
   },
 ): string {
   const id = randomUUID();
@@ -92,6 +93,7 @@ function seedMessage(
       seen: opts.seen ?? false,
       flagged: opts.flagged ?? false,
       cleanupKeep: opts.cleanupKeep ?? false,
+      localOnly: opts.localOnly ?? false,
     })
     .run();
   if (opts.folderId) {
@@ -148,39 +150,6 @@ test('storageByDomain: null source_bytes contributes nothing (un-archived row)',
   assert.equal(g!.bytes, 2, 'just the 2-byte body — null source_bytes coalesces to 0');
 });
 
-test('neverRepliedSenders: excludes replied-to domains and protected mail', () => {
-  const acct = seedAccount();
-  const inbox = seedFolder(acct, 'inbox');
-  const sent = seedFolder(acct, 'sent');
-
-  // Never replied, ordinary → candidate.
-  seedMessage(acct, { fromAddress: 'news@promo.example', bodyText: 'newsletter', folderId: inbox });
-  // Protected (invoice) → must be excluded even though never replied.
-  seedMessage(acct, {
-    fromAddress: 'billing@bank.example',
-    bodyText: 'your invoice',
-    folderId: inbox,
-  });
-  // Replied to (we sent mail to work.example) → excluded.
-  seedMessage(acct, {
-    fromAddress: 'colleague@work.example',
-    bodyText: 'meeting',
-    folderId: inbox,
-  });
-  // The Sent message establishing the reply relationship.
-  seedMessage(acct, {
-    fromAddress: `${acct}@me.example`,
-    bodyText: 'reply',
-    folderId: sent,
-    toAddresses: JSON.stringify([{ name: 'Colleague', address: 'colleague@work.example' }]),
-  });
-
-  const slice = S.neverRepliedSenders();
-  assert.ok(findGroup(slice, 'promo.example'), 'unreplied ordinary sender present');
-  assert.equal(findGroup(slice, 'work.example'), undefined, 'replied-to domain excluded');
-  assert.equal(findGroup(slice, 'bank.example'), undefined, 'protected mail excluded');
-});
-
 test('coldStorageCandidates: old non-protected value-free mail only', () => {
   const acct = seedAccount();
   const old = new Date(Date.now() - 3 * YEAR);
@@ -234,49 +203,6 @@ test('largeMessages: only messages over the MB threshold, protected mail exclude
   assert.deepEqual(
     refs.map((r) => r.id),
     [big],
-  );
-});
-
-test('unreadOldMessages: unread + old only; seen, recent, flagged and protected excluded', () => {
-  const acct = seedAccount();
-  const old = new Date(Date.now() - 2 * YEAR);
-
-  const stale = seedMessage(acct, {
-    fromAddress: 'a@promo.example',
-    bodyText: 'sale',
-    receivedAt: old,
-  });
-  // Opened → excluded even though old.
-  seedMessage(acct, {
-    fromAddress: 'b@read.example',
-    bodyText: 'sale',
-    receivedAt: old,
-    seen: true,
-  });
-  // Unread but recent → excluded.
-  seedMessage(acct, { fromAddress: 'c@new.example', bodyText: 'sale' });
-  // Unread + old but flagged → deliberately kept.
-  seedMessage(acct, {
-    fromAddress: 'd@starred.example',
-    bodyText: 'sale',
-    receivedAt: old,
-    flagged: true,
-  });
-  // Unread + old but protected (password) → the HARD gate keeps it out.
-  seedMessage(acct, {
-    fromAddress: 'e@bank.example',
-    bodyText: 'password reset',
-    receivedAt: old,
-  });
-
-  const slice = S.unreadOldMessages(12);
-  assert.equal(slice.totalMessages, 1, 'only the unread, old, unflagged, unprotected message');
-  assert.ok(findGroup(slice, 'promo.example'));
-
-  const refs = S.sliceMessageIds('unread', { months: 12 });
-  assert.deepEqual(
-    refs.map((r) => r.id),
-    [stale],
   );
 });
 
@@ -351,7 +277,7 @@ test('sliceMessageIds(cold-storage): resolves to the same messages, safety re-ap
   assert.equal(refs[0]!.accountId, acct);
 });
 
-test('sliceMessageIds(never-replied): excludeDomains spares a domain', () => {
+test('sliceMessageIds(newsletters): excludeDomains spares a domain', () => {
   const acct = seedAccount();
   const inbox = seedFolder(acct, 'inbox');
 
@@ -362,14 +288,14 @@ test('sliceMessageIds(never-replied): excludeDomains spares a domain', () => {
   });
   seedMessage(acct, {
     fromAddress: 'ads@spam.example',
-    bodyText: 'buy now',
+    bodyText: 'unsubscribe here',
     folderId: inbox,
   });
 
-  const all = S.sliceMessageIds('never-replied');
-  assert.equal(all.length, 2, 'both unreplied senders resolve');
+  const all = S.sliceMessageIds('newsletters');
+  assert.equal(all.length, 2, 'both bulk senders resolve');
 
-  const spared = S.sliceMessageIds('never-replied', { excludeDomains: ['spam.example'] });
+  const spared = S.sliceMessageIds('newsletters', { excludeDomains: ['spam.example'] });
   assert.deepEqual(
     spared.map((r) => r.id),
     [keepId],
@@ -377,7 +303,7 @@ test('sliceMessageIds(never-replied): excludeDomains spares a domain', () => {
   );
 });
 
-test('sliceMessageIds(never-replied): domain scopes to one sender', () => {
+test('sliceMessageIds(newsletters): domain scopes to one sender', () => {
   const acct = seedAccount();
   const inbox = seedFolder(acct, 'inbox');
 
@@ -386,9 +312,13 @@ test('sliceMessageIds(never-replied): domain scopes to one sender', () => {
     bodyText: 'newsletter',
     folderId: inbox,
   });
-  seedMessage(acct, { fromAddress: 'ads@spam.example', bodyText: 'buy now', folderId: inbox });
+  seedMessage(acct, {
+    fromAddress: 'ads@spam.example',
+    bodyText: 'unsubscribe here',
+    folderId: inbox,
+  });
 
-  const scoped = S.sliceMessageIds('never-replied', { domain: 'promo.example' });
+  const scoped = S.sliceMessageIds('newsletters', { domain: 'promo.example' });
   assert.deepEqual(
     scoped.map((r) => r.id),
     [keepId],
@@ -396,15 +326,23 @@ test('sliceMessageIds(never-replied): domain scopes to one sender', () => {
   );
 });
 
-test('sliceMessageIds(never-replied): messageIds intersect the eligible set', () => {
+test('sliceMessageIds(newsletters): messageIds intersect the eligible set', () => {
   const acct = seedAccount();
   const inbox = seedFolder(acct, 'inbox');
 
-  const a = seedMessage(acct, { fromAddress: 'a@promo.example', bodyText: 'hi', folderId: inbox });
-  const b = seedMessage(acct, { fromAddress: 'b@promo.example', bodyText: 'hi', folderId: inbox });
+  const a = seedMessage(acct, {
+    fromAddress: 'a@promo.example',
+    bodyText: 'newsletter',
+    folderId: inbox,
+  });
+  const b = seedMessage(acct, {
+    fromAddress: 'b@promo.example',
+    bodyText: 'newsletter',
+    folderId: inbox,
+  });
 
   // Pick only one of the eligible messages plus a bogus id — the bogus one is dropped.
-  const refs = S.sliceMessageIds('never-replied', { messageIds: [a, 'does-not-exist'] });
+  const refs = S.sliceMessageIds('newsletters', { messageIds: [a, 'does-not-exist'] });
   assert.deepEqual(
     refs.map((r) => r.id),
     [a],
@@ -452,6 +390,39 @@ test('cleanup_keep: a preserved message drops out of slices, previews and execut
     [cold],
     'preserve wins over an explicit selection, like the safety gate',
   );
+});
+
+test('local-only (detached) mail never enters a delete-eligible slice', () => {
+  const acct = seedAccount();
+  // Two identically large messages; one was detached (deleted from the provider, kept only
+  // as this server's archive). Trashing it frees no provider space, so the slice must not
+  // count it toward the "free X" tempt — and the trash queue could not MOVE it anyway.
+  const live = seedMessage(acct, {
+    fromAddress: 'cam@photos.example',
+    bodyText: 'pics',
+    sourceBytes: 20 * 1024 * 1024,
+  });
+  seedMessage(acct, {
+    fromAddress: 'cam@photos.example',
+    bodyText: 'pics',
+    sourceBytes: 20 * 1024 * 1024,
+    localOnly: true,
+  });
+
+  const slice = S.largeMessages(10);
+  assert.equal(slice.totalMessages, 1, 'only the still-on-provider message counts');
+  assert.equal(slice.totalBytes, 20 * 1024 * 1024, 'bytes reflect only reclaimable mail');
+
+  const refs = S.sliceMessageIds('large', { minMb: 10 });
+  assert.deepEqual(
+    refs.map((r) => r.id),
+    [live],
+    'execute never resolves a local-only message',
+  );
+
+  // The informational storage audit still counts it — it does occupy local disk.
+  const audit = S.storageByDomain();
+  assert.equal(findGroup(audit, 'photos.example')!.messageCount, 2);
 });
 
 test('sliceMessageIds: excludeMessageIds spares ids from a whole-slice run', () => {
@@ -601,34 +572,6 @@ test('sliceMessages(cold-storage): lists the in-scope messages, scoped to a doma
   assert.equal(res.messages[0]!.subject, 'Old sale');
 });
 
-test('sliceMessages(never-replied): drops replied-to domains like the slice/exec paths', () => {
-  const acct = seedAccount();
-  const inbox = seedFolder(acct, 'inbox');
-  const sent = seedFolder(acct, 'sent');
-
-  const keep = seedMessage(acct, {
-    fromAddress: 'news@promo.example',
-    bodyText: 'newsletter',
-    folderId: inbox,
-  });
-  // Replied-to domain → excluded from the drill-down too.
-  seedMessage(acct, { fromAddress: 'colleague@work.example', bodyText: 'hi', folderId: inbox });
-  seedMessage(acct, {
-    fromAddress: `${acct}@me.example`,
-    bodyText: 'reply',
-    folderId: sent,
-    toAddresses: JSON.stringify([{ address: 'colleague@work.example' }]),
-  });
-
-  const res = S.sliceMessages('never-replied');
-  const ids = new Set(res.messages.map((m) => m.id));
-  assert.ok(ids.has(keep), 'the unreplied newsletter is listed');
-  assert.ok(
-    !res.messages.some((m) => (m.fromAddress ?? '').endsWith('@work.example')),
-    'the replied-to domain is excluded',
-  );
-});
-
 test('sliceMessages: limit caps the list and flags truncation', () => {
   const acct = seedAccount();
   const old = new Date(Date.now() - 3 * YEAR);
@@ -683,25 +626,6 @@ test('sender key: drill-down and execute scope to a single freemail address', ()
     [bobs],
     'execute scope matches the same single address',
   );
-});
-
-test('neverRepliedSenders: replying to one gmail address does not excuse the rest', () => {
-  const acct = seedAccount();
-  const inbox = seedFolder(acct, 'inbox');
-  const sent = seedFolder(acct, 'sent');
-
-  seedMessage(acct, { fromAddress: 'friend@gmail.com', bodyText: 'hi', folderId: inbox });
-  seedMessage(acct, { fromAddress: 'noisy@gmail.com', bodyText: 'chain mail', folderId: inbox });
-  seedMessage(acct, {
-    fromAddress: `${acct}@me.example`,
-    bodyText: 'reply',
-    folderId: sent,
-    toAddresses: JSON.stringify([{ address: 'Friend@gmail.com' }]),
-  });
-
-  const slice = S.neverRepliedSenders();
-  assert.equal(findGroup(slice, 'friend@gmail.com'), undefined, 'replied-to address excluded');
-  assert.ok(findGroup(slice, 'noisy@gmail.com'), 'other gmail senders still candidates');
 });
 
 test('sliceMessages: q filters by subject and sender (case-insensitive)', () => {

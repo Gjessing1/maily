@@ -13,6 +13,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { CleanupExecuteRequest, CleanupMessageDto } from '@maily/shared';
 import { api } from '../api/client';
+import {
+  deleteDrillState,
+  drillStateKey,
+  getDrillState,
+  setDrillState,
+} from '../state/cleanupDrill';
 import { Spinner } from '../ui/Spinner';
 import { BackIcon, SearchIcon, TrashIcon } from '../ui/icons';
 import { CleanupMessageRow, SLICE_LABELS, formatBytes } from './Cleanup';
@@ -25,43 +31,12 @@ const PAGE_SIZE = 100;
  * heuristics plus the unguarded `storage` audit — drilling a storage sender lets you trash that
  * sender's mail too (the backend resolves storage over live, Keep-honouring mail, no safety gate).
  */
-const DELETE_ELIGIBLE = new Set([
-  'storage',
-  'never-replied',
-  'cold-storage',
-  'large',
-  'unread',
-  'newsletters',
-]);
+const DELETE_ELIGIBLE = new Set(['storage', 'cold-storage', 'large', 'newsletters']);
 
 /** A positive number from a query param, or undefined (server defaults apply). */
 function numParam(raw: string | null): number | undefined {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : undefined;
-}
-
-/**
- * The drill-down's selection/filter state, preserved across navigation. Opening a message in
- * the reader unmounts this screen, so without this an in-progress review (which rows you'd
- * unchecked, the filter you'd typed) is lost the moment you tap into a message to inspect it
- * and come back. Keyed by the drill (slice + sender + thresholds) so each sender keeps its own
- * progress; it's a session-lived in-memory cache, deliberately not persisted to storage.
- */
-type DrillState = {
-  q: string;
-  mode: 'all' | 'manual';
-  excluded: string[];
-  included: string[];
-};
-const drillStateStore = new Map<string, DrillState>();
-function drillStateKey(p: {
-  slice: string;
-  domain?: string;
-  years?: number;
-  minMb?: number;
-  months?: number;
-}): string {
-  return [p.slice, p.domain ?? '', p.years ?? '', p.minMb ?? '', p.months ?? ''].join('|');
 }
 
 export function CleanupMessages() {
@@ -71,13 +46,13 @@ export function CleanupMessages() {
   const domain = params.get('domain') ?? undefined;
   const years = numParam(params.get('years'));
   const minMb = numParam(params.get('minMb'));
-  const months = numParam(params.get('months'));
   const actionable = DELETE_ELIGIBLE.has(slice);
 
-  // Restore any in-progress selection/filter for this exact drill (see drillStateStore). Read
-  // once at mount via the useState initialisers below; a fresh drill simply has no saved entry.
-  const stateKey = drillStateKey({ slice, domain, years, minMb, months });
-  const saved = drillStateStore.get(stateKey);
+  // Restore any in-progress selection/filter for this exact drill (state/cleanupDrill — the
+  // session store that also feeds the sender list's "N/M marked" badges). Read once at mount
+  // via the useState initialisers below; a fresh drill simply has no saved entry.
+  const stateKey = drillStateKey({ slice, domain, years, minMb });
+  const saved = getDrillState(stateKey);
   const restoredRef = useRef(saved != null);
 
   const [messages, setMessages] = useState<CleanupMessageDto[]>([]);
@@ -149,7 +124,6 @@ export function CleanupMessages() {
           q: qDebounced || undefined,
           years,
           minMb,
-          months,
           limit: PAGE_SIZE,
           offset,
         });
@@ -178,7 +152,7 @@ export function CleanupMessages() {
       }
     },
     // Reloads when the slice/sender/thresholds/search change; autoSelect is read fresh inside.
-    [slice, domain, qDebounced, years, minMb, months],
+    [slice, domain, qDebounced, years, minMb],
   );
 
   useEffect(() => {
@@ -211,10 +185,10 @@ export function CleanupMessages() {
   useEffect(() => {
     if (!actionable) return;
     if (exec === 'done') {
-      drillStateStore.delete(stateKey);
+      deleteDrillState(stateKey);
       return;
     }
-    drillStateStore.set(stateKey, {
+    setDrillState(stateKey, {
       q,
       mode,
       excluded: [...excluded],
@@ -302,7 +276,6 @@ export function CleanupMessages() {
         slice: slice as CleanupExecuteRequest['slice'],
         years,
         minMb,
-        months,
         ...scope,
       });
       setQueued(res.queued);

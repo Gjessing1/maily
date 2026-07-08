@@ -29,6 +29,12 @@ import { api, type GroupSort } from '../api/client';
 import { getPrefs, setPref, usePrefs, type Prefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import {
+  drillMarkedCount,
+  drillStateKey,
+  getBrowserState,
+  setBrowserState,
+} from '../state/cleanupDrill';
+import {
   enabledSlices,
   SLICE_ORDER,
   type ActionSlice,
@@ -65,10 +71,8 @@ export function formatBytes(n: number): string {
 /** Human slice labels, shared with the dedicated drill-down screen. */
 export const SLICE_LABELS: Record<string, string> = {
   storage: 'Storage by sender',
-  'never-replied': 'Never replied to',
   'cold-storage': 'Cold storage',
   large: 'Large messages',
-  unread: 'Never opened',
   newsletters: 'Newsletters & bulk mail',
 };
 
@@ -207,7 +211,6 @@ export function drillQuery(
   if (domain) p.set('domain', domain);
   if (params.years) p.set('years', String(params.years));
   if (params.minMb) p.set('minMb', String(params.minMb));
-  if (params.months) p.set('months', String(params.months));
   return p.toString();
 }
 
@@ -224,13 +227,18 @@ export function drillQuery(
  */
 function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecuted?: () => void }) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
+  // The browser's UI state survives navigation (session-lived): drilling into a sender and
+  // coming back must land on the open list you left, not a collapsed card (state/cleanupDrill).
+  const browserKey = drillStateKey({ slice: source.slice, ...source.params });
+  const savedUi = getBrowserState(browserKey);
+  const [open, setOpen] = useState(savedUi?.open ?? false);
+  const [q, setQ] = useState(savedUi?.q ?? '');
   // Sort + minimum-threshold filters for the sender list (applied server-side over the whole
-  // slice, not just the loaded page). Empty inputs = no minimum.
-  const [sort, setSort] = useState<GroupSort>('bytes');
-  const [minMsgs, setMinMsgs] = useState('');
-  const [minSizeMb, setMinSizeMb] = useState('');
+  // slice, not just the loaded page). Empty inputs = no minimum. Defaults to sorting by
+  // message count — reviewing "who sends the most" reads better than raw bytes first.
+  const [sort, setSort] = useState<GroupSort>(savedUi?.sort ?? 'count');
+  const [minMsgs, setMinMsgs] = useState(savedUi?.minMsgs ?? '');
+  const [minSizeMb, setMinSizeMb] = useState(savedUi?.minSizeMb ?? '');
   const [groups, setGroups] = useState<CleanupGroupDto[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -238,9 +246,14 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
   const [error, setError] = useState(false);
 
   const kind = source.slice;
-  const { years, minMb, months } = source.params ?? {};
+  const { years, minMb } = source.params ?? {};
   const minMsgsNum = Number(minMsgs) > 0 ? Math.floor(Number(minMsgs)) : undefined;
   const minSizeMbNum = Number(minSizeMb) > 0 ? Number(minSizeMb) : undefined;
+
+  // Mirror the UI state into the session store on every change (cheap, keyed writes).
+  useEffect(() => {
+    setBrowserState(browserKey, { open, q, sort, minMsgs, minSizeMb });
+  }, [browserKey, open, q, sort, minMsgs, minSizeMb]);
 
   // Multi-select trash, storage-only: the audit has no safety gate, so a row checkbox can scope
   // a whole-sender (or many-sender) trash run. `selected` holds the chosen sender keys; the
@@ -269,19 +282,15 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
       switch (kind) {
         case 'storage':
           return api.cleanup.storage(o);
-        case 'never-replied':
-          return api.cleanup.neverReplied(o);
         case 'cold-storage':
           return api.cleanup.coldStorage(years, o);
         case 'large':
           return api.cleanup.large(minMb, o);
-        case 'unread':
-          return api.cleanup.unread(months, o);
         case 'newsletters':
           return api.cleanup.newsletters(o);
       }
     },
-    [kind, years, minMb, months, q, sort, minMsgsNum, minSizeMbNum],
+    [kind, years, minMb, q, sort, minMsgsNum, minSizeMbNum],
   );
 
   // (Re)load the first page when opened or any of the (debounced) search/sort/filter inputs
@@ -489,41 +498,59 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                 </div>
               )}
               <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
-                {groups.map((g) => (
-                  <li key={g.domain} className="flex w-full items-center active:bg-surface-2">
-                    {selectable && (
+                {groups.map((g) => {
+                  // In-progress drill review for this sender → a "19/21 marked" badge, so
+                  // hopping between senders keeps the review progress visible.
+                  const marked = drillMarkedCount(
+                    drillStateKey({ slice: kind, ...source.params, domain: g.domain }),
+                    g.messageCount,
+                  );
+                  return (
+                    <li key={g.domain} className="flex w-full items-center active:bg-surface-2">
+                      {selectable && (
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(g.domain)}
+                          aria-label={`Select ${g.domain}`}
+                          aria-pressed={selected.has(g.domain)}
+                          className="shrink-0 py-2 pl-3 pr-1"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.has(g.domain)}
+                            readOnly
+                            tabIndex={-1}
+                            aria-hidden
+                            className="size-4 accent-accent"
+                          />
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => toggleSelect(g.domain)}
-                        aria-label={`Select ${g.domain}`}
-                        aria-pressed={selected.has(g.domain)}
-                        className="shrink-0 py-2 pl-3 pr-1"
+                        onClick={() => drillInto(g.domain)}
+                        aria-label={`Review messages from ${g.domain}`}
+                        className={`flex min-w-0 flex-1 items-center gap-3 py-2 pr-3 text-left text-sm ${selectable ? 'pl-1' : 'pl-3'}`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={selected.has(g.domain)}
-                          readOnly
-                          tabIndex={-1}
-                          aria-hidden
-                          className="size-4 accent-accent"
-                        />
+                        <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
+                        {/* The badge subsumes the msg count (marked/total) — swapping, not
+                            stacking, keeps the sender name readable on narrow screens. */}
+                        {marked !== null ? (
+                          <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium tabular-nums text-accent">
+                            {marked}/{g.messageCount} marked
+                          </span>
+                        ) : (
+                          <span className="shrink-0 tabular-nums text-muted">
+                            {g.messageCount} msg
+                          </span>
+                        )}
+                        <span className="w-20 shrink-0 text-right tabular-nums text-faint">
+                          {formatBytes(g.bytes)}
+                        </span>
+                        <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => drillInto(g.domain)}
-                      aria-label={`Review messages from ${g.domain}`}
-                      className={`flex min-w-0 flex-1 items-center gap-3 py-2 pr-3 text-left text-sm ${selectable ? 'pl-1' : 'pl-3'}`}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
-                      <span className="shrink-0 tabular-nums text-muted">{g.messageCount} msg</span>
-                      <span className="w-20 shrink-0 text-right tabular-nums text-faint">
-                        {formatBytes(g.bytes)}
-                      </span>
-                      <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
-                    </button>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
               {hasMore && (
                 <div className="flex justify-center pt-2">
@@ -860,7 +887,7 @@ const SLICE_META: Record<
   {
     label: string;
     threshold?: {
-      prefKey: 'cleanupLargeMinMb' | 'cleanupColdYears' | 'cleanupUnreadMonths';
+      prefKey: 'cleanupLargeMinMb' | 'cleanupColdYears';
       unit: string;
       cmp: string;
       min: number;
@@ -872,12 +899,7 @@ const SLICE_META: Record<
     label: 'Large messages',
     threshold: { prefKey: 'cleanupLargeMinMb', unit: 'MB', cmp: '≥', min: 1, max: 500 },
   },
-  'never-replied': { label: 'Never replied to' },
   newsletters: { label: 'Newsletters & bulk mail' },
-  unread: {
-    label: 'Never opened',
-    threshold: { prefKey: 'cleanupUnreadMonths', unit: 'months', cmp: '>', min: 1, max: 120 },
-  },
   'cold-storage': {
     label: 'Cold storage',
     threshold: { prefKey: 'cleanupColdYears', unit: 'years', cmp: '>', min: 1, max: 30 },
@@ -1141,22 +1163,21 @@ function GuardedMailSection({ count, onChanged }: { count: number; onChanged: ()
 export function Cleanup() {
   const navigate = useNavigate();
   const prefs = usePrefs();
-  const { coldYears, largeMinMb, unreadMonths } = {
+  const { coldYears, largeMinMb } = {
     coldYears: prefs.cleanupColdYears,
     largeMinMb: prefs.cleanupLargeMinMb,
-    unreadMonths: prefs.cleanupUnreadMonths,
   };
   const slices = enabledSlices(prefs);
 
   // Stale-while-revalidate: render the last-known dashboard instantly (prefetched on app
   // idle / cached from the previous visit), refresh in the background, swap in the result.
   const [dash, setDash] = useState<CleanupDashboardDto | null>(() =>
-    cachedDashboard({ years: coldYears, minMb: largeMinMb, months: unreadMonths }),
+    cachedDashboard({ years: coldYears, minMb: largeMinMb }),
   );
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const params = { years: coldYears, minMb: largeMinMb, months: unreadMonths };
+    const params = { years: coldYears, minMb: largeMinMb };
     setDash(cachedDashboard(params));
     setError(false);
     let cancelled = false;
@@ -1170,14 +1191,14 @@ export function Cleanup() {
     return () => {
       cancelled = true;
     };
-  }, [coldYears, largeMinMb, unreadMonths]);
+  }, [coldYears, largeMinMb]);
 
   // Re-pull the whole dashboard after a cleanup drains (counts/bytes shift).
   const refresh = useCallback(() => {
-    void loadDashboard({ years: coldYears, minMb: largeMinMb, months: unreadMonths })
+    void loadDashboard({ years: coldYears, minMb: largeMinMb })
       .then(setDash)
       .catch(() => undefined);
-  }, [coldYears, largeMinMb, unreadMonths]);
+  }, [coldYears, largeMinMb]);
 
   // A trash run can outlive the screen (or the session) — if work is still queued when the
   // dashboard loads, surface it and keep the figures fresh until the queue drains.
@@ -1204,10 +1225,8 @@ export function Cleanup() {
 
   const summary = dash?.summary ?? null;
   const storage = dash?.storage ?? null;
-  const neverReplied = dash?.neverReplied ?? null;
   const cold = dash?.coldStorage ?? null;
   const large = dash?.large ?? null;
-  const unread = dash?.unread ?? null;
   const newsletters = dash?.newsletters ?? null;
 
   // Apply a custom-keyword list: persist it, push it to the server now (the keyword sets feed
@@ -1346,15 +1365,9 @@ export function Cleanup() {
             {renderAction(
               'large',
               'Large messages',
-              `Messages over ${largeMinMb} MB — usually big attachments. The quickest way to free space.`,
+              `Messages over ${largeMinMb} MB still on your mail provider — usually big attachments. Mail already detached to this server doesn't count (trashing it wouldn't free provider space).`,
               large,
               { minMb: largeMinMb },
-            )}
-            {renderAction(
-              'never-replied',
-              'Never replied to',
-              'Senders you’ve never written back to — likely newsletters and clutter.',
-              neverReplied,
             )}
             {renderAction(
               'newsletters',
@@ -1369,13 +1382,6 @@ export function Cleanup() {
                 value={prefs.cleanupNewsletterKeywords}
                 onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
               />,
-            )}
-            {renderAction(
-              'unread',
-              'Never opened',
-              `Unread mail older than ${unreadMonths} months — you never opened it. Flagged mail is spared.`,
-              unread,
-              { months: unreadMonths },
             )}
             {renderAction(
               'cold-storage',

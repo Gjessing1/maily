@@ -18,7 +18,7 @@ const KEY = 'maily.cleanupDash';
 
 /** Cache key for one thresholds combo (different presets cache separately). */
 export function dashKey(t: SliceParams): string {
-  return `${t.years ?? ''}|${t.minMb ?? ''}|${t.months ?? ''}`;
+  return `${t.years ?? ''}|${t.minMb ?? ''}`;
 }
 
 type Stored = Record<string, CleanupDashboardDto>;

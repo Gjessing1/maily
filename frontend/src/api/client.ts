@@ -184,7 +184,6 @@ interface GroupPage {
   offset?: number;
   years?: number;
   minMb?: number;
-  months?: number;
   /** Sort order for the sender list (default 'bytes'). */
   sort?: GroupSort;
   /** Hide senders with fewer than this many messages. */
@@ -200,7 +199,6 @@ function groupQuery(opts: GroupPage): string {
   if (opts.offset) p.set('offset', String(opts.offset));
   if (opts.years) p.set('years', String(opts.years));
   if (opts.minMb) p.set('minMb', String(opts.minMb));
-  if (opts.months) p.set('months', String(opts.months));
   if (opts.sort && opts.sort !== 'bytes') p.set('sort', opts.sort);
   if (opts.minMsgs) p.set('minMsgs', String(opts.minMsgs));
   if (opts.minSizeMb) p.set('minSizeMb', String(opts.minSizeMb));
@@ -473,18 +471,14 @@ export const api = {
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
     /** The whole dashboard in one round-trip, served from the backend's precomputed cache. */
-    dashboard: (opts: { years?: number; minMb?: number; months?: number } = {}) =>
+    dashboard: (opts: { years?: number; minMb?: number } = {}) =>
       request<CleanupDashboardDto>(`/api/cleanup/dashboard${groupQuery(opts)}`),
     storage: (opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/storage${groupQuery(opts)}`),
-    neverReplied: (opts: GroupPage = {}) =>
-      request<CleanupSliceDto>(`/api/cleanup/never-replied${groupQuery(opts)}`),
     coldStorage: (years?: number, opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/cold-storage${groupQuery({ ...opts, years })}`),
     large: (minMb?: number, opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/large${groupQuery({ ...opts, minMb })}`),
-    unread: (months?: number, opts: GroupPage = {}) =>
-      request<CleanupSliceDto>(`/api/cleanup/unread${groupQuery({ ...opts, months })}`),
     newsletters: (opts: GroupPage = {}) =>
       request<CleanupSliceDto>(`/api/cleanup/newsletters${groupQuery(opts)}`),
     /** Drill a delete-eligible slice down to messages, optionally sender-scoped/searched. */
@@ -494,7 +488,6 @@ export const api = {
       q?: string;
       years?: number;
       minMb?: number;
-      months?: number;
       limit?: number;
       offset?: number;
     }) => {
@@ -503,7 +496,6 @@ export const api = {
       if (opts.q) q.set('q', opts.q);
       if (opts.years) q.set('years', String(opts.years));
       if (opts.minMb) q.set('minMb', String(opts.minMb));
-      if (opts.months) q.set('months', String(opts.months));
       if (opts.limit) q.set('limit', String(opts.limit));
       if (opts.offset) q.set('offset', String(opts.offset));
       return request<CleanupMessagesDto>(`/api/cleanup/messages?${q.toString()}`);

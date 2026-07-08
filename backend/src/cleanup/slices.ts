@@ -2,8 +2,8 @@
  * Deterministic cleanup slices (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
  * Read-only power-user analytics over the local SQLite archive — slices that need no
  * enrichment, each a different *angle* on "what could I be tempted to delete":
- *  - storage audit (informational), senders never replied to, cold-storage candidates,
- *  - large messages (size angle), unread-and-old (attention angle),
+ *  - storage audit (informational), cold-storage candidates,
+ *  - large messages (size angle),
  *  - newsletters (bulk-mail angle via the FTS unsubscribe heuristic).
  * Each returns a **preview impact** (message count + an estimated byte total, grouped by
  * sender — domain, or full address for freemail providers, see senders.ts) so the dashboard
@@ -28,7 +28,7 @@ import type {
 import { db } from '../db/client.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
 import { effectiveKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
-import { SENDER_KEY, senderKeyOf } from './senders.js';
+import { SENDER_KEY } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
 const GROUP_LIMIT = 50;
@@ -36,10 +36,7 @@ const GROUP_LIMIT = 50;
 const COLD_YEARS = 2;
 /** Default large-message size threshold (MB). */
 const LARGE_MIN_MB = 10;
-/** Default unread-and-old age threshold (months). */
-const UNREAD_MONTHS = 12;
 const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
-const MS_PER_MONTH = MS_PER_YEAR / 12;
 const MB = 1024 * 1024;
 
 /**
@@ -168,12 +165,16 @@ function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
 const LIVE = sql`m.deleted_at IS NULL`;
 
 /**
- * The base predicate of every DELETE-ELIGIBLE slice: live AND not user-preserved.
- * `cleanup_keep` is the per-message "preserve from cleanup" flag (migration 0019) — a
- * user-set counterpart of the keyword safety gate. The informational storage audit and
- * the summary totals deliberately stay on {@link LIVE} (preserved mail still occupies bytes).
+ * The base predicate of every DELETE-ELIGIBLE slice: live, not user-preserved, and still
+ * on the provider. `cleanup_keep` is the per-message "preserve from cleanup" flag
+ * (migration 0019) — a user-set counterpart of the keyword safety gate. `local_only`
+ * mail (detached: already deleted from the provider, kept only as this server's archive)
+ * is excluded too — trashing it frees NO provider space, so counting it made the slice's
+ * "free X" figure a lie, and the trash queue's IMAP MOVE has no server copy to act on.
+ * The informational storage audit and the summary totals deliberately stay on
+ * {@link LIVE} (preserved and local-only mail still occupy local bytes).
  */
-const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0`;
+const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0 AND m.local_only = 0`;
 
 /**
  * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice
@@ -217,47 +218,6 @@ export function storageByDomain(opts: GroupPageOpts = {}): CleanupSliceDto {
 }
 
 /**
- * Collect the sender keys the user has ever sent mail to (To + Cc of Sent mail). Keys, not
- * domains: for a freemail recipient the key is the full address, so replying to one gmail
- * friend never excuses every other gmail.com sender from the never-replied slice.
- */
-function repliedSenderKeys(): Set<string> {
-  const rows = db.all(
-    sql`SELECT m.to_addresses AS toA, m.cc_addresses AS ccA
-        FROM messages m
-        JOIN message_folders mf ON mf.message_id = m.id
-        JOIN folders f ON f.id = mf.folder_id
-        WHERE f.role = 'sent'`,
-  ) as { toA: string | null; ccA: string | null }[];
-
-  const keys = new Set<string>();
-  for (const row of rows) {
-    for (const json of [row.toA, row.ccA]) {
-      if (!json) continue;
-      try {
-        const list = JSON.parse(json) as { address?: string }[];
-        for (const a of list) {
-          const key = senderKeyOf(a.address);
-          if (key !== '(unknown)') keys.add(key);
-        }
-      } catch {
-        // Tolerate a malformed recipients blob — just skip it.
-      }
-    }
-  }
-  return keys;
-}
-
-/**
- * Senders never replied to — inbound senders the user has never written back to. A
- * passive bulk-unsubscribe / clutter candidate. Safety-filtered (protected mail excluded)
- * and the '(unknown)' bucket dropped (not actionable). Reply set is computed from Sent.
- */
-export function neverRepliedSenders(opts: GroupPageOpts = {}): CleanupSliceDto {
-  return paginateSlice('never-replied', computeSliceData('never-replied'), opts);
-}
-
-/**
  * The cold-storage predicate: mail older than `years` whose body lacks the value markers
  * (invoice/tax/contract, EN+NO) and which isn't protected. Shared by the preview slice and
  * the execution resolver so both apply the identical safety + keyword + age filter.
@@ -292,19 +252,6 @@ function largeWhere(minBytes: number): SQL {
 }
 
 /**
- * The unread-and-old predicate: never opened (`seen = 0`), older than `months`, not a
- * draft, not flagged (a starred-but-unread message is deliberately kept), not protected.
- * The attention angle — mail never even opened after this long was never needed.
- */
-function unreadWhere(months: number): SQL {
-  const cutoff = Date.now() - months * MS_PER_MONTH;
-  return sql`${ELIGIBLE}
-    AND m.seen = 0 AND m.draft = 0 AND m.flagged = 0
-    AND m.received_at IS NOT NULL AND m.received_at < ${cutoff}
-    AND ${notProtected('m')}`;
-}
-
-/**
  * The newsletters predicate: the body carries an unsubscribe / newsletter marker (EN+NO)
  * — the deterministic bulk-mail heuristic, riding the FTS index. The bulk-mail angle.
  */
@@ -319,28 +266,18 @@ export function largeMessages(minMb = LARGE_MIN_MB, opts: GroupPageOpts = {}): C
   return paginateSlice('large', computeSliceData('large', { minMb }), opts);
 }
 
-/** Unread-and-old — never opened and older than `months` (default {@link UNREAD_MONTHS}). */
-export function unreadOldMessages(
-  months = UNREAD_MONTHS,
-  opts: GroupPageOpts = {},
-): CleanupSliceDto {
-  return paginateSlice('unread', computeSliceData('unread', { months }), opts);
-}
-
 /** Newsletters / bulk mail — messages carrying an unsubscribe marker (FTS heuristic). */
 export function newsletterMessages(opts: GroupPageOpts = {}): CleanupSliceDto {
   return paginateSlice('newsletters', computeSliceData('newsletters'), opts);
 }
 
 /** The delete-eligible slice ids — every angle except the informational storage audit. */
-export type DeleteSlice = 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
+export type DeleteSlice = 'cold-storage' | 'large' | 'newsletters';
 
 /** Runtime guard for {@link DeleteSlice} — shared by the routes' input validation. */
 export const DELETE_SLICES: ReadonlySet<string> = new Set<DeleteSlice>([
-  'never-replied',
   'cold-storage',
   'large',
-  'unread',
   'newsletters',
 ]);
 
@@ -372,22 +309,6 @@ export interface SliceThresholds {
   years?: number;
   /** Large-message size threshold (MB). */
   minMb?: number;
-  /** Unread-and-old age threshold (months). */
-  months?: number;
-}
-
-/**
- * The never-replied predicate, fully in SQL: an actionable sender key (not '(unknown)')
- * the user has never written to. The reply set is computed in JS from Sent recipients
- * (JSON address blobs) and handed to SQLite as ONE bound JSON array via `json_each` —
- * keeping the predicate composable with COUNT/LIMIT pagination without a bound-variable
- * per key.
- */
-function neverRepliedWhere(): SQL {
-  const replied = JSON.stringify([...repliedSenderKeys()]);
-  return sql`${ELIGIBLE} AND ${notProtected('m')}
-    AND ${SENDER_KEY} <> '(unknown)'
-    AND ${SENDER_KEY} NOT IN (SELECT value FROM json_each(${replied}))`;
 }
 
 /**
@@ -396,14 +317,10 @@ function neverRepliedWhere(): SQL {
  */
 function sliceWhere(slice: DeleteSlice, t: SliceThresholds): SQL {
   switch (slice) {
-    case 'never-replied':
-      return neverRepliedWhere();
     case 'cold-storage':
       return coldStorageWhere(t.years ?? COLD_YEARS);
     case 'large':
       return largeWhere((t.minMb ?? LARGE_MIN_MB) * MB);
-    case 'unread':
-      return unreadWhere(t.months ?? UNREAD_MONTHS);
     case 'newsletters':
       return newslettersWhere();
   }

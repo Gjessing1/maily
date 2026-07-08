@@ -5,7 +5,7 @@
  * domain otherwise (a corporate/bulk domain genuinely is one sender). One SQL expression
  * shared by the preview, drill-down and execute paths so a group label always round-trips
  * (`scope.domain` on execute is compared against this same expression), plus a TS mirror
- * for the JS-side paths (the never-replied reply set).
+ * for the JS-side paths.
  */
 import { sql, type SQL } from 'drizzle-orm';
 

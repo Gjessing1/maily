@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { resetCleanupReviewState } from '../state/cleanupDrill';
 
 const dashboard = {
   summary: {
@@ -19,13 +20,6 @@ const dashboard = {
     totalMessages: 7,
     totalBytes: 700,
   },
-  neverReplied: {
-    slice: 'never-replied',
-    groups: [],
-    truncated: false,
-    totalMessages: 5,
-    totalBytes: 500,
-  },
   coldStorage: {
     slice: 'cold-storage',
     groups: [],
@@ -34,18 +28,17 @@ const dashboard = {
     totalBytes: 0,
   },
   large: { slice: 'large', groups: [], truncated: false, totalMessages: 0, totalBytes: 0 },
-  unread: { slice: 'unread', groups: [], truncated: false, totalMessages: 0, totalBytes: 0 },
   newsletters: {
     slice: 'newsletters',
     groups: [],
     truncated: false,
-    totalMessages: 0,
-    totalBytes: 0,
+    totalMessages: 5,
+    totalBytes: 500,
   },
 };
 
-const neverReplied = {
-  slice: 'never-replied',
+const newsletters = {
+  slice: 'newsletters',
   groups: [{ domain: 'foo.com', messageCount: 3, bytes: 300, oldestAt: null, newestAt: null }],
   truncated: false,
   totalMessages: 5,
@@ -56,7 +49,7 @@ vi.mock('../api/client', () => ({
   api: {
     cleanup: {
       dashboard: vi.fn(() => Promise.resolve(dashboard)),
-      neverReplied: vi.fn(() => Promise.resolve(neverReplied)),
+      newsletters: vi.fn(() => Promise.resolve(newsletters)),
       storage: vi.fn(() =>
         Promise.resolve({
           slice: 'storage',
@@ -70,11 +63,9 @@ vi.mock('../api/client', () => ({
       ),
       coldStorage: vi.fn(() => Promise.resolve(dashboard.coldStorage)),
       large: vi.fn(() => Promise.resolve(dashboard.large)),
-      unread: vi.fn(() => Promise.resolve(dashboard.unread)),
-      newsletters: vi.fn(() => Promise.resolve(dashboard.newsletters)),
       messages: vi.fn(() =>
         Promise.resolve({
-          slice: 'never-replied',
+          slice: 'newsletters',
           domain: 'foo.com',
           messages: [],
           total: 0,
@@ -92,13 +83,10 @@ const prefs = {
   cleanupSlices: {
     large: false,
     'cold-storage': false,
-    unread: false,
-    newsletters: false,
-    'never-replied': true,
+    newsletters: true,
   },
   cleanupColdYears: 2,
   cleanupLargeMinMb: 10,
-  cleanupUnreadMonths: 12,
   cleanupColdKeepKeywords: [],
   cleanupNewsletterKeywords: [],
   cleanupProtectedKeywords: [],
@@ -117,6 +105,8 @@ function PathSpy() {
 
 beforeEach(() => {
   lastPath = '';
+  // The review stores are deliberately session-lived; between tests they must start clean.
+  resetCleanupReviewState();
 });
 
 describe('Cleanup review-by-sender drill', () => {
@@ -133,16 +123,16 @@ describe('Cleanup review-by-sender drill', () => {
       </MemoryRouter>,
     );
 
-    // Wait for the never-replied card to render.
-    await screen.findByRole('heading', { name: 'Never replied to' });
-    // Expand "Review by sender" on the never-replied card (the storage card has one too).
+    // Wait for the newsletters card to render.
+    await screen.findByRole('heading', { name: 'Newsletters & bulk mail' });
+    // Expand "Review by sender" on the newsletters card (the storage card has one too).
     fireEvent.click(screen.getAllByText(/Review by sender/)[1]!);
     // Wait for the sender row.
     const row = await screen.findByRole('button', { name: /Review messages from foo.com/ });
     fireEvent.click(row);
 
     await waitFor(() => expect(lastPath).toContain('/cleanup/messages'));
-    expect(lastPath).toContain('slice=never-replied');
+    expect(lastPath).toContain('slice=newsletters');
     expect(lastPath).toContain('domain=foo.com');
   });
 

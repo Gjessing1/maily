@@ -1,9 +1,9 @@
 /**
  * Cleanup Dashboard API (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
  * Read-only deterministic analytics over the local SQLite archive (a storage audit plus the
- * delete-eligible slices — senders never replied to, cold-storage candidates, large messages,
- * unread-and-old, newsletters — each with its preview impact) PLUS the Phase 6b execution
- * path: POST /execute queues a slice for trashing and GET /queue reports trickle progress.
+ * delete-eligible slices — cold-storage candidates, large messages, newsletters — each with
+ * its preview impact) PLUS the Phase 6b execution path: POST /execute queues a slice for
+ * trashing and GET /queue reports trickle progress.
  *
  * Safety invariants on execute: the client sends only the slice + filters (never a message
  * list), and `sliceMessageIds` re-runs the SAME predicates the preview used — so the HARD
@@ -79,20 +79,17 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
 
   // The whole dashboard in one round-trip (summary + queue + first page of every slice),
   // served from the precomputed cache so entering the Cleanup screen is instant.
-  app.get<{ Querystring: { years?: string; minMb?: string; months?: string } }>(
+  app.get<{ Querystring: { years?: string; minMb?: string } }>(
     '/api/cleanup/dashboard',
     async (req): Promise<CleanupDashboardDto> => {
       const years = posNum(req.query.years);
       const minMb = posNum(req.query.minMb);
-      const months = posNum(req.query.months);
       return {
         summary: cachedSummary(),
         queue: queueStatus(),
         storage: paginateSlice('storage', cachedSliceData('storage')),
-        neverReplied: paginateSlice('never-replied', cachedSliceData('never-replied')),
         coldStorage: paginateSlice('cold-storage', cachedSliceData('cold-storage', { years })),
         large: paginateSlice('large', cachedSliceData('large', { minMb })),
-        unread: paginateSlice('unread', cachedSliceData('unread', { months })),
         newsletters: paginateSlice('newsletters', cachedSliceData('newsletters')),
       };
     },
@@ -101,11 +98,6 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Storage audit — every sender domain by estimated bytes (informational, not a preset).
   app.get<{ Querystring: PageQuery }>('/api/cleanup/storage', async (req) =>
     paginateSlice('storage', cachedSliceData('storage'), pageOpts(req.query)),
-  );
-
-  // Senders never written back to — a passive bulk-unsubscribe / clutter candidate.
-  app.get<{ Querystring: PageQuery }>('/api/cleanup/never-replied', async (req) =>
-    paginateSlice('never-replied', cachedSliceData('never-replied'), pageOpts(req.query)),
   );
 
   // Cold-storage candidates — old mail without value markers (invoice/tax/contract).
@@ -128,15 +120,6 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     ),
   );
 
-  // Unread-and-old — never opened and older than `months` (the attention angle).
-  app.get<{ Querystring: PageQuery & { months?: string } }>('/api/cleanup/unread', async (req) =>
-    paginateSlice(
-      'unread',
-      cachedSliceData('unread', { months: posNum(req.query.months) }),
-      pageOpts(req.query),
-    ),
-  );
-
   // Newsletters / bulk mail — unsubscribe-marker heuristic (the bulk-mail angle).
   app.get<{ Querystring: PageQuery }>('/api/cleanup/newsletters', async (req) =>
     paginateSlice('newsletters', cachedSliceData('newsletters'), pageOpts(req.query)),
@@ -150,14 +133,13 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
       slice?: string;
       years?: string;
       minMb?: string;
-      months?: string;
       domain?: string;
       q?: string;
       limit?: string;
       offset?: string;
     };
   }>('/api/cleanup/messages', async (req, reply): Promise<CleanupMessagesDto> => {
-    const { slice, years, minMb, months, domain, q, limit, offset } = req.query;
+    const { slice, years, minMb, domain, q, limit, offset } = req.query;
     // 'storage' drills read-only (the audit's per-sender list); the rest must be delete-eligible.
     if (!slice || (slice !== 'storage' && !isDeleteSlice(slice))) {
       return reply.code(400).send({ error: 'slice is not drillable' }) as never;
@@ -166,7 +148,6 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     const res = sliceMessages(slice, {
       years: posNum(years),
       minMb: posNum(minMb),
-      months: posNum(months),
       domain: domain || undefined,
       q: q || undefined,
       limit: lim ? Math.min(lim, 500) : undefined,
@@ -191,17 +172,8 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   // Execute a delete-eligible slice: re-resolve + re-validate server-side, tombstone locally
   // (instant hide), then enqueue the rate-limited MOVE-to-Trash. Returns the queued count.
   app.post<{ Body: CleanupExecuteRequest }>('/api/cleanup/execute', async (req, reply) => {
-    const {
-      slice,
-      years,
-      minMb,
-      months,
-      messageIds,
-      domain,
-      domains,
-      excludeDomains,
-      excludeMessageIds,
-    } = req.body ?? {};
+    const { slice, years, minMb, messageIds, domain, domains, excludeDomains, excludeMessageIds } =
+      req.body ?? {};
     if (!slice || !isExecuteSlice(slice)) {
       return reply.code(400).send({ error: 'slice is not delete-eligible' });
     }
@@ -220,7 +192,6 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
     const refs = sliceMessageIds(slice, {
       years,
       minMb,
-      months,
       messageIds,
       domain,
       domains,

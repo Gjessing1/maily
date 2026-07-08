@@ -25,7 +25,7 @@ export type SwipeAction = 'none' | 'read' | 'delete';
 export type ReadingPane = 'none' | 'right' | 'below';
 
 /** A delete-eligible cleanup slice id (matches the backend's DELETE_SLICES). */
-export type CleanupSliceId = 'large' | 'cold-storage' | 'unread' | 'newsletters' | 'never-replied';
+export type CleanupSliceId = 'large' | 'cold-storage' | 'newsletters';
 
 export interface Prefs {
   /** Block remote images in mail bodies by default (privacy). Per-message override in the Reader. */
@@ -102,8 +102,6 @@ export interface Prefs {
   cleanupColdYears: number;
   /** Large-message size threshold (MB). */
   cleanupLargeMinMb: number;
-  /** Unread-and-old age threshold (months). */
-  cleanupUnreadMonths: number;
   /**
    * The cold-storage "keep" markers — an old message whose body carries one is spared from the
    * cold-storage slice. Full-ownership lists (not additive): seeded from the built-ins in the
@@ -155,13 +153,10 @@ const DEFAULTS: Prefs = {
   cleanupSlices: {
     large: true,
     'cold-storage': true,
-    unread: true,
     newsletters: true,
-    'never-replied': true,
   },
   cleanupColdYears: 2,
   cleanupLargeMinMb: 10,
-  cleanupUnreadMonths: 12,
   cleanupColdKeepKeywords: [],
   cleanupNewsletterKeywords: [],
   cleanupProtectedKeywords: [],

@@ -366,7 +366,7 @@ export const cleanupQueue = sqliteTable(
       .references(() => messages.id, { onDelete: 'cascade' }),
     /** Denormalised for per-account batching without a join in the runner's hot path. */
     accountId: text('account_id').notNull(),
-    /** Provenance — which slice queued this message ('never-replied' | 'cold-storage'). */
+    /** Provenance — which slice queued this message (e.g. 'cold-storage'). */
     slice: text('slice').notNull(),
     status: text('status', { enum: ['pending', 'done', 'failed', 'dead'] })
       .notNull()

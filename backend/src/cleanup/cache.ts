@@ -45,7 +45,7 @@ interface WarmTarget {
 }
 
 const keyOf = (slice: PreviewSlice, t: SliceThresholds): string =>
-  `${slice}|${t.years ?? ''}|${t.minMb ?? ''}|${t.months ?? ''}`;
+  `${slice}|${t.years ?? ''}|${t.minMb ?? ''}`;
 
 /** Monotonic data version; bumped on every mail mutation signal and periodic re-warm. */
 let version = 0;
@@ -63,11 +63,9 @@ const warmTargets = new Map<string, WarmTarget>(
   (
     [
       { slice: 'storage', t: {} },
-      { slice: 'never-replied', t: {} },
       { slice: 'newsletters', t: {} },
       { slice: 'cold-storage', t: {} },
       { slice: 'large', t: {} },
-      { slice: 'unread', t: {} },
     ] satisfies WarmTarget[]
   ).map((w) => [keyOf(w.slice, w.t), w]),
 );

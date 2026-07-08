@@ -396,7 +396,7 @@ export interface CleanupGroupDto {
  * separate. `groups` is capped to the worst offenders; `truncated` flags more below.
  */
 export interface CleanupSliceDto {
-  /** Slice id: 'storage' | 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters'. */
+  /** Slice id: 'storage' | 'cold-storage' | 'large' | 'newsletters'. */
   slice: string;
   groups: CleanupGroupDto[];
   totalMessages: number;
@@ -472,10 +472,8 @@ export interface CleanupDashboardDto {
   summary: CleanupSummaryDto;
   queue: CleanupQueueStatusDto;
   storage: CleanupSliceDto;
-  neverReplied: CleanupSliceDto;
   coldStorage: CleanupSliceDto;
   large: CleanupSliceDto;
-  unread: CleanupSliceDto;
   newsletters: CleanupSliceDto;
 }
 
@@ -494,13 +492,11 @@ export interface CleanupDashboardDto {
  * Keep-flagged mail) is what gets trashed. Still recoverable from Trash (never expunged).
  */
 export interface CleanupExecuteRequest {
-  slice: 'storage' | 'never-replied' | 'cold-storage' | 'large' | 'unread' | 'newsletters';
+  slice: 'storage' | 'cold-storage' | 'large' | 'newsletters';
   /** Cold-storage age threshold (years); ignored for other slices. */
   years?: number;
   /** Large-message size threshold (MB); ignored for other slices. */
   minMb?: number;
-  /** Unread-and-old age threshold (months); ignored for other slices. */
-  months?: number;
   /** Explicit message selection — only these ids (∩ the eligible set) are trashed. */
   messageIds?: string[];
   /** Restrict to a single sender key (lowercased) — "trash all from this sender". */

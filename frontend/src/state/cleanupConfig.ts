@@ -20,26 +20,16 @@ export interface SliceParams {
   years?: number;
   /** Large-message size threshold (MB). */
   minMb?: number;
-  /** Unread-and-old age threshold (months). */
-  months?: number;
 }
 
 /** Slice render order on the dashboard (the storage audit is rendered separately, first). */
-export const SLICE_ORDER: ActionSlice[] = [
-  'large',
-  'never-replied',
-  'newsletters',
-  'unread',
-  'cold-storage',
-];
+export const SLICE_ORDER: ActionSlice[] = ['large', 'newsletters', 'cold-storage'];
 
 /** Built-in on/off state for each slice — the fallback when a stored pref lacks the key. */
 const DEFAULT_SLICES_ENABLED: Record<ActionSlice, boolean> = {
   large: true,
   'cold-storage': true,
-  unread: true,
   newsletters: true,
-  'never-replied': true,
 };
 
 /** Stored slice toggles merged over the built-in defaults (new slices keep their default). */
@@ -52,6 +42,5 @@ export function cleanupThresholds(prefs: Prefs): Required<SliceParams> {
   return {
     years: prefs.cleanupColdYears,
     minMb: prefs.cleanupLargeMinMb,
-    months: prefs.cleanupUnreadMonths,
   };
 }
