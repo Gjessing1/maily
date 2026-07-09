@@ -22,6 +22,10 @@ export interface DrillState {
   mode: 'all' | 'manual';
   excluded: string[];
   included: string[];
+  /** Summed bytes of the `excluded` rows — lets the sender list price a partial review. */
+  excludedBytes: number;
+  /** Summed bytes of the `included` rows. */
+  includedBytes: number;
 }
 
 const drillStore = new Map<string, DrillState>();
@@ -57,6 +61,17 @@ export function drillMarkedCount(key: string, total: number): number | null {
   const s = drillStore.get(key);
   if (!s) return null;
   return s.mode === 'all' ? Math.max(0, total - s.excluded.length) : s.included.length;
+}
+
+/**
+ * Estimated bytes the saved review would trash, given the sender's `totalBytes`, or null when
+ * that sender was never drilled into. The byte sums are recorded by the drill screen from its
+ * loaded rows (an id can only be un/checked once loaded, so the sums are exact).
+ */
+export function drillMarkedBytes(key: string, totalBytes: number): number | null {
+  const s = drillStore.get(key);
+  if (!s) return null;
+  return s.mode === 'all' ? Math.max(0, totalBytes - s.excludedBytes) : s.includedBytes;
 }
 
 /** The sender browser's UI state — restored so "back" lands on the open list you left. */

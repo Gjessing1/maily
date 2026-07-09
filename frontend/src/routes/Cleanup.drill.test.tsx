@@ -1,7 +1,12 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { resetCleanupReviewState } from '../state/cleanupDrill';
+import {
+  drillStateKey,
+  getDrillState,
+  resetCleanupReviewState,
+  setDrillState,
+} from '../state/cleanupDrill';
 
 const dashboard = {
   summary: {
@@ -184,7 +189,110 @@ describe('Cleanup review-by-sender drill', () => {
       expect(api.cleanup.execute).toHaveBeenCalledWith({
         slice: 'storage',
         domains: ['bar.com'],
+        excludeMessageIds: undefined,
       }),
     );
+  });
+
+  test('a saved drill review scopes the multi-select bar and the execute run', async () => {
+    const { Cleanup } = await import('./Cleanup');
+    const { api } = await import('../api/client');
+    // A prior drill into bar.com unchecked 2 of its 7 messages (300 of its 700 bytes).
+    setDrillState(drillStateKey({ slice: 'storage', domain: 'bar.com' }), {
+      q: '',
+      mode: 'all',
+      excluded: ['m1', 'm2'],
+      included: [],
+      excludedBytes: 300,
+      includedBytes: 0,
+    });
+    render(
+      <MemoryRouter initialEntries={['/cleanup']}>
+        <Routes>
+          <Route path="/cleanup" element={<Cleanup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: 'Storage by sender' });
+    fireEvent.click(screen.getAllByText(/Review by sender/)[0]!);
+    // The row shows the review badge, and ticking the sender prices the marked subset.
+    await screen.findByText('5/7 marked');
+    fireEvent.click(await screen.findByRole('button', { name: /Select bar.com/ }));
+    expect(screen.getByText(/1 sender · 5 msg · 400 B/)).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Trash…$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Move to Trash$/ }));
+    await waitFor(() =>
+      expect(api.cleanup.execute).toHaveBeenCalledWith({
+        slice: 'storage',
+        domains: ['bar.com'],
+        excludeMessageIds: ['m1', 'm2'],
+      }),
+    );
+  });
+
+  test('a manual-mode review executes as an explicit id list', async () => {
+    const { Cleanup } = await import('./Cleanup');
+    const { api } = await import('../api/client');
+    setDrillState(drillStateKey({ slice: 'storage', domain: 'bar.com' }), {
+      q: '',
+      mode: 'manual',
+      excluded: [],
+      included: ['m3'],
+      excludedBytes: 0,
+      includedBytes: 100,
+    });
+    render(
+      <MemoryRouter initialEntries={['/cleanup']}>
+        <Routes>
+          <Route path="/cleanup" element={<Cleanup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: 'Storage by sender' });
+    fireEvent.click(screen.getAllByText(/Review by sender/)[0]!);
+    await screen.findByText('1/7 marked');
+    fireEvent.click(await screen.findByRole('button', { name: /Select bar.com/ }));
+    expect(screen.getByText(/1 sender · 1 msg · 100 B/)).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Trash…$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Move to Trash$/ }));
+    await waitFor(() =>
+      expect(api.cleanup.execute).toHaveBeenCalledWith({
+        slice: 'storage',
+        messageIds: ['m3'],
+      }),
+    );
+  });
+
+  test('the badge’s × discards the saved review', async () => {
+    const { Cleanup } = await import('./Cleanup');
+    const key = drillStateKey({ slice: 'storage', domain: 'bar.com' });
+    setDrillState(key, {
+      q: '',
+      mode: 'all',
+      excluded: ['m1'],
+      included: [],
+      excludedBytes: 100,
+      includedBytes: 0,
+    });
+    render(
+      <MemoryRouter initialEntries={['/cleanup']}>
+        <Routes>
+          <Route path="/cleanup" element={<Cleanup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: 'Storage by sender' });
+    fireEvent.click(screen.getAllByText(/Review by sender/)[0]!);
+    await screen.findByText('6/7 marked');
+    fireEvent.click(screen.getByRole('button', { name: /Clear review for bar.com/ }));
+
+    expect(getDrillState(key)).toBeUndefined();
+    await screen.findByText('7 msg');
+    expect(screen.queryByText('6/7 marked')).toBeNull();
   });
 });

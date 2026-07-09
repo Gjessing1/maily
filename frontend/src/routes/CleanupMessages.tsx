@@ -182,9 +182,12 @@ export function CleanupMessages() {
   // Persist the in-progress selection/filter so tapping into a message and coming back keeps it.
   // Only while reviewing (actionable + idle); once a trash run finishes the saved state is stale,
   // so drop it (a later revisit of the same sender starts fresh from the server's new totals).
+  // The pristine default (everything checked, no filter) carries no information, so it clears
+  // the saved state instead — "Select all" doubles as "discard my review", and merely opening a
+  // sender never leaves a "N/N marked" badge behind.
   useEffect(() => {
     if (!actionable) return;
-    if (exec === 'done') {
+    if (exec === 'done' || (mode === 'all' && excluded.size === 0 && !q)) {
       deleteDrillState(stateKey);
       return;
     }
@@ -193,8 +196,10 @@ export function CleanupMessages() {
       mode,
       excluded: [...excluded],
       included: [...included],
+      excludedBytes: messages.reduce((n, m) => (excluded.has(m.id) ? n + m.bytes : n), 0),
+      includedBytes: messages.reduce((n, m) => (included.has(m.id) ? n + m.bytes : n), 0),
     });
-  }, [actionable, exec, stateKey, q, mode, excluded, included]);
+  }, [actionable, exec, stateKey, q, mode, excluded, included, messages]);
 
   // Whether the whole-slice express path applies: 'all' mode and no active search filter. Then
   // "select all" really means every match (incl. unloaded pages), trashed via `excludeMessageIds`.

@@ -29,9 +29,12 @@ import { api, type GroupSort } from '../api/client';
 import { getPrefs, setPref, usePrefs, type Prefs } from '../state/prefs';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import {
+  deleteDrillState,
+  drillMarkedBytes,
   drillMarkedCount,
   drillStateKey,
   getBrowserState,
+  getDrillState,
   setBrowserState,
 } from '../state/cleanupDrill';
 import {
@@ -359,19 +362,65 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
     });
     if (exec !== 'idle') setExec('idle');
   };
+
+  // The saved drill review scopes a ticked sender: a "27/31 marked" review means the trash bar
+  // prices — and the execute run moves — those 27, not the sender's full 31.
+  const drillKeyFor = (domain: string) => drillStateKey({ slice: kind, ...source.params, domain });
   const selectedGroups = groups.filter((g) => selected.has(g.domain));
-  const selCount = selectedGroups.reduce((n, g) => n + g.messageCount, 0);
-  const selBytes = selectedGroups.reduce((n, g) => n + g.bytes, 0);
+  const selCount = selectedGroups.reduce(
+    (n, g) => n + (drillMarkedCount(drillKeyFor(g.domain), g.messageCount) ?? g.messageCount),
+    0,
+  );
+  const selBytes = selectedGroups.reduce(
+    (n, g) => n + (drillMarkedBytes(drillKeyFor(g.domain), g.bytes) ?? g.bytes),
+    0,
+  );
+
+  // Discard a sender's saved drill review — the badge's ×. The drill store isn't reactive, so
+  // bump a local counter to re-render the rows without it.
+  const [, setReviewsBump] = useState(0);
+  const clearReview = (domain: string) => {
+    deleteDrillState(drillKeyFor(domain));
+    setReviewsBump((n) => n + 1);
+  };
 
   // Trash every message from the selected senders (storage's unguarded path: no safety gate, but
-  // Keep-flagged mail is still spared server-side). Polls the global queue until it drains, then
+  // Keep-flagged mail is still spared server-side). Senders with a saved drill review are scoped
+  // to it: 'all'-mode reviews ride the domain scope minus their unchecked ids, 'manual' reviews
+  // become an explicit id list (a separate call — messageIds *intersects* the domain scope, so it
+  // can't share one with unreviewed senders). Polls the global queue until it drains, then
   // refreshes the dashboard and reloads this list so the trashed senders drop away.
   async function trashSelected() {
-    if (selected.size === 0) return;
+    if (selected.size === 0 || selCount === 0) return;
+    const executed = [...selected];
+    const domains: string[] = [];
+    const excludeMessageIds: string[] = [];
+    const messageIds: string[] = [];
+    for (const domain of executed) {
+      const review = getDrillState(drillKeyFor(domain));
+      if (review?.mode === 'manual') {
+        messageIds.push(...review.included);
+      } else {
+        domains.push(domain);
+        if (review) excludeMessageIds.push(...review.excluded);
+      }
+    }
     setExec('running');
     try {
-      const res = await api.cleanup.execute({ slice: 'storage', domains: [...selected] });
-      setQueued(res.queued);
+      let queuedTotal = 0;
+      if (domains.length > 0) {
+        const res = await api.cleanup.execute({
+          slice: 'storage',
+          domains,
+          excludeMessageIds: excludeMessageIds.length > 0 ? excludeMessageIds : undefined,
+        });
+        queuedTotal += res.queued;
+      }
+      if (messageIds.length > 0) {
+        const res = await api.cleanup.execute({ slice: 'storage', messageIds });
+        queuedTotal += res.queued;
+      }
+      setQueued(queuedTotal);
       pollRef.current = setInterval(() => {
         void api.cleanup
           .queueStatus()
@@ -380,6 +429,8 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
               if (pollRef.current) clearInterval(pollRef.current);
               setExec('done');
               setSelected(new Set());
+              // The executed senders' reviews are consumed — a later drill starts fresh.
+              executed.forEach((d) => deleteDrillState(drillKeyFor(d)));
               onExecuted?.();
               void fetchPage({}).then((r) => {
                 setGroups(r.groups);
@@ -501,10 +552,7 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                 {groups.map((g) => {
                   // In-progress drill review for this sender → a "19/21 marked" badge, so
                   // hopping between senders keeps the review progress visible.
-                  const marked = drillMarkedCount(
-                    drillStateKey({ slice: kind, ...source.params, domain: g.domain }),
-                    g.messageCount,
-                  );
+                  const marked = drillMarkedCount(drillKeyFor(g.domain), g.messageCount);
                   return (
                     <li key={g.domain} className="flex w-full items-center active:bg-surface-2">
                       {selectable && (
@@ -529,7 +577,7 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                         type="button"
                         onClick={() => drillInto(g.domain)}
                         aria-label={`Review messages from ${g.domain}`}
-                        className={`flex min-w-0 flex-1 items-center gap-3 py-2 pr-3 text-left text-sm ${selectable ? 'pl-1' : 'pl-3'}`}
+                        className={`flex min-w-0 flex-1 items-center gap-3 py-2 text-left text-sm ${selectable ? 'pl-1' : 'pl-3'} ${marked !== null ? 'pr-1' : 'pr-3'}`}
                       >
                         <span className="min-w-0 flex-1 truncate text-fg">{g.domain}</span>
                         {/* The badge subsumes the msg count (marked/total) — swapping, not
@@ -548,6 +596,19 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                         </span>
                         <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-faint" />
                       </button>
+                      {/* Discard this sender's saved review — the badge reverts to the plain
+                          count and a trash run covers the sender in full again. */}
+                      {marked !== null && (
+                        <button
+                          type="button"
+                          onClick={() => clearReview(g.domain)}
+                          aria-label={`Clear review for ${g.domain}`}
+                          title="Clear review"
+                          className="shrink-0 rounded-full p-2 text-faint active:bg-surface-2 active:text-accent"
+                        >
+                          <CloseIcon className="size-4" />
+                        </button>
+                      )}
                     </li>
                   );
                 })}
@@ -587,12 +648,13 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                   ) : exec === 'confirm' ? (
                     <>
                       <p className="text-sm text-fg">
-                        Move all <span className="font-medium">{selCount.toLocaleString()}</span>{' '}
+                        Move <span className="font-medium">{selCount.toLocaleString()}</span>{' '}
                         message{selCount === 1 ? '' : 's'} from{' '}
                         <span className="font-medium">{selected.size.toLocaleString()}</span> sender
                         {selected.size === 1 ? '' : 's'} to Trash and free{' '}
                         <span className="font-medium">{formatBytes(selBytes)}</span>? They’re
-                        recoverable from Trash. Mail you’ve marked Keep is spared.
+                        recoverable from Trash. Mail you’ve marked Keep is spared, and reviewed
+                        senders only send what you marked.
                       </p>
                       <div className="mt-3 flex items-center gap-2">
                         <button
@@ -623,8 +685,9 @@ function SenderBrowser({ source, onExecuted }: { source: BrowseSource; onExecute
                       )}
                       <button
                         type="button"
+                        disabled={selCount === 0}
                         onClick={() => setExec('confirm')}
-                        className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80"
+                        className="flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white active:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <TrashIcon className="size-4" />
                         Trash…
