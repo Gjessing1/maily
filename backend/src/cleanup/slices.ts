@@ -165,16 +165,16 @@ function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
 const LIVE = sql`m.deleted_at IS NULL`;
 
 /**
- * The base predicate of every DELETE-ELIGIBLE slice: live, not user-preserved, and still
- * on the provider. `cleanup_keep` is the per-message "preserve from cleanup" flag
- * (migration 0019) — a user-set counterpart of the keyword safety gate. `local_only`
- * mail (detached: already deleted from the provider, kept only as this server's archive)
- * is excluded too — trashing it frees NO provider space, so counting it made the slice's
- * "free X" figure a lie, and the trash queue's IMAP MOVE has no server copy to act on.
- * The informational storage audit and the summary totals deliberately stay on
- * {@link LIVE} (preserved and local-only mail still occupy local bytes).
+ * The base predicate of every DELETE-ELIGIBLE slice: live and not user-preserved.
+ * `cleanup_keep` is the per-message "preserve from cleanup" flag (migration 0019) — a
+ * user-set counterpart of the keyword safety gate. `local_only` mail (detached: already
+ * deleted from the provider, kept only as this server's archive) IS eligible: cleanup's
+ * point is decluttering the views, and the trash queue gives detached mail a purely local
+ * move into the trash folder (no IMAP; see trashQueue.ts) — recoverable there, and its
+ * local bytes are reclaimed by a later Trash purge. The informational storage audit and
+ * the summary totals stay on {@link LIVE} (preserved mail still occupies local bytes).
  */
-const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0 AND m.local_only = 0`;
+const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0`;
 
 /**
  * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice

@@ -3,7 +3,7 @@
  *  - storage audit groups every sender by estimated bytes (.eml source + body + attachments),
  *  - cold-storage selects old, value-marker-free, non-protected mail,
  *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices,
- *  - local-only (detached) mail never enters a delete-eligible slice (no provider copy).
+ *  - local-only (detached) mail is delete-eligible (the queue trashes it locally, no IMAP).
  *
  * Same bootstrap as pipeline.test.ts: point MAILY_DATA_DIR at a throwaway dir BEFORE the
  * dynamic import so the shared db/env pick it up, then run migrations (creates the FTS5
@@ -392,17 +392,17 @@ test('cleanup_keep: a preserved message drops out of slices, previews and execut
   );
 });
 
-test('local-only (detached) mail never enters a delete-eligible slice', () => {
+test('local-only (detached) mail is delete-eligible like live mail', () => {
   const acct = seedAccount();
   // Two identically large messages; one was detached (deleted from the provider, kept only
-  // as this server's archive). Trashing it frees no provider space, so the slice must not
-  // count it toward the "free X" tempt — and the trash queue could not MOVE it anyway.
+  // as this server's archive). Cleanup's point is decluttering the views, so detached mail
+  // is trashable too — the trash queue gives it a purely local move into the trash folder.
   const live = seedMessage(acct, {
     fromAddress: 'cam@photos.example',
     bodyText: 'pics',
     sourceBytes: 20 * 1024 * 1024,
   });
-  seedMessage(acct, {
+  const detached = seedMessage(acct, {
     fromAddress: 'cam@photos.example',
     bodyText: 'pics',
     sourceBytes: 20 * 1024 * 1024,
@@ -410,17 +410,17 @@ test('local-only (detached) mail never enters a delete-eligible slice', () => {
   });
 
   const slice = S.largeMessages(10);
-  assert.equal(slice.totalMessages, 1, 'only the still-on-provider message counts');
-  assert.equal(slice.totalBytes, 20 * 1024 * 1024, 'bytes reflect only reclaimable mail');
+  assert.equal(slice.totalMessages, 2, 'detached mail counts like live mail');
+  assert.equal(slice.totalBytes, 40 * 1024 * 1024, 'bytes include the detached copy');
 
   const refs = S.sliceMessageIds('large', { minMb: 10 });
   assert.deepEqual(
-    refs.map((r) => r.id),
-    [live],
-    'execute never resolves a local-only message',
+    refs.map((r) => r.id).sort(),
+    [live, detached].sort(),
+    'execute resolves detached mail alongside live mail',
   );
 
-  // The informational storage audit still counts it — it does occupy local disk.
+  // The informational storage audit counts both — they occupy local disk.
   const audit = S.storageByDomain();
   assert.equal(findGroup(audit, 'photos.example')!.messageCount, 2);
 });

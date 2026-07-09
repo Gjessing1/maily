@@ -17,7 +17,12 @@ import {
   uidLocationForMessage,
   uidLocationInFolder,
 } from '../../db/queries.js';
-import { markMessageDeleted, restoreMessageDeleted, updateMessageFlags } from '../../imap/store.js';
+import {
+  markMessageDeleted,
+  relinkMessageToFolder,
+  restoreMessageDeleted,
+  updateMessageFlags,
+} from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
 import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
@@ -102,27 +107,35 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
   // "undo a mistaken delete" path once the delete's short undo window has elapsed. A deliberate
   // corrective action, so it's awaited (no undo window / outbox deferral): the IMAP MOVE runs over
   // a transient connection and relinks the local row onto the inbox, then the tombstone is cleared.
+  // A local-only message (detached; no server copy) restores with a purely local relink.
   app.post<{ Params: { id: string } }>('/api/messages/:id/restore', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
 
-    const loc = uidLocationForMessage(m.id);
     const inbox = folderByRole(m.accountId, 'inbox');
-    if (!loc || !inbox)
-      return reply.code(409).send({ error: 'no server location or inbox folder' });
-    const engine = getEngine(m.accountId);
-    if (!engine) return reply.code(503).send({ error: 'account offline' });
+    if (!inbox) return reply.code(409).send({ error: 'no inbox folder' });
 
-    try {
-      // MOVE Trash → Inbox and relink locally (on Gmail this swaps the Trash label for Inbox).
-      await moveToFolderOnServer(engine.accountConfig, m.id, loc, {
-        id: inbox.id,
-        path: inbox.path,
-      });
-    } catch (err) {
-      // The server copy may already be gone (provider auto-purged its Trash) — nothing to restore.
-      app.log.warn(`restore failed: ${(err as Error).message}`);
-      return reply.code(502).send({ error: 'could not restore — message no longer on the server' });
+    if (isMessageLocalOnly(m.id)) {
+      relinkMessageToFolder(m.id, inbox.id, null);
+    } else {
+      const loc = uidLocationForMessage(m.id);
+      if (!loc) return reply.code(409).send({ error: 'no server location' });
+      const engine = getEngine(m.accountId);
+      if (!engine) return reply.code(503).send({ error: 'account offline' });
+
+      try {
+        // MOVE Trash → Inbox and relink locally (on Gmail this swaps the Trash label for Inbox).
+        await moveToFolderOnServer(engine.accountConfig, m.id, loc, {
+          id: inbox.id,
+          path: inbox.path,
+        });
+      } catch (err) {
+        // The server copy may already be gone (provider auto-purged its Trash) — nothing to restore.
+        app.log.warn(`restore failed: ${(err as Error).message}`);
+        return reply
+          .code(502)
+          .send({ error: 'could not restore — message no longer on the server' });
+      }
     }
 
     restoreMessageDeleted(m.id);
