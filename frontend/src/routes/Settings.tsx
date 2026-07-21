@@ -15,6 +15,7 @@ import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
 import { untrustImageDomain } from '../state/trustedImages';
+import { checkForUpdate, type UpdateCheckResult } from '../pwa';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DetachSection } from '../components/DetachSection';
 import { BackIcon, CloseIcon } from '../ui/icons';
@@ -495,6 +496,52 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
         background so it never slows the server.
       </p>
     </section>
+  );
+}
+
+/**
+ * Manual "update now" for the installed PWA. The periodic checks in `pwa.ts` are
+ * silent and best-effort; a home-screen app that has been resident for days may
+ * still be running an old bundle. `pending` reflects the server/app build mismatch
+ * from the About footer, so the button reads as the fix for what's shown above it.
+ */
+function UpdateButton({ pending }: { pending: boolean }) {
+  const [status, setStatus] = useState<'idle' | 'checking' | UpdateCheckResult>('idle');
+
+  const run = async () => {
+    setStatus('checking');
+    // On 'updating' the page reloads out from under us — leave the label as-is.
+    setStatus(await checkForUpdate(pending));
+  };
+
+  const label =
+    status === 'checking'
+      ? 'Checking…'
+      : status === 'updating'
+        ? 'Updating — reloading…'
+        : 'Check for updates';
+
+  return (
+    <>
+      <button
+        onClick={() => void run()}
+        disabled={status === 'checking' || status === 'updating'}
+        className={`mt-2 rounded-full px-3 py-1.5 text-sm transition-colors disabled:opacity-60 ${
+          pending ? 'bg-accent text-white' : 'bg-surface-2 text-fg active:bg-surface-3'
+        }`}
+      >
+        {label}
+      </button>
+      {status === 'current' && <p className="mt-1.5">You’re on the latest build.</p>}
+      {status === 'failed' && (
+        <p className="mt-1.5 text-danger">Couldn’t check — you may be offline.</p>
+      )}
+      {status === 'unsupported' && (
+        <p className="mt-1.5">
+          No service worker on this device — reload the page to pick up a new build.
+        </p>
+      )}
+    </>
   );
 }
 
@@ -1021,9 +1068,10 @@ export function Settings() {
           {config && config.buildId !== __BUILD_ID__ && (
             <p className="mt-1 text-accent">
               Server is on build <span className="font-mono">{config.buildId}</span> — an app update
-              is pending; close and reopen (or reload) to switch over.
+              is waiting.
             </p>
           )}
+          <UpdateButton pending={!!config && config.buildId !== __BUILD_ID__} />
         </section>
       </main>
 
