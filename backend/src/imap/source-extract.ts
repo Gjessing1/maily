@@ -33,6 +33,15 @@ export interface PartTarget {
   contentId: string | null;
   /** Document-order index among *selected* parts — the key for CID-less attachments. */
   partOrdinal: number | null;
+  /**
+   * Legacy-row fallback keys, used only when the row has neither a Content-ID nor a
+   * `part_ordinal` (synced before that column existed). Matching on (filename, mimeType)
+   * is not collision-proof the way the ordinal is — a message with two identically named
+   * parts resolves to the first — but it beats the alternative, which is falling through
+   * to a live IMAP refetch against a possibly stale `(folder, uid)` mapping.
+   */
+  filename?: string | null;
+  mimeType?: string | null;
 }
 
 /** One selected (attachment) part as enumerated from a raw `.eml` walk. */
@@ -87,6 +96,21 @@ function selectPart(node: MimeNode): Omit<SourcePart, 'partOrdinal'> | null {
     filename: node.filename || null,
     mimeType: (node.contentType || '').toLowerCase() || null,
   };
+}
+
+/**
+ * Last-resort match for a legacy attachment row with no Content-ID and no
+ * `part_ordinal`. Requires a filename to match on — matching purely by MIME type
+ * would happily hand back the wrong part of a multi-attachment message — so a row
+ * with no filename either stays unmatched and falls through to IMAP. The MIME type
+ * is compared only when both sides declare one, since the BODYSTRUCTURE walk and
+ * the `.eml` walk can spell an absent type differently.
+ */
+function matchesLegacyKeys(sel: Omit<SourcePart, 'partOrdinal'>, target: PartTarget): boolean {
+  const wanted = target.filename;
+  if (!wanted || !sel.filename || sel.filename !== wanted) return false;
+  if (target.mimeType && sel.mimeType && sel.mimeType !== target.mimeType) return false;
+  return true;
 }
 
 /** A discarding sink so the Joiner's rebuilt byte stream has somewhere to drain. */
@@ -144,10 +168,13 @@ export async function extractPartFromSource(
     const ordinal = selectedIndex++;
     // Match on Content-ID when the target has one (exact), else on document-order
     // ordinal. Mirrors the resolver's "content_id first, ordinal for the rest".
+    // Legacy rows carry neither key; those fall back to (filename, mimeType).
     const isMatch =
       target.contentId != null
         ? sel.contentId === target.contentId
-        : ordinal === target.partOrdinal;
+        : target.partOrdinal != null
+          ? ordinal === target.partOrdinal
+          : matchesLegacyKeys(sel, target);
     if (!isMatch) return false;
     matched = sel;
     return true;

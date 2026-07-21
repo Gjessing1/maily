@@ -203,3 +203,46 @@ test('§3.7.E: extractPartFromSource streams the right decoded bytes', async () 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * Legacy rows synced before `part_ordinal` existed carry neither a Content-ID nor an
+ * ordinal. They used to fall through to IMAP, where a stale Gmail virtual-folder UID
+ * returned no bytes at all — so the filename fallback is what keeps them servable from
+ * the archived `.eml`. It must stay strictly weaker than the ordinal: filename-only,
+ * never MIME-only, or a multi-attachment message would hand back the wrong part.
+ */
+test('§3.7.E: legacy rows (no CID, no ordinal) fall back to the filename', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maily-extract-legacy-'));
+  const path = join(dir, 'source.eml');
+  await writeFile(path, EML);
+  try {
+    const byName = await extractPartFromSource(
+      path,
+      { contentId: null, partOrdinal: null, filename: 'doc.pdf', mimeType: 'application/pdf' },
+      join(dir, 'out-name.bin'),
+    );
+    assert.ok(byName, 'filename match should resolve');
+    assert.equal(byName!.filename, 'doc.pdf');
+    assert.equal(byName!.mimeType, 'application/pdf');
+
+    // A declared MIME type that contradicts the named part is a mismatch, not a
+    // "close enough" — better to fall through than to serve the wrong bytes.
+    const wrongMime = await extractPartFromSource(
+      path,
+      { contentId: null, partOrdinal: null, filename: 'doc.pdf', mimeType: 'image/png' },
+      join(dir, 'out-wrong-mime.bin'),
+    );
+    assert.equal(wrongMime, null, 'filename + contradicting mime → null');
+
+    // No filename to key on: matching on MIME type alone would pick an arbitrary
+    // part, so this must stay unmatched and fall through to IMAP.
+    const noKeys = await extractPartFromSource(
+      path,
+      { contentId: null, partOrdinal: null, filename: null, mimeType: 'application/pdf' },
+      join(dir, 'out-no-keys.bin'),
+    );
+    assert.equal(noKeys, null, 'mime alone must not match');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -412,7 +412,23 @@ export function markAttachmentDownloaded(id: string, storagePath: string, sizeBy
     .run();
 }
 
-/** Any folder location (path + UID) for a message — used to fetch bytes on demand. */
+/**
+ * A folder location (path + UID) for a message — used to fetch bytes on demand and
+ * to target IMAP moves/stores.
+ *
+ * A message is mapped into many folders (ARCHITECTURE §7), so this has to *choose*.
+ * The ordering is deliberate, not incidental: Gmail's `[Gmail]/Starred` (and
+ * `[Gmail]/Important`) are virtual views whose UIDs go stale the moment the label is
+ * cleared, and an unordered `.get()` was picking exactly those — yielding a UID the
+ * server no longer knows, so attachment fetches came back empty.
+ *
+ * So role-bearing mailboxes (the ones a message durably lives in) outrank `custom`
+ * ones. Deliberately no ordering *among* the role-bearing folders: callers that need a
+ * specific mailbox — restore-from-Trash MOVEs out of `loc` — depend on the mapping they
+ * actually have, and ranking one role over another would silently retarget them.
+ */
+const UID_LOCATION_ROLE_RANK = sql`CASE WHEN ${folders.role} = 'custom' THEN 1 ELSE 0 END`;
+
 export function uidLocationForMessage(
   messageId: string,
 ): { accountId: string; folderPath: string; uid: number } | undefined {
@@ -426,6 +442,8 @@ export function uidLocationForMessage(
     .innerJoin(folders, eq(folders.id, messageFolders.folderId))
     .innerJoin(messages, eq(messages.id, messageFolders.messageId))
     .where(and(eq(messageFolders.messageId, messageId), isNotNull(messageFolders.uid)))
+    // Tie-break on path so the pick is stable across runs rather than storage-order dependent.
+    .orderBy(UID_LOCATION_ROLE_RANK, folders.path)
     .get();
   return row && row.uid !== null ? { ...row, uid: row.uid } : undefined;
 }

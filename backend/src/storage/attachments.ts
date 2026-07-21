@@ -82,7 +82,15 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   if (sourcePath && existsSync(sourcePath)) {
     const part = await extractPartFromSource(
       sourcePath,
-      { contentId: att.contentId, partOrdinal: att.partOrdinal },
+      {
+        contentId: att.contentId,
+        partOrdinal: att.partOrdinal,
+        // Legacy rows predating `part_ordinal` have neither key; let the extractor
+        // fall back to the filename so they resolve locally instead of dropping to
+        // an IMAP refetch whose stored UID may no longer exist.
+        filename: att.filename,
+        mimeType: att.mimeType,
+      },
       path,
     );
     if (part) {
@@ -107,15 +115,27 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   if (!loc || !engine || !att.imapPartId) return null;
 
   await mkdir(dirname(path), { recursive: true });
-  await withTransientConnection(engine.accountConfig, async (client) => {
+  const fetched = await withTransientConnection(engine.accountConfig, async (client) => {
     const lock = await client.getMailboxLock(loc.folderPath);
     try {
-      const { content } = await client.download(String(loc.uid), att.imapPartId!, { uid: true });
-      await pipeline(content, createWriteStream(path));
+      // `download` resolves with an undefined `content` when the server has nothing at
+      // that (mailbox, uid) — a stale mapping, e.g. a Gmail virtual folder the message
+      // has since left. Report that as "bytes unavailable" (the route's 409) rather than
+      // letting `pipeline(undefined, …)` throw an opaque 500.
+      const res = await client.download(String(loc.uid), att.imapPartId!, { uid: true });
+      if (!res?.content) {
+        log.warn(
+          `no IMAP bytes for ${att.id} at ${loc.folderPath}:${loc.uid} — stale uid mapping?`,
+        );
+        return false;
+      }
+      await pipeline(res.content, createWriteStream(path));
+      return true;
     } finally {
       lock.release();
     }
   });
+  if (!fetched) return null;
   markAttachmentDownloaded(att.id, path, statSync(path).size);
   return path;
 }
