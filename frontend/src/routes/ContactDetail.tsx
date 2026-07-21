@@ -8,10 +8,22 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { ContactCardDto } from '@maily/shared';
 import { api } from '../api/client';
+import { setPref, usePrefs } from '../state/prefs';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, CheckIcon, CopyIcon, LinkIcon, MailIcon, PencilIcon } from '../ui/icons';
+import {
+  BackIcon,
+  CheckIcon,
+  CopyIcon,
+  LinkIcon,
+  MailIcon,
+  PencilIcon,
+  StarIcon,
+} from '../ui/icons';
+
+/** Width cap for the detail column — see the same constant in `Contacts` (ROADMAP §A1). */
+const column = 'mx-auto w-full max-w-2xl';
 
 /** A line of the address, skipping empty components. */
 function addressLines(a: ContactCardDto['addresses'][number]): string[] {
@@ -26,6 +38,16 @@ export function ContactDetail() {
   const [card, setCard] = useState<ContactCardDto | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+
+  // Starring is a maily-local view choice (a prefs list of UIDs), not a vCard edit —
+  // it never writes back to Radicale. See `favoriteContacts` in state/prefs.
+  const favorites = usePrefs().favoriteContacts;
+  const favorite = favorites.includes(uid);
+  const toggleFavorite = () =>
+    setPref(
+      'favoriteContacts',
+      favorite ? favorites.filter((f) => f !== uid) : [...favorites, uid],
+    );
 
   const load = useCallback(() => {
     api
@@ -43,27 +65,39 @@ export function ContactDetail() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 truncate px-2 text-lg font-semibold">Contact</h1>
-        {card && (
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
+        <div className={`${column} flex items-center gap-1`}>
           <button
-            onClick={() => setEditing(true)}
-            className="rounded-full p-2 text-accent active:bg-surface-2"
-            aria-label="Edit contact"
+            onClick={() => navigate(-1)}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Back"
           >
-            <PencilIcon />
+            <BackIcon />
           </button>
-        )}
+          <h1 className="flex-1 truncate px-2 text-lg font-semibold">Contact</h1>
+          {card && (
+            <>
+              <button
+                onClick={toggleFavorite}
+                aria-pressed={favorite}
+                className="rounded-full p-2 active:bg-surface-2"
+                aria-label={favorite ? 'Remove from favourites' : 'Add to favourites'}
+              >
+                <StarIcon className={favorite ? 'fill-accent text-accent' : 'text-fg'} />
+              </button>
+              <button
+                onClick={() => setEditing(true)}
+                className="rounded-full p-2 text-accent active:bg-surface-2"
+                aria-label="Edit contact"
+              >
+                <PencilIcon />
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${column}`}>
         {card === undefined ? (
           <div className="flex justify-center py-16">
             <Spinner />
@@ -188,8 +222,15 @@ export function ContactDetail() {
           onClose={() => setEditing(false)}
           onSaved={(savedUid) => {
             setEditing(false);
-            if (savedUid === null) navigate('/contacts', { replace: true });
-            else load();
+            if (savedUid === null) {
+              // Deleted — drop the star too, or the UID lingers in prefs forever.
+              if (favorite)
+                setPref(
+                  'favoriteContacts',
+                  favorites.filter((f) => f !== uid),
+                );
+              navigate('/contacts', { replace: true });
+            } else load();
           }}
         />
       )}

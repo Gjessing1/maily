@@ -55,14 +55,20 @@ function collectionUrl(cfg: NonNullable<ReturnType<typeof env.carddav>>): string
   return cfg.url.endsWith('/') ? cfg.url : `${cfg.url}/`;
 }
 
-/** Absolute, slash-terminated URL of the book a new card should be created in. */
+/**
+ * Absolute, slash-terminated URL of the book a new card should be created in.
+ *
+ * Any **discovered** book is a valid target — "active" only governs which books feed
+ * composer autocomplete, so a book excluded from search must still be writable
+ * (ROADMAP §A1). An unknown href falls back to the configured default.
+ */
 function targetCollection(
   cfg: NonNullable<ReturnType<typeof env.carddav>>,
   addressbookHref: string | null,
 ): string {
-  const active = effectiveActive();
+  const known = getDiscovered().map((b) => b.href);
   const chosen =
-    addressbookHref && active.includes(addressbookHref) ? addressbookHref : effectiveDefault();
+    addressbookHref && known.includes(addressbookHref) ? addressbookHref : effectiveDefault();
   const abs = chosen ? resolveHref(cfg, chosen) : collectionUrl(cfg);
   return abs.endsWith('/') ? abs : `${abs}/`;
 }
@@ -107,6 +113,7 @@ export async function createCard(
   card: EditableCard,
 ): Promise<string> {
   const cfg = requireConfig();
+  await ensureDiscovered(); // a cold registry would reject a valid (inactive) target
   const uid = await putNewCard(cfg, targetCollection(cfg, addressbookHref), card);
   await syncContacts();
   return uid;
@@ -123,6 +130,7 @@ export async function importCards(
   cards: EditableCard[],
 ): Promise<{ imported: number; skipped: number }> {
   const cfg = requireConfig();
+  await ensureDiscovered();
   const collection = targetCollection(cfg, addressbookHref);
   let imported = 0;
   let skipped = 0;

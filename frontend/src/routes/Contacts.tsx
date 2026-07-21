@@ -26,6 +26,7 @@ import {
   DownloadIcon,
   PlusIcon,
   SearchIcon,
+  StarIcon,
   UploadIcon,
 } from '../ui/icons';
 
@@ -53,6 +54,14 @@ function matchesQuery(c: ContactCardDto, q: string): boolean {
   return q.split(/\s+/).every((t) => hay.includes(t));
 }
 
+/**
+ * Shared width cap for the page's stacked bands (header, search, list). Contacts are
+ * one-line rows and short labelled fields — on a wide monitor they'd otherwise stretch
+ * to an unreadable line length, so every band centres its content in one column
+ * (ROADMAP §A1 wide-screen layout) rather than fanning fields out across the viewport.
+ */
+const column = 'mx-auto w-full max-w-2xl';
+
 /** A book to render plus the cards (already query-filtered) that belong to it. */
 interface BookGroup {
   href: string | null;
@@ -72,6 +81,8 @@ export function Contacts() {
   const [defaultBook, setDefaultBook] = useState<string | null>(null);
   // Free-text search across all card fields (names, emails, phones, notes, company).
   const [query, setQuery] = useState('');
+  // Active category filter (vCard CATEGORIES), or null for "all".
+  const [category, setCategory] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // When set, the create-contact editor is open (targeting this address book).
   const [creating, setCreating] = useState<{ addressbook: string | null } | null>(null);
@@ -105,8 +116,19 @@ export function Contacts() {
   const q = query.trim().toLowerCase();
   const searching = q.length > 0;
   const hidden = prefs.hiddenContactBooks;
+  const favorites = prefs.favoriteContacts;
   // New cards land in the configured default book.
   const createTarget = defaultBook;
+
+  // Every category in use, for the filter chips. Transient (component state, not a
+  // pref) — a filter is a momentary lens on the list, not a setting to carry around.
+  const allCategories = [...new Set((cards ?? []).flatMap((c) => c.categories))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  // A category that no longer exists (card edited away) must not strand the list empty.
+  const activeCategory = category && allCategories.includes(category) ? category : null;
+  const visible = (c: ContactCardDto): boolean =>
+    matchesQuery(c, q) && (!activeCategory || c.categories.includes(activeCategory));
 
   // Order books for display: default first, then other active, then inactive. Each
   // book carries its query-filtered cards. A trailing "Other" bucket catches cards
@@ -121,11 +143,11 @@ export function Contacts() {
     displayName: b.displayName,
     active: activeBooks.includes(b.href),
     isDefault: b.href === defaultBook,
-    cards: (cards ?? []).filter((c) => c.addressbook === b.href && matchesQuery(c, q)),
+    cards: (cards ?? []).filter((c) => c.addressbook === b.href && visible(c)),
   }));
   const known = new Set(books.map((b) => b.href));
   const otherCards = (cards ?? []).filter(
-    (c) => (!c.addressbook || !known.has(c.addressbook)) && matchesQuery(c, q),
+    (c) => (!c.addressbook || !known.has(c.addressbook)) && visible(c),
   );
   if (otherCards.length > 0) {
     groups.push({
@@ -136,9 +158,16 @@ export function Contacts() {
       cards: otherCards,
     });
   }
-  // While searching, surface only books with hits (and force them open). Otherwise
-  // show every book so all are browsable, respecting each one's hidden state.
-  const sections = searching ? groups.filter((g) => g.cards.length > 0) : groups;
+
+  // Starred contacts, pinned above the books. Deliberately a *duplicate* view rather
+  // than a move: a favourite stays listed in its own book too, so the book sections
+  // remain a faithful picture of what's on the server.
+  const favoriteCards = (cards ?? []).filter((c) => favorites.includes(c.uid) && visible(c));
+  // While a search or category filter is narrowing the list, surface only books with
+  // hits (and force them open) — an empty book section is noise when you're looking for
+  // something. Unfiltered, show every book so all are browsable, respecting hidden state.
+  const filtering = searching || activeCategory !== null;
+  const sections = filtering ? groups.filter((g) => g.cards.length > 0) : groups;
   const totalVisible = groups.reduce((n, g) => n + g.cards.length, 0);
 
   const toggleHidden = (href: string | null) => {
@@ -189,64 +218,68 @@ export function Contacts() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 text-lg font-semibold">Contacts</h1>
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".vcf,text/vcard,text/x-vcard"
-          onChange={onImportPick}
-          className="hidden"
-        />
-        <button
-          onClick={() => fileInput.current?.click()}
-          disabled={busy}
-          className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
-          aria-label="Import contacts from vCard"
-          title="Import vCard"
-        >
-          <UploadIcon />
-        </button>
-        <button
-          onClick={onExport}
-          disabled={busy || !cards || cards.length === 0}
-          className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
-          aria-label="Export contacts to vCard"
-          title="Export vCard"
-        >
-          <DownloadIcon />
-        </button>
-        <button
-          onClick={() => setCreating({ addressbook: createTarget })}
-          className="rounded-full p-2 text-accent active:bg-surface-2"
-          aria-label="Add contact"
-        >
-          <PlusIcon />
-        </button>
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
+        <div className={`${column} flex items-center gap-1`}>
+          <button
+            onClick={() => navigate(-1)}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Back"
+          >
+            <BackIcon />
+          </button>
+          <h1 className="flex-1 text-lg font-semibold">Contacts</h1>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".vcf,text/vcard,text/x-vcard"
+            onChange={onImportPick}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInput.current?.click()}
+            disabled={busy}
+            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
+            aria-label="Import contacts from vCard"
+            title="Import vCard"
+          >
+            <UploadIcon />
+          </button>
+          <button
+            onClick={onExport}
+            disabled={busy || !cards || cards.length === 0}
+            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
+            aria-label="Export contacts to vCard"
+            title="Export vCard"
+          >
+            <DownloadIcon />
+          </button>
+          <button
+            onClick={() => setCreating({ addressbook: createTarget })}
+            className="rounded-full p-2 text-accent active:bg-surface-2"
+            aria-label="Add contact"
+          >
+            <PlusIcon />
+          </button>
+        </div>
       </header>
 
       {notice && (
-        <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-sm text-fg">
-          <span className="flex-1">{notice}</span>
-          <button
-            onClick={() => setNotice(null)}
-            className="shrink-0 text-faint active:text-fg"
-            aria-label="Dismiss"
-          >
-            <CloseIcon className="size-4" />
-          </button>
+        <div className="border-b border-border bg-surface-2 px-4 py-2 text-sm text-fg">
+          <div className={`${column} flex items-center gap-2`}>
+            <span className="flex-1">{notice}</span>
+            <button
+              onClick={() => setNotice(null)}
+              className="shrink-0 text-faint active:text-fg"
+              aria-label="Dismiss"
+            >
+              <CloseIcon className="size-4" />
+            </button>
+          </div>
         </div>
       )}
 
       <div className="border-b border-border px-3 py-2">
-        <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
+        <div className={`${column} flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2`}>
           <SearchIcon className="size-4 shrink-0 text-faint" />
           <input
             value={query}
@@ -265,9 +298,27 @@ export function Contacts() {
             </button>
           )}
         </div>
+
+        {allCategories.length > 0 && (
+          <div className={`${column} mt-2 flex gap-1.5 overflow-x-auto no-scrollbar`}>
+            <CategoryChip
+              label="All"
+              selected={activeCategory === null}
+              onClick={() => setCategory(null)}
+            />
+            {allCategories.map((c) => (
+              <CategoryChip
+                key={c}
+                label={c}
+                selected={activeCategory === c}
+                onClick={() => setCategory(activeCategory === c ? null : c)}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${column}`}>
         {error && <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>}
 
         {cards === null && !error ? (
@@ -286,22 +337,43 @@ export function Contacts() {
               </button>
             </div>
           )
-        ) : searching && totalVisible === 0 ? (
+        ) : filtering && totalVisible === 0 ? (
           !error && (
             <div className="py-20 text-center text-muted">
-              <p>No contacts match “{query.trim()}”.</p>
+              <p>
+                No contacts match{searching ? ` “${query.trim()}”` : ''}
+                {activeCategory ? ` in “${activeCategory}”` : ''}.
+              </p>
             </div>
           )
         ) : (
-          sections.map((g) => (
-            <BookSection
-              key={g.href ?? '__other__'}
-              group={g}
-              collapsed={!searching && g.href !== null && hidden.includes(g.href)}
-              onToggle={() => toggleHidden(g.href)}
-              onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
-            />
-          ))
+          <>
+            {favoriteCards.length > 0 && (
+              <BookSection
+                group={{
+                  href: null,
+                  displayName: 'Favourites',
+                  active: true,
+                  isDefault: false,
+                  cards: favoriteCards,
+                }}
+                collapsed={false}
+                onToggle={() => undefined}
+                favorites={favorites}
+                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+              />
+            )}
+            {sections.map((g) => (
+              <BookSection
+                key={g.href ?? '__other__'}
+                group={g}
+                collapsed={!filtering && g.href !== null && hidden.includes(g.href)}
+                onToggle={() => toggleHidden(g.href)}
+                favorites={favorites}
+                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+              />
+            ))}
+          </>
         )}
       </main>
 
@@ -321,16 +393,42 @@ export function Contacts() {
   );
 }
 
+/** A category filter pill. */
+function CategoryChip({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={selected}
+      className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
+        selected ? 'bg-accent text-white' : 'bg-surface-2 text-faint active:bg-surface'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 /** One collapsible address-book section: a header row plus its contact rows. */
 function BookSection({
   group,
   collapsed,
   onToggle,
+  favorites,
   onOpen,
 }: {
   group: BookGroup;
   collapsed: boolean;
   onToggle: () => void;
+  /** Card UIDs to mark with a star in the row list. */
+  favorites: string[];
   onOpen: (uid: string) => void;
 }) {
   const togglable = group.href !== null;
@@ -400,6 +498,9 @@ function BookSection({
                         {c.org || c.emails.join(', ')}
                       </span>
                     </span>
+                    {favorites.includes(c.uid) && (
+                      <StarIcon className="size-3.5 shrink-0 text-accent" fill="currentColor" />
+                    )}
                   </button>
                 </li>
               );

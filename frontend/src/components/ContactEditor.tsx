@@ -5,8 +5,9 @@
  * backend, which PUTs the vCard (preserving unmodelled properties like PHOTO) and
  * re-syncs the cache, so Radicale stays the source of truth.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
+  AddressbookDto,
   ContactAddressDto,
   ContactCardDto,
   ContactCardInput,
@@ -58,7 +59,7 @@ const ADDR_LABELS = ['Home', 'Work', 'Other'];
 interface Props {
   /** Existing card to edit, or null to create a new one. */
   card: ContactCardDto | null;
-  /** Target address book for a new card (ignored when editing). */
+  /** Initial target address book for a new card — the user can still repick (ignored when editing). */
   addressbook?: string | null;
   /** Seed the first email of a new card (quick-create from compose). Ignored when editing. */
   initialEmail?: string;
@@ -108,6 +109,36 @@ export function ContactEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // ── Address book (create only) ──────────────────────────────────────────────
+  // Every *discovered* book is a legal target, not just the active ones: "active"
+  // only governs composer autocomplete, so a book excluded from search is still
+  // writable. Active books sort first; the rest are marked inactive but selectable.
+  const [books, setBooks] = useState<AddressbookDto[]>([]);
+  const [activeBooks, setActiveBooks] = useState<string[]>([]);
+  const [book, setBook] = useState<string | null>(addressbook ?? null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .addressbooks()
+      .then((s) => {
+        if (cancelled) return;
+        setBooks(s.books);
+        setActiveBooks(s.active);
+        // Fall back to the server's default when the caller didn't name a target.
+        setBook((prev) => prev ?? s.default);
+      })
+      .catch(() => undefined); // picker just stays hidden; the server picks the default
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const sortedBooks = [...books].sort(
+    (a, b) =>
+      Number(activeBooks.includes(b.href)) - Number(activeBooks.includes(a.href)) ||
+      a.displayName.localeCompare(b.displayName),
+  );
+  const cardBookName = books.find((b) => b.href === card?.addressbook)?.displayName ?? null;
 
   // ── Email list (always at least one field) ──────────────────────────────────
   const setEmail = (i: number, v: string) =>
@@ -164,7 +195,7 @@ export function ContactEditor({
         await api.updateContactCard(card.uid, input);
         onSaved(card.uid);
       } else {
-        const created = await api.createContactCard({ ...input, addressbook });
+        const created = await api.createContactCard({ ...input, addressbook: book });
         onSaved(created.uid);
       }
     } catch (e) {
@@ -246,6 +277,31 @@ export function ContactEditor({
               className="hidden"
             />
           </div>
+
+          {/* Where the card lives: pickable while creating, informational once saved
+              (moving a card between books is a separate action, not an edit). */}
+          {editing
+            ? cardBookName && (
+                <Field label="Address book">
+                  <p className="px-1 text-[15px] text-muted">{cardBookName}</p>
+                </Field>
+              )
+            : sortedBooks.length > 1 && (
+                <Field label="Address book">
+                  <select
+                    value={book ?? ''}
+                    onChange={(e) => setBook(e.target.value || null)}
+                    className={inputCls}
+                  >
+                    {sortedBooks.map((b) => (
+                      <option key={b.href} value={b.href} className="bg-surface">
+                        {b.displayName}
+                        {activeBooks.includes(b.href) ? '' : ' (not searched)'}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
 
           <Field label="Name">
             <Text value={name} onChange={setName} placeholder="Full name" />

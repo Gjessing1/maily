@@ -100,6 +100,8 @@ export interface CardRecord {
   etag: string | null;
   name: string | null;
   emails: string[];
+  /** Href of the book the card lives in — so the editor can show/preselect it. */
+  addressbook: string | null;
   /** Raw vCard text, for a round-trip edit that preserves unmodelled properties. */
   raw: string | null;
 }
@@ -232,7 +234,7 @@ export function getCardDetail(key: string): ContactCardDto | null {
   return toCardDto(rec.uid, rec.raw, {
     name: rec.name,
     emails: rec.emails,
-    addressbook: null,
+    addressbook: rec.addressbook,
   });
 }
 
@@ -248,6 +250,7 @@ export function getCardByKey(key: string): CardRecord | null {
       vcardUid: contacts.vcardUid,
       href: contacts.href,
       etag: contacts.etag,
+      addressbookHref: contacts.addressbookHref,
       rawVcard: contacts.rawVcard,
     })
     .from(contacts)
@@ -261,6 +264,7 @@ export function getCardByKey(key: string): CardRecord | null {
     etag: first.etag,
     name: rows.find((r) => r.name)?.name ?? null,
     emails: rows.map((r) => r.email).filter((e): e is string => !!e),
+    addressbook: rows.find((r) => r.addressbookHref)?.addressbookHref ?? null,
     raw: rows.find((r) => r.rawVcard)?.rawVcard ?? null,
   };
 }

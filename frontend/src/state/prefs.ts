@@ -123,6 +123,12 @@ export interface Prefs {
    */
   hiddenContactBooks: string[];
   /**
+   * Card UIDs starred as favourites, pinned to the top of the contacts list. Kept in
+   * prefs rather than as a vCard CATEGORY so starring stays a maily-local view choice —
+   * it never rewrites the card on Radicale or leaks into other CardDAV clients.
+   */
+  favoriteContacts: string[];
+  /**
    * Undo-send window in seconds: how long a send is held in the server outbox (cancelable)
    * before it actually goes out. `0` disables the hold (send immediately). The backend reads
    * this same value from the synced prefs blob when queuing a send.
@@ -161,6 +167,7 @@ const DEFAULTS: Prefs = {
   cleanupNewsletterKeywords: [],
   cleanupProtectedKeywords: [],
   hiddenContactBooks: [],
+  favoriteContacts: [],
   undoSendSeconds: 10,
 };
 
