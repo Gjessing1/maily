@@ -46,9 +46,10 @@ export function plainTextToHtml(text: string): string {
 
 /**
  * Derive a readable plain-text alternative from the editor's HTML. Walks the DOM
- * so block boundaries become newlines, list items get bullets/numbers, and links
- * render as "text <url>". Not a full Markdown serializer — just enough that the
- * text/plain part is legible.
+ * so block boundaries become newlines, list items get bullets/numbers, links
+ * render as "text <url>", and blockquotes come back as `>`-prefixed lines
+ * (RFC 3676 — how quoted history is expected to look in text/plain). Not a full
+ * Markdown serializer — just enough that the text/plain part is legible.
  */
 export function htmlToPlainText(html: string): string {
   if (!html) return '';
@@ -86,6 +87,27 @@ export function htmlToPlainText(html: string): string {
         }
         walk(el, listType);
         out.push('\n');
+        continue;
+      }
+      if (tag === 'BLOCKQUOTE') {
+        // Serialize the quote on its own, then prefix every line. Nesting falls out
+        // of the recursion: an inner quote arrives already `>`-prefixed and gets
+        // another level on the way out ("> > …").
+        const mark = out.length;
+        walk(el, listType);
+        // Collapse blank runs before prefixing — once every line starts with `>`
+        // the global whitespace cleanup below can no longer see them.
+        const inner = out
+          .splice(mark)
+          .join('')
+          .replace(/[ \t]+\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        const quoted = inner
+          .split('\n')
+          .map((l) => (l ? `> ${l}` : '>'))
+          .join('\n');
+        out.push('\n', quoted, '\n');
         continue;
       }
       if (tag === 'UL' || tag === 'OL') {

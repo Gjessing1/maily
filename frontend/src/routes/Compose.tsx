@@ -55,6 +55,11 @@ export interface ComposePrefill {
   cc?: string[];
   subject?: string;
   body?: string;
+  /**
+   * The quoted reply/forward history as HTML (a `blockquote.gmail_quote`), used in
+   * place of `body` when seeding the editor. `body` stays as the plain-text form.
+   */
+  quoteHtml?: string;
   /** Raw HTML to seed the editor verbatim (used when editing an existing draft). */
   bodyHtml?: string;
   inReplyTo?: string | null;
@@ -86,8 +91,10 @@ function isValidEmail(addr: string): boolean {
 
 /**
  * Compose the editor's starting HTML from a prefill: the user's typing line, the
- * signature (when enabled), then the quoted reply/forward text. Reply quotes are
- * plain text (`> …` prefixes) carried over from replyPrefill.ts.
+ * signature (when enabled), then the quoted reply/forward history. The quote comes
+ * in as real HTML (`quoteHtml` — a `blockquote.gmail_quote`, as Gmail emits) so the
+ * sent message shows a grey quote bar rather than literal `>` characters; the `>`
+ * prefixes are re-derived for the text/plain part by `htmlToPlainText`.
  */
 function buildInitialHtml(prefill: ComposePrefill, signature: string): string {
   // Editing an existing draft: seed the editor with its exact HTML — no signature
@@ -95,7 +102,8 @@ function buildInitialHtml(prefill: ComposePrefill, signature: string): string {
   if (prefill.bodyHtml != null) return prefill.bodyHtml;
   const blocks = ['<div><br></div>'];
   if (signature) blocks.push(`<div>-- </div><div>${plainTextToHtml(signature)}</div>`);
-  if (prefill.body?.trim()) blocks.push(`<div>${plainTextToHtml(prefill.body)}</div>`);
+  if (prefill.quoteHtml) blocks.push('<div><br></div>', prefill.quoteHtml);
+  else if (prefill.body?.trim()) blocks.push(`<div>${plainTextToHtml(prefill.body)}</div>`);
   return blocks.join('');
 }
 
