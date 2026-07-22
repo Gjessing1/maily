@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { AttachmentRef, SaveDraftRequest, SendMessageRequest, UploadDto } from '@maily/shared';
 import { api } from '../api/client';
 import { deleteDraft, getDraft, saveDraft } from '../db/cache';
@@ -10,7 +10,17 @@ import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
 import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
-import { BackIcon, ClockIcon, PaperclipIcon, SendIcon } from '../ui/icons';
+import { BackIcon, ClockIcon, NewWindowIcon, PaperclipIcon, SendIcon } from '../ui/icons';
+import {
+  claimPopoutName,
+  closePopout,
+  isPopout,
+  openPopout,
+  postToWindows,
+  putHandoff,
+  takeHandoff,
+  usePopoutCapable,
+} from '../ui/popout';
 import { showNotice, stageSend } from '../state/undo';
 
 /** Human-readable label for a scheduled-send time (confirmation notice). */
@@ -52,6 +62,8 @@ export interface ComposePrefill {
   attachments?: ComposeAttachment[];
   /** Internal id of the \Drafts message being edited; removed on save/send. */
   sourceDraftId?: string;
+  /** Files already staged server-side — carried when a compose is detached into its own window. */
+  uploads?: UploadDto[];
 }
 
 function parseAddrs(raw: string): string[] {
@@ -92,9 +104,27 @@ export function Compose() {
   // `fresh` marks a brand-new compose navigation (reply/forward/new). A reload of an
   // in-progress compose loses it (we clear it after consuming), so we restore the
   // autosaved draft instead — see the effects below.
-  const stateObj = useLocation().state as (ComposePrefill & { fresh?: boolean }) | null;
+  const routerState = useLocation().state as (ComposePrefill & { fresh?: boolean }) | null;
+  // A detached composer can't receive router state through `window.open`, so its prefill
+  // is parked in localStorage and picked up here (once) via `?handoff=`. The `fresh` effect
+  // below re-parks it in history state, so reloading the popout still restores it.
+  const [searchParams] = useSearchParams();
+  const [handoff] = useState(() => takeHandoff<ComposePrefill>(searchParams.get('handoff')));
+  const stateObj = handoff ? { ...handoff, fresh: true } : routerState;
   const isFresh = Boolean(stateObj?.fresh);
   const prefill = stateObj ?? {};
+  // Detached-window affordance: desktop only, and hidden inside a popout (already detached).
+  const popout = isPopout();
+  const canPopout = usePopoutCapable() && !popout;
+  // Set once the composer is intentionally leaving (sent/saved/discarded/detached) so the
+  // unsaved-work guard below doesn't challenge our own close.
+  const leaving = useRef(false);
+  /** Leave the composer: back to where we came from, or close the detached window. */
+  function leave() {
+    leaving.current = true;
+    if (popout) closePopout();
+    else navigate(-1);
+  }
   const accounts = useAccounts();
   const { signature, signatureEnabled } = usePrefs();
 
@@ -134,7 +164,7 @@ export function Compose() {
   const [seedKey, setSeedKey] = useState(0);
   const [bodyHtml, setBodyHtml] = useState(initialHtml);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>(prefill.attachments ?? []);
-  const [uploads, setUploads] = useState<UploadDto[]>([]);
+  const [uploads, setUploads] = useState<UploadDto[]>(prefill.uploads ?? []);
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -225,17 +255,73 @@ export function Compose() {
     uploads,
   ]);
 
+  // Name a detached composer after what's being written — the title bar is the only
+  // label a popout window has.
+  useEffect(() => {
+    if (!popout) return;
+    document.title = subject.trim() || 'New message';
+  }, [popout, subject]);
+
+  // Take over this popout's identity (it may have opened as a reader before Reply was
+  // pressed) so re-opening that message elsewhere can't navigate this draft away.
+  useEffect(() => {
+    if (popout) claimPopoutName(`compose:${draftId}`);
+  }, [popout, draftId]);
+
+  // Closing a detached composer bypasses the discard dialog (the window chrome's ✕ is
+  // outside the app), and its autosave dies with the window's sessionStorage — so warn.
+  useEffect(() => {
+    if (!popout || !isDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!leaving.current) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [popout, isDirty]);
+
   /** Forget the persisted draft for this compose session. */
   function clearDraft() {
     sessionStorage.removeItem(ACTIVE_DRAFT_KEY);
     void deleteDraft(draftId);
   }
 
+  /**
+   * Move this in-progress compose into its own window: hand the current state over
+   * (including staged uploads, which move by reference — they must NOT be deleted here),
+   * drop the local autosave so the two windows can't both own it, and leave.
+   * A blocked popup leaves the composer exactly as it was.
+   */
+  function detach() {
+    const seed: ComposePrefill = {
+      accountId,
+      to: parseAddrs(to),
+      cc: showCc ? parseAddrs(cc) : undefined,
+      subject,
+      bodyHtml,
+      inReplyTo,
+      references,
+      attachments,
+      uploads,
+      sourceDraftId,
+    };
+    const handoffId = putHandoff(seed);
+    if (!handoffId) {
+      setError('Could not open a new window.');
+      return;
+    }
+    if (!openPopout(`/compose?handoff=${handoffId}`, `compose:${draftId}`)) {
+      setError('Your browser blocked the new window — allow pop-ups for this site.');
+      return;
+    }
+    clearDraft();
+    leave();
+  }
+
   function cancel() {
     if (isDirty) setConfirmDiscard(true);
     else {
       clearDraft();
-      navigate(-1);
+      leave();
     }
   }
 
@@ -244,7 +330,7 @@ export function Compose() {
     setConfirmDiscard(false);
     for (const u of uploads) void api.deleteUpload(u.uploadId);
     clearDraft();
-    navigate(-1);
+    leave();
   }
 
   /**
@@ -257,7 +343,7 @@ export function Compose() {
     setConfirmDiscard(false);
     if (!fromAccount) {
       clearDraft();
-      navigate(-1);
+      leave();
       return;
     }
     setSavingDraft(true);
@@ -283,7 +369,7 @@ export function Compose() {
     try {
       await api.saveDraft(fromAccount.id, msg);
       clearDraft();
-      navigate(-1);
+      leave();
     } catch (e) {
       setError((e as Error).message || 'Could not save draft.');
       setSavingDraft(false);
@@ -368,13 +454,19 @@ export function Compose() {
     try {
       const { outboxId, dueAt } = await api.send(fromAccount.id, msg);
       clearDraft();
+      // A detached composer closes the moment it sends, taking its own snackbar with it —
+      // hand the undo window (or the confirmation) to the main window instead.
       if (scheduled) {
-        showNotice(`Scheduled for ${formatSchedule(dueAt)}`);
+        const message = `Scheduled for ${formatSchedule(dueAt)}`;
+        if (popout) postToWindows({ type: 'notice', message });
+        else showNotice(message);
+      } else if (popout) {
+        postToWindows({ type: 'staged-send', outboxId, dueAt });
       } else {
         // Arm the "Undo send" snackbar until the server's dueAt (the undo window end).
         void stageSend(outboxId, dueAt);
       }
-      navigate(-1);
+      leave();
     } catch (e) {
       setError((e as Error).message || 'Send failed.');
       setSending(false);
@@ -393,6 +485,18 @@ export function Compose() {
         </button>
         <h1 className="flex-1 text-lg font-semibold">New message</h1>
         <input ref={fileInputRef} type="file" multiple onChange={onPickFiles} className="hidden" />
+        {/* Detach the composer so the rest of the mailbox stays browsable while writing. */}
+        {canPopout && (
+          <button
+            onClick={detach}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Open in new window"
+            title="Open in new window"
+            type="button"
+          >
+            <NewWindowIcon />
+          </button>
+        )}
         <button
           onClick={() => fileInputRef.current?.click()}
           className="rounded-full p-2 active:bg-surface-2"

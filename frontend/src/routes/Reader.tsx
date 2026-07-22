@@ -25,11 +25,13 @@ import {
   BackIcon,
   CalendarIcon,
   ChevronDownIcon,
+  CloseIcon,
   ExpandIcon,
   ForwardIcon,
   InboxIcon,
   MailIcon,
   MailOpenIcon,
+  NewWindowIcon,
   PencilIcon,
   ReplyAllIcon,
   ReplyIcon,
@@ -37,6 +39,7 @@ import {
   TrashIcon,
 } from '../ui/icons';
 import { fullDate, senderName } from '../ui/format';
+import { closePopout, isPopout, openPopout, usePopoutCapable } from '../ui/popout';
 import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
 
 /**
@@ -68,6 +71,9 @@ export function ReaderView({
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
   const [addToCalendar, setAddToCalendar] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
+  // Detached-window affordance: desktop only, and never inside a popout (it's already one).
+  const popout = isPopout();
+  const canPopout = usePopoutCapable() && !popout;
 
   // Whole conversation for this message. When conversation view is on and the thread
   // has more than one message, the body area becomes a stacked thread and the header
@@ -127,6 +133,13 @@ export function ReaderView({
     const timer = setTimeout(mark, markReadSeconds * 1000);
     return () => clearTimeout(timer);
   }, [detailId, detailSeen, markReadSeconds]);
+
+  // A detached window is identified by its title bar, not by an in-app header — name it
+  // after the message being read.
+  useEffect(() => {
+    if (!popout || !detail) return;
+    document.title = detail.subject || '(no subject)';
+  }, [popout, detail]);
 
   async function toggleSeen() {
     if (!detail) return;
@@ -274,9 +287,9 @@ export function ReaderView({
           <button
             onClick={onClose}
             className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Back"
+            aria-label={popout ? 'Close window' : 'Back'}
           >
-            <BackIcon />
+            {popout ? <CloseIcon /> : <BackIcon />}
           </button>
         )}
         {/* In the split pane the message can feel cramped; offer a one-tap jump to the
@@ -288,6 +301,20 @@ export function ReaderView({
             aria-label="Open full screen"
           >
             <ExpandIcon className="text-fg" />
+          </button>
+        )}
+        {/* Detach the message into its own window so it can sit beside a reply being
+            written in the main window. Blocked popups fall back to the normal route. */}
+        {canPopout && id && (
+          <button
+            onClick={() => {
+              if (!openPopout(`/m/${id}`, `m:${id}`)) navigate(`/m/${id}`);
+            }}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Open in new window"
+            title="Open in new window"
+          >
+            <NewWindowIcon className="text-fg" />
           </button>
         )}
         <div className="flex-1" />
@@ -538,9 +565,13 @@ export function ReaderView({
   );
 }
 
-/** Full-screen `/m/:id` route: reads the id from the URL; back returns to the list. */
+/**
+ * Full-screen `/m/:id` route: reads the id from the URL; back returns to the list.
+ * In a detached window there's no list to go back to, so closing closes the window
+ * (delete/archive route through the same `onClose`).
+ */
 export function Reader() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  return <ReaderView id={id} onClose={() => navigate(-1)} />;
+  return <ReaderView id={id} onClose={() => (isPopout() ? closePopout() : navigate(-1))} />;
 }

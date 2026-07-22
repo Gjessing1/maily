@@ -6,6 +6,8 @@ import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { hydratePrefs } from './state/prefs';
 import { prefetchCleanupDashboard } from './state/cleanupDash';
+import { isPopout, onWindowMessage, sweepHandoffs } from './ui/popout';
+import { showNotice, stageSend } from './state/undo';
 import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
@@ -50,6 +52,18 @@ export function App() {
       document.removeEventListener('visibilitychange', onVisible);
       offReconnect();
     };
+  }, [authed]);
+
+  // Detached windows (reader/composer popouts) hand their undo window back here: a popout
+  // that sends closes immediately, so its own "Undo send" snackbar would never be seen.
+  // Only the main window listens — a popout must not re-arm what it just delegated.
+  useEffect(() => {
+    if (!authed || isPopout()) return;
+    sweepHandoffs(); // clear prefills parked for popouts that never opened
+    return onWindowMessage((message) => {
+      if (message.type === 'staged-send') void stageSend(message.outboxId, message.dueAt);
+      else showNotice(message.message);
+    });
   }, [authed]);
 
   // Once the initial screens have had the network to themselves, warm the Cleanup

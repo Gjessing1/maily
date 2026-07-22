@@ -293,6 +293,14 @@ export const ExpandIcon = (p: IconProps) => (
   </Base>
 );
 
+/** "Open in a new window" — a pane with an arrow leaving it. */
+export const NewWindowIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M13 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-8" />
+    <path d="M14 3h7v7M21 3l-9 9" />
+  </Base>
+);
+
 /** Action Center — a lightning bolt for "actionable data, not a list" (VISION). */
 export const BoltIcon = (p: IconProps) => (
   <Base {...p}>
