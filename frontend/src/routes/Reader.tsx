@@ -12,7 +12,12 @@ import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { ImageAttachment, isImageAttachment } from '../components/ImageAttachment';
 import { AddToCalendar } from '../components/AddToCalendar';
-import { ContactEditor } from '../components/ContactEditor';
+import {
+  fmtAddr,
+  joinAddrs,
+  MessageHeaderDetails,
+  SenderAvatar,
+} from '../components/MessageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Spinner } from '../ui/Spinner';
 import {
@@ -31,19 +36,8 @@ import {
   StarIcon,
   TrashIcon,
 } from '../ui/icons';
-import type { EmailAddress } from '@maily/shared';
-import { avatarHue, fullDate, initials, senderName } from '../ui/format';
+import { fullDate, senderName } from '../ui/format';
 import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
-
-/** One label/value row in the expanded message-header block. */
-function HeaderField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="w-12 shrink-0 text-faint">{label}</dt>
-      <dd className="min-w-0 flex-1 break-words text-fg">{value}</dd>
-    </div>
-  );
-}
 
 /**
  * Message reader body. Driven by an explicit `id` + `onClose` so it works both as
@@ -71,8 +65,6 @@ export function ReaderView({
   const [confirmForever, setConfirmForever] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [deletingForever, setDeletingForever] = useState(false);
-  // Quick-create-from-reply: when set, the contact editor is open seeded with the sender.
-  const [addSender, setAddSender] = useState<{ name: string | null; email: string } | null>(null);
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
   const [addToCalendar, setAddToCalendar] = useState(false);
   const autoMarkedId = useRef<string | null>(null);
@@ -166,28 +158,6 @@ export function ReaderView({
     navigate('/compose', { state: { ...buildReply(detail), fresh: true } });
   }
 
-  /**
-   * Tap the sender avatar (Gmail-style): open the sender's existing contact card if we
-   * have one, else quick-create a contact seeded with their name + address.
-   */
-  async function openSender() {
-    const email = detail?.fromAddress;
-    if (!email) return;
-    try {
-      const cards = await api.contactCards();
-      const existing = cards.find((c) =>
-        c.emails.some((e) => e.toLowerCase() === email.toLowerCase()),
-      );
-      if (existing) {
-        navigate(`/contacts/${encodeURIComponent(existing.uid)}`);
-        return;
-      }
-    } catch {
-      // Couldn't load the book — fall through to the create form.
-    }
-    setAddSender({ name: detail?.fromName ?? null, email });
-  }
-
   function replyAll() {
     if (!detail) return;
     navigate('/compose', { state: { ...buildReplyAll(detail, accounts ?? []), fresh: true } });
@@ -219,14 +189,12 @@ export function ReaderView({
   /** Reopen a saved draft in the composer; saving/sending supersedes this copy. */
   function editDraft() {
     if (!detail) return;
-    const toAddr = (a: EmailAddress): string =>
-      a.name?.trim() ? `${a.name.trim()} <${a.address}>` : a.address;
     navigate('/compose', {
       state: {
         fresh: true,
         accountId: detail.accountId,
-        to: detail.to.map(toAddr),
-        cc: detail.cc.length ? detail.cc.map(toAddr) : undefined,
+        to: detail.to.map(fmtAddr),
+        cc: detail.cc.length ? detail.cc.map(fmtAddr) : undefined,
         subject: detail.subject ?? undefined,
         // Seed the editor verbatim — prefer stored HTML, else wrap the plain text.
         bodyHtml: detail.bodyHtml ?? plainTextToHtml(detail.bodyText ?? ''),
@@ -236,10 +204,6 @@ export function ReaderView({
       },
     });
   }
-
-  const fmtAddr = (a: EmailAddress): string =>
-    a.name?.trim() ? `${a.name.trim()} <${a.address}>` : a.address;
-  const joinAddrs = (list: EmailAddress[]): string => list.map(fmtAddr).join(', ');
 
   // A message that lives in a \Drafts folder is editable rather than repliable.
   const folders = useFolders(detail?.accountId);
@@ -282,7 +246,6 @@ export function ReaderView({
       });
   }
 
-  const hue = detail ? avatarHue(detail.fromAddress ?? detail.id) : 0;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
   // A trusted sender domain bypasses blocking automatically; otherwise the per-message
   // "Show images" override applies.
@@ -456,14 +419,12 @@ export function ReaderView({
                 </span>
               )}
               <div className="mt-3 flex w-full items-center gap-3">
-                <button
-                  onClick={openSender}
-                  className="flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white transition active:scale-95"
-                  style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
-                  aria-label="View or add sender as contact"
-                >
-                  {initials(detail.fromName, detail.fromAddress)}
-                </button>
+                <SenderAvatar
+                  name={detail.fromName}
+                  address={detail.fromAddress}
+                  seed={detail.id}
+                  className="size-10 text-sm"
+                />
                 <button
                   onClick={() => setDetailsOpen((o) => !o)}
                   aria-expanded={detailsOpen}
@@ -486,16 +447,9 @@ export function ReaderView({
               </div>
 
               {detailsOpen && (
-                <dl className="mt-3 space-y-1.5 rounded-lg bg-surface px-3 py-2.5 text-xs">
-                  <HeaderField
-                    label="From"
-                    value={fmtAddr({ name: detail.fromName, address: detail.fromAddress ?? '' })}
-                  />
-                  {detail.to.length > 0 && <HeaderField label="To" value={joinAddrs(detail.to)} />}
-                  {detail.cc.length > 0 && <HeaderField label="Cc" value={joinAddrs(detail.cc)} />}
-                  <HeaderField label="Date" value={fullDate(detail.sentAt ?? detail.receivedAt)} />
-                  {detail.subject && <HeaderField label="Subject" value={detail.subject} />}
-                </dl>
+                <div className="mt-3">
+                  <MessageHeaderDetails detail={detail} />
+                </div>
               )}
             </div>
 
@@ -579,19 +533,6 @@ export function ReaderView({
 
       {addToCalendar && detail && (
         <AddToCalendar messageId={detail.id} onClose={() => setAddToCalendar(false)} />
-      )}
-
-      {addSender && (
-        <ContactEditor
-          card={null}
-          initialEmail={addSender.email}
-          initialName={addSender.name ?? undefined}
-          onClose={() => setAddSender(null)}
-          onSaved={(uid) => {
-            setAddSender(null);
-            if (uid) navigate(`/contacts/${encodeURIComponent(uid)}`);
-          }}
-        />
       )}
     </div>
   );

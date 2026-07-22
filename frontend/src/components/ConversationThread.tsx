@@ -15,7 +15,8 @@ import { useMessageDetail } from '../state/data';
 import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
-import { avatarHue, fullDate, initials, senderName, shortDate } from '../ui/format';
+import { fullDate, senderName, shortDate } from '../ui/format';
+import { joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
 import { AttachmentChip } from './AttachmentChip';
 import { ImageAttachment, isImageAttachment } from './ImageAttachment';
@@ -46,12 +47,16 @@ function ConversationMessage({
   // Body is fetched only while expanded — collapsed cards cost nothing.
   const { detail, loading } = useMessageDetail(expanded ? message.id : undefined);
   const [showImages, setShowImages] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [flagged, setFlagged] = useState(message.flagged);
   const autoMarked = useRef(false);
 
   useEffect(() => setFlagged(message.flagged), [message.flagged]);
-  // Reset the per-message image override when a different message lands in this card.
-  useEffect(() => setShowImages(false), [message.id]);
+  // Reset the per-message overrides when a different message lands in this card.
+  useEffect(() => {
+    setShowImages(false);
+    setDetailsOpen(false);
+  }, [message.id]);
 
   // Auto-mark read once when the card is expanded (honours the dwell pref; -1 = never).
   useEffect(() => {
@@ -89,46 +94,78 @@ function ConversationMessage({
     Boolean(detail?.bodyHtml && hasRemoteImages(detail.bodyHtml));
   const trustDomain = senderDomain(detail?.fromAddress);
 
-  const hue = avatarHue(message.fromAddress ?? message.id);
   const date = message.sentAt ?? message.receivedAt;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
   return (
     <div className={`border-b border-border ${!message.seen ? 'bg-accent-soft/40' : ''}`}>
-      {/* Header row — always the tap target to collapse/expand. */}
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-surface-2"
-      >
-        <span
-          className="flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-          style={{ backgroundColor: `hsl(${hue} 45% 42%)` }}
-        >
-          {initials(message.fromName, message.fromAddress)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            {!message.seen && <span className="size-2 shrink-0 rounded-full bg-unread" />}
-            <span
-              className={`truncate text-[15px] ${message.seen ? 'text-fg' : 'font-semibold text-fg'}`}
-            >
-              {senderName(message.fromName, message.fromAddress)}
-            </span>
-            {flagged && <StarIcon className="size-3.5 shrink-0 text-accent" fill="currentColor" />}
-            {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}
-            <span className="ml-auto shrink-0 text-xs text-faint">{shortDate(date)}</span>
-          </span>
-          {/* Collapsed: snippet preview. Expanded: full date line. */}
-          <span className="mt-0.5 block truncate text-sm text-faint">
-            {expanded ? fullDate(date) : message.snippet || '(no preview)'}
-          </span>
-        </span>
-        <ChevronDownIcon
-          className={`size-4 shrink-0 text-faint transition-transform ${expanded ? 'rotate-180' : ''}`}
+      {/* Header row — the avatar is its own tap target (contact card); the rest
+          collapses/expands the message. */}
+      <div className="flex w-full items-center gap-3 px-4 py-3">
+        <SenderAvatar
+          name={message.fromName}
+          address={message.fromAddress}
+          seed={message.id}
+          className="size-9 text-xs"
         />
-      </button>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              {!message.seen && <span className="size-2 shrink-0 rounded-full bg-unread" />}
+              <span
+                className={`truncate text-[15px] ${message.seen ? 'text-fg' : 'font-semibold text-fg'}`}
+              >
+                {senderName(message.fromName, message.fromAddress)}
+              </span>
+              {flagged && (
+                <StarIcon className="size-3.5 shrink-0 text-accent" fill="currentColor" />
+              )}
+              {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}
+              <span className="ml-auto shrink-0 text-xs text-faint">{shortDate(date)}</span>
+            </span>
+            {/* Collapsed only: snippet preview. Expanded, the recipient/date line below
+                takes over (and doubles as the From/To/Cc disclosure). */}
+            {!expanded && (
+              <span className="mt-0.5 block truncate text-sm text-faint">
+                {message.snippet || '(no preview)'}
+              </span>
+            )}
+          </span>
+          <ChevronDownIcon
+            className={`size-4 shrink-0 text-faint transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </div>
+
+      {/* Expanded: recipients + date, tappable for the full header block — same
+          affordance a standalone message gets in the reader. */}
+      {expanded && (
+        <div className="px-4 pb-3 pl-16">
+          <button
+            onClick={() => setDetailsOpen((o) => !o)}
+            aria-expanded={detailsOpen}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <span className="min-w-0 flex-1 truncate text-xs text-faint">
+              {detail && detail.to.length > 0 ? `to ${joinAddrs(detail.to)} · ` : ''}
+              {fullDate(date)}
+            </span>
+            <ChevronDownIcon
+              className={`size-3.5 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {detailsOpen && detail && (
+            <div className="mt-2">
+              <MessageHeaderDetails detail={detail} />
+            </div>
+          )}
+        </div>
+      )}
 
       {expanded && (
         <div>
