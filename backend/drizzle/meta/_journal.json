@@ -176,6 +176,13 @@
       "when": 1783600000000,
       "tag": "0024_messages_unseen_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784736000000,
+      "tag": "0025_messages_fts_au_guard",
+      "breakpoints": true
     }
   ]
 }

@@ -23,7 +23,7 @@ import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
 import { startCleanupCache } from './cleanup/cache.js';
 import { startListCache } from './http/listCache.js';
-import { backfillSnippets } from './cleanup/snippetBackfill.js';
+import { drainSnippets } from './cleanup/snippetBackfill.js';
 import { backfillSourceBytes } from './cleanup/sourceBytesBackfill.js';
 import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
 
@@ -85,17 +85,11 @@ async function main(): Promise<void> {
     }
   });
 
-  // Self-healing preview fix: rewrite any inbox snippet that still holds raw HTML
-  // markup leaked from a contaminated text/plain part (makeSnippet now strips it). A
-  // no-op once every contaminated snippet has been cleaned. Deferred off the listen
-  // path so a large backlog can't gate the HTTP server coming up.
-  setImmediate(() => {
-    try {
-      backfillSnippets();
-    } catch (err) {
-      log.error('snippet backfill failed (non-fatal):', err);
-    }
-  });
+  // Self-healing preview fix: rewrite any inbox snippet an older makeSnippet left dirty
+  // (leaked HTML markup, `&zwnj;` spacer soup, Word conditional-comment settings, a bare
+  // tracking URL). Drains in budgeted passes so it never holds SQLite's single write lock
+  // against IMAP sync, and is a no-op once every snippet is clean.
+  setImmediate(() => drainSnippets());
 
   // Clear abandoned composer uploads left from previous runs — but keep any still referenced
   // by a queued send (a scheduled "send later" can outlive the staging cutoff).

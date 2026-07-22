@@ -133,7 +133,17 @@ const INVISIBLE_CHARS_RE =
 /** Very light HTML→text for snippet/fallback use (not a full sanitizer). */
 function htmlToText(html: string): string {
   const untagged = html
-    .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+    // Comments first — Word/Outlook mail wraps its settings blocks in downlevel-hidden
+    // conditional comments (`<!--[if gte mso 9]><xml><w:WordDocument>…`). Stripping only
+    // the tags leaves their *text* behind, which surfaced as "Clean Clean DocumentEmail
+    // false 21 … X-NONE MicrosoftInternetExplorer4" in front of the real preheader.
+    // Downlevel-*revealed* comments (`<!--[if !mso]><!-->real content<!--<![endif]-->`)
+    // survive: each marker is its own comment, so the content between them is kept.
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    // Non-prose blocks: scripts, stylesheets, the document head (meta/title/link) and
+    // any bare Office `<xml>` island that wasn't inside a conditional comment.
+    // (`\b` so `<header>` isn't mistaken for `<head>`.)
+    .replace(/<\s*(script|style|head|xml)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ');
   // Full entity decode: newsletters lean on entities well beyond the basic four
   // (&zwnj; preheader spacers, &Auml;/&oslash; for non-ASCII prose), which would
@@ -165,6 +175,18 @@ function stripLinkArtifacts(s: string): string {
 }
 
 /**
+ * Drop bare URLs from a preview. Marketing `text/plain` alternatives are largely a
+ * link dump — a 300-char encrypted tracking URL sits between the preheader spacers
+ * and the first real words ("…qs=eyJkZWtJZCI6… Se nettversjonen"), so an unfiltered
+ * preview is one long opaque token. Never returns empty: a body that is *only* a
+ * link keeps the link rather than losing its preview entirely.
+ */
+function stripBareUrls(s: string): string {
+  const stripped = s.replace(/[ \t]*(?:https?:\/\/|www\.)\S+/gi, '').trim();
+  return stripped || s;
+}
+
+/**
  * Drop a leading copy of the subject from a body preview. Newsletters routinely
  * repeat the subject as the first visible line of the body (e.g. Self-Host Weekly),
  * which otherwise makes the inbox show the subject twice instead of the preheader.
@@ -191,21 +213,29 @@ export function makeSnippet(
   const plain = text?.trim();
   // Prefer the plaintext part, but if it's contaminated with HTML markup run it
   // through the same tag-stripper as the HTML body so the snippet stays readable.
-  const source = plain
-    ? containsHtmlTag(plain)
-      ? htmlToText(plain)
-      : plain
-    : html
-      ? htmlToText(html)
-      : '';
+  // A clean-looking `text/plain` part still gets an entity decode: senders derive the
+  // plaintext alternative from their HTML and leave the `&zwnj;` preheader spacers in
+  // as literal text, which filled the whole preview with "&zwnj; &zwnj; &zwnj;…".
+  // Decoded, they become zero-width joiners that INVISIBLE_CHARS_RE drops below.
+  const fromPlain = plain ? (containsHtmlTag(plain) ? htmlToText(plain) : decodeHTML(plain)) : '';
+  // Fall through to the HTML part when the plaintext yields nothing after cleaning —
+  // a few senders (e.g. an old EA mailing) comment out their entire text/plain part,
+  // so it looks non-empty but reduces to whitespace once the comment is dropped.
+  const source = fromPlain.trim() || (html ? htmlToText(html) : '');
   if (!source) return null;
-  const collapsed = stripLinkArtifacts(source)
+  const collapsed = stripBareUrls(stripLinkArtifacts(source))
     .replace(INVISIBLE_CHARS_RE, '')
     .replace(/\s+/g, ' ')
     .trim();
   const deduped = stripLeadingSubject(collapsed, subject);
   if (!deduped) return null;
-  return deduped.length > max ? `${deduped.slice(0, max).trimEnd()}…` : deduped;
+  if (deduped.length <= max) return deduped;
+  // Cut on a code-point boundary. `slice` counts UTF-16 units, so a max landing inside
+  // an emoji's surrogate pair leaves a lone high surrogate — which is not valid UTF-8,
+  // comes back out of SQLite as U+FFFD, and so never equals the recomputed snippet
+  // (the backfill rewrote those rows on every single boot).
+  const cut = deduped.slice(0, max).replace(/[\uD800-\uDBFF]$/, '');
+  return `${cut.trimEnd()}…`;
 }
 
 /** Extract a single header value (handling folded continuation lines) from raw header bytes. */
