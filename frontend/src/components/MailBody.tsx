@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme, type ResolvedTheme } from '../state/theme';
+import { splitQuotedHtml, splitQuotedText } from '../ui/quote';
 
 /** True if the HTML references a remote (http/https) image or CSS background url(). */
 export function hasRemoteImages(html: string): boolean {
@@ -110,6 +111,28 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
 }
 
 /**
+ * The `•••` chip that stands in for collapsed quote history (the affordance
+ * Outlook and Gmail both use). Sits in the app, not the iframe — the message
+ * frame is sandboxed without `allow-scripts`, so nothing inside it can be clickable.
+ */
+function QuoteToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  return (
+    <div className="px-3 py-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-label={expanded ? 'Hide quoted text' : 'Show quoted text'}
+        title={expanded ? 'Hide quoted text' : 'Show quoted text'}
+        className="flex h-5 items-center rounded bg-surface px-2 leading-none text-muted ring-1 ring-border active:opacity-70"
+      >
+        <span className="-mt-1 text-base tracking-widest">···</span>
+      </button>
+    </div>
+  );
+}
+
+/**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
  * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
@@ -117,7 +140,7 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
  * still permitting inline `data:` images (e.g. embedded CID art). Height is measured
  * from the same-origin srcdoc document and the iframe grows to fit (no inner scrollbars).
  */
-export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
+function MailFrame({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
   const theme = useTheme();
@@ -149,12 +172,22 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
         // `avail`, and so the layout height is measured at the wide (un-reflowed) size.
         body.style.width = `${naturalW}px`;
       }
+      // Collapse the frame before reading the height: `documentElement.scrollHeight`
+      // can only report the frame's own box when the content is SHORTER than it, so
+      // measuring at the current height would pin every short body to whatever the
+      // frame already was (the initial 200px, leaving a dead gap under a one-line reply).
+      iframe.style.height = '0px';
       const naturalH = el.scrollHeight;
       if (scale !== 1) {
         body.style.transformOrigin = 'top left';
         body.style.transform = `scale(${scale})`;
       }
-      setHeight(Math.ceil(naturalH * scale));
+      const next = Math.ceil(naturalH * scale);
+      // Write the height back directly as well as through state: when `next` equals the
+      // current state React skips the re-render, and the collapsed inline style above
+      // would stick.
+      iframe.style.height = `${next}px`;
+      setHeight(next);
     };
     iframe.addEventListener('load', measure);
     window.addEventListener('resize', measure);
@@ -179,10 +212,47 @@ export function MailHtml({ html, allowImages = true }: { html: string; allowImag
   );
 }
 
-export function MailText({ text }: { text: string }) {
+/**
+ * A message body: the reply itself, then the quote history the sender piled under
+ * it, hidden behind a `•••` chip. The two halves get their own iframes rather than
+ * one frame with a toggle inside it, because the frame can't run scripts.
+ */
+export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
+  const { visible, quoted } = useMemo(() => splitQuotedHtml(html), [html]);
+  const [expanded, setExpanded] = useState(false);
+
+  if (!quoted) return <MailFrame html={html} allowImages={allowImages} />;
+  return (
+    <>
+      <MailFrame html={visible} allowImages={allowImages} />
+      <QuoteToggle expanded={expanded} onToggle={() => setExpanded((v) => !v)} />
+      {expanded && <MailFrame html={quoted} allowImages={allowImages} />}
+    </>
+  );
+}
+
+function TextBlock({ text }: { text: string }) {
   return (
     <pre className="mail-html whitespace-pre-wrap font-sans text-[15px] leading-relaxed text-fg">
       {text}
     </pre>
+  );
+}
+
+export function MailText({ text }: { text: string }) {
+  const { visible, quoted } = useMemo(() => splitQuotedText(text), [text]);
+  const [expanded, setExpanded] = useState(false);
+
+  if (!quoted) return <TextBlock text={text} />;
+  return (
+    <>
+      <TextBlock text={visible} />
+      {/* -mx-1 pulls the chip back to the text's left edge (QuoteToggle pads for
+          the iframe's own 12px body padding, which plain text doesn't have). */}
+      <div className="-mx-1">
+        <QuoteToggle expanded={expanded} onToggle={() => setExpanded((v) => !v)} />
+      </div>
+      {expanded && <TextBlock text={quoted} />}
+    </>
   );
 }

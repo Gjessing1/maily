@@ -293,11 +293,17 @@ export const ExpandIcon = (p: IconProps) => (
   </Base>
 );
 
-/** "Open in a new window" — a pane with an arrow leaving it. */
+/**
+ * "Open in a new window" — a window (title bar + traffic-light dots) with an arrow
+ * heading out of it. The old icon was a bare pane with a diagonal crossing its
+ * corner, which read as a generic "external link" and sat lopsided in the toolbar;
+ * the window chrome makes it say *window*, which is what the button actually does.
+ */
 export const NewWindowIcon = (p: IconProps) => (
   <Base {...p}>
-    <path d="M13 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-8" />
-    <path d="M14 3h7v7M21 3l-9 9" />
+    <rect x="3" y="5" width="18" height="15" rx="2.5" />
+    <path d="M3 9.5h18M6.4 7.2h.01M9 7.2h.01" />
+    <path d="M11 16.5 16 11.5M16 11.5h-3.5M16 11.5V15" />
   </Base>
 );
 
