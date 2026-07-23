@@ -11,5 +11,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Sits above setup.ts's asyncUtilTimeout (5s) so a test chaining a couple of slow
+    // findBy* waits on the loaded N150 CI runner can't trip vitest's per-test timeout.
+    testTimeout: 20000,
   },
 });
