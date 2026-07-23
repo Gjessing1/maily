@@ -7,7 +7,7 @@
  * string into the canonical IR and compiles it to FTS5 + SQL (`search/query.ts`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
@@ -61,6 +61,23 @@ const EMPTY_FILTERS: Filters = {
   unread: false,
   flagged: false,
 };
+
+/**
+ * Last search session, kept module-level so opening a result and pressing Back
+ * restores the query, filters, rows and scroll position. The route unmounts on
+ * navigation, so component state alone can't survive it. `entryQ` records the
+ * `?q=` the session started from: arriving with a *different* pre-scope (e.g.
+ * `in:trash` from the Trash view) starts a fresh search instead of restoring.
+ */
+interface SearchSession {
+  entryQ: string;
+  q: string;
+  filters: Filters;
+  showFilters: boolean;
+  results: MessageDto[] | null;
+  scrollTop: number;
+}
+let lastSession: SearchSession | null = null;
 
 /** Quote an operator value when it contains whitespace (`to:"bob jones"`). */
 function opValue(v: string): string {
@@ -147,10 +164,15 @@ export function Search() {
   // Entry points can pre-scope the search via `?q=…` — e.g. the Trash views link
   // here with `in:trash ` so searching covers the (normally hidden) trashed mail.
   const [params] = useSearchParams();
-  const [q, setQ] = useState(() => params.get('q') ?? '');
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [showFilters, setShowFilters] = useState(false);
-  const [results, setResults] = useState<MessageDto[] | null>(null);
+  const entryQ = params.get('q') ?? '';
+  // Resume only when this mount is a back/forward into the same entry point — opening
+  // Search afresh from the inbox should still give an empty box.
+  const popped = useNavigationType() === 'POP';
+  const resumed = popped && lastSession?.entryQ === entryQ ? lastSession : null;
+  const [q, setQ] = useState(() => resumed?.q ?? entryQ);
+  const [filters, setFilters] = useState<Filters>(() => resumed?.filters ?? EMPTY_FILTERS);
+  const [showFilters, setShowFilters] = useState(() => resumed?.showFilters ?? false);
+  const [results, setResults] = useState<MessageDto[] | null>(() => resumed?.results ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -163,8 +185,16 @@ export function Search() {
   // Debounced search over the composed query; backend does FTS5 locally then falls
   // back to IMAP for older mail (ARCHITECTURE §1).
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Rows restored from the previous session are already the answer for that query —
+  // don't re-run it (and flash a spinner) just because the route re-mounted.
+  const skipQuery = useRef(resumed?.results ? buildQuery(resumed.q, resumed.filters) : null);
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
+    if (query && query === skipQuery.current) {
+      skipQuery.current = null;
+      return;
+    }
+    skipQuery.current = null;
     if (!query) {
       setResults(null);
       setBusy(false);
@@ -185,6 +215,34 @@ export function Search() {
       if (timer.current) clearTimeout(timer.current);
     };
   }, [query]);
+
+  // Keep the module-level session in step with the live state, so unmounting
+  // (opening a result) leaves something to come back to.
+  const listRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    // A different result set scrolls back to the top; otherwise keep where we were.
+    const keepScroll = lastSession?.entryQ === entryQ && lastSession.results === results;
+    lastSession = {
+      entryQ,
+      q,
+      filters,
+      showFilters,
+      results,
+      scrollTop: keepScroll ? lastSession!.scrollTop : 0,
+    };
+  }, [entryQ, q, filters, showFilters, results]);
+  // Snapshot the offset as the row is clicked: the list gets scrolled back to 0 just
+  // before the route unmounts, so a scroll listener would only ever record that reset.
+  const onListClickCapture = useCallback(() => {
+    if (lastSession && listRef.current) lastSession.scrollTop = listRef.current.scrollTop;
+  }, []);
+  // Restore the offset once the restored rows have been laid out.
+  useEffect(() => {
+    const top = resumed?.scrollTop ?? 0;
+    if (top && listRef.current) listRef.current.scrollTop = top;
+    // Restore only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Search results are a flat list, not the Dexie-backed inbox — they don't react to a
   // liveQuery. So delete/archive (which stage rows away via the shared undo window) are
@@ -442,7 +500,11 @@ export function Search() {
         )}
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
+      <main
+        ref={listRef}
+        onClickCapture={onListClickCapture}
+        className="flex-1 overflow-y-auto no-scrollbar"
+      >
         {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}
         {results === null ? (
           <div className="px-6 py-16 text-center text-faint">
