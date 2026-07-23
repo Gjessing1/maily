@@ -241,7 +241,6 @@ export function Search() {
     const top = resumed?.scrollTop ?? 0;
     if (top && listRef.current) listRef.current.scrollTop = top;
     // Restore only on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Search results are a flat list, not the Dexie-backed inbox — they don't react to a
