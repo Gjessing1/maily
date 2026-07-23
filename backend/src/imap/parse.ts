@@ -187,6 +187,35 @@ function stripBareUrls(s: string): string {
 }
 
 /**
+ * Drop bracket husks left empty by URL stripping. Markdown-ish plaintext parts
+ * wrap every link as `label (\n https://… \n)`, so removing the URL leaves the
+ * preview reading "Av Nikolai Toverud ( )". Only fires on a genuinely empty pair,
+ * so real parentheticals are untouched.
+ */
+function stripEmptyBrackets(s: string): string {
+  return s.replace(/[ \t]*[([{]\s*[)\]}]/g, '');
+}
+
+/**
+ * Strip ASCII-art rules and preheader padding. Newsletters rule off their sections
+ * with `*********` (ConvertKit), and senders pad the preheader with a repeated
+ * filler token so the client's own preview stops there — Esri's plaintext part
+ * carries 100+ copies of "?? " (their HTML spacer, transcoded), which was the
+ * entire visible snippet. Never returns empty: a body that is only a rule keeps it.
+ */
+function stripPaddingRuns(s: string): string {
+  const stripped = s
+    // A run of one repeated punctuation char: ***** ----- ===== ~~~~~ _____.
+    // Four or more, so ordinary prose ellipses survive.
+    .replace(/([^\p{L}\p{N}\s\p{Extended_Pictographic}])\1{3,}/gu, ' ')
+    // Three or more whitespace-separated punctuation-only tokens: "? ? ?", "?? ?? ??",
+    // "• • •". Prose never strings that many wordless tokens together.
+    .replace(/(?:(?<=^|\s)[^\p{L}\p{N}\s\p{Extended_Pictographic}]{1,3}(?=\s|$)\s*){3,}/gu, ' ')
+    .trim();
+  return stripped || s;
+}
+
+/**
  * Drop a leading copy of the subject from a body preview. Newsletters routinely
  * repeat the subject as the first visible line of the body (e.g. Self-Host Weekly),
  * which otherwise makes the inbox show the subject twice instead of the preheader.
@@ -223,10 +252,13 @@ export function makeSnippet(
   // so it looks non-empty but reduces to whitespace once the comment is dropped.
   const source = fromPlain.trim() || (html ? htmlToText(html) : '');
   if (!source) return null;
-  const collapsed = stripBareUrls(stripLinkArtifacts(source))
+  const cleaned = stripEmptyBrackets(stripBareUrls(stripLinkArtifacts(source)))
     .replace(INVISIBLE_CHARS_RE, '')
     .replace(/\s+/g, ' ')
     .trim();
+  // Padding runs are matched against the whitespace-collapsed text, and leave gaps of
+  // their own behind, so collapse once more afterwards.
+  const collapsed = stripPaddingRuns(cleaned).replace(/\s+/g, ' ').trim();
   const deduped = stripLeadingSubject(collapsed, subject);
   if (!deduped) return null;
   if (deduped.length <= max) return deduped;

@@ -147,6 +147,37 @@ test('makeSnippet falls back to the HTML part when plaintext cleans down to noth
   );
 });
 
+test('makeSnippet drops repeated filler tokens used as preheader padding', () => {
+  // Real-world Esri mailing: its text/plain part pads the preheader with 100+ copies
+  // of "?? " (the HTML spacer, transcoded), which was the entire visible preview.
+  const text = `Start leveraging your new account. ${'?? '.repeat(60)}Welcome to ArcGIS`;
+  assert.equal(makeSnippet(text, null), 'Start leveraging your new account. Welcome to ArcGIS');
+  // Amedia pads with single question marks instead.
+  assert.equal(
+    makeSnippet(`Viktig informasjon ${'? '.repeat(50)}Hei, Lars`, null),
+    'Viktig informasjon Hei, Lars',
+  );
+  // Emoji are content, not padding, even spaced out.
+  assert.equal(makeSnippet('Sale 🔥 💯 🎉 today', null), 'Sale 🔥 💯 🎉 today');
+});
+
+test('makeSnippet drops ASCII-art rules but keeps prose punctuation', () => {
+  assert.equal(
+    makeSnippet('Strava ***************** Maria Skaare ----------- left a comment', null),
+    'Strava Maria Skaare left a comment',
+  );
+  // Short runs stay: an ellipsis is prose, not a rule.
+  assert.equal(makeSnippet('Well... maybe', null), 'Well... maybe');
+});
+
+test('makeSnippet drops bracket husks left behind by URL stripping', () => {
+  // ConvertKit-style plaintext wraps each link as `label (\n url \n)`.
+  const text = 'Av Nikolai Toverud (\nhttps://click.convertkit-mail2.com/abc\n)\n\nKjære venn,';
+  assert.equal(makeSnippet(text, null), 'Av Nikolai Toverud Kjære venn,');
+  // A real parenthetical keeps its brackets.
+  assert.equal(makeSnippet('en h(ærlig) morgenstund', null), 'en h(ærlig) morgenstund');
+});
+
 test('makeSnippet never truncates in the middle of a surrogate pair', () => {
   // A lone high surrogate is not valid UTF-8: SQLite hands it back as U+FFFD, so the
   // stored snippet could never match a recompute and got rewritten on every boot.
