@@ -3,6 +3,7 @@ import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentBlob } from '../api/client';
 import { Spinner } from '../ui/Spinner';
 import { DownloadIcon, ShareIcon } from '../ui/icons';
+import { useOnlineStatus } from '../state/connectivity';
 
 function humanSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -39,6 +40,7 @@ export function ImageAttachment({
   messageId: string;
   attachment: AttachmentDto;
 }) {
+  const online = useOnlineStatus();
   const [url, setUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,7 +49,7 @@ export function ImageAttachment({
   const filename = attachment.filename || 'image';
 
   async function load() {
-    if (busy || objectUrl.current) return;
+    if (!online || busy || objectUrl.current) return;
     setBusy(true);
     setError(false);
     try {
@@ -64,7 +66,7 @@ export function ImageAttachment({
   }
 
   useEffect(() => {
-    if ((attachment.sizeBytes ?? 0) <= AUTOLOAD_MAX_BYTES) void load();
+    if (online && (attachment.sizeBytes ?? 0) <= AUTOLOAD_MAX_BYTES) void load();
     return () => {
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
     };
@@ -114,10 +116,12 @@ export function ImageAttachment({
         <button
           type="button"
           onClick={() => void load()}
-          disabled={busy}
+          disabled={busy || !online}
           className="flex min-h-24 w-full items-center justify-center gap-2 bg-surface-2 px-3 py-6 text-sm text-muted active:bg-surface-3 disabled:opacity-60"
         >
-          {busy ? (
+          {!online ? (
+            <span>Preview unavailable offline</span>
+          ) : busy ? (
             <Spinner className="size-4" />
           ) : error ? (
             <span className="text-danger">Couldn’t load — tap to retry</span>

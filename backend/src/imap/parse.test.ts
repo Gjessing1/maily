@@ -40,6 +40,18 @@ test('makeSnippet falls back to stripped HTML when there is no plaintext part', 
   assert.equal(makeSnippet(null, '<p>Hi <b>there</b></p>'), 'Hi there');
 });
 
+test('makeSnippet ignores a stylesheet mislabeled as text/plain', () => {
+  const text =
+    '#outlook a { padding:0; } body { margin:0;padding:0;-webkit-text-size-adjust:100%; }';
+  assert.equal(
+    makeSnippet(
+      text,
+      '<html><head><style>#outlook a{padding:0}</style></head><body>Hello Dustin</body></html>',
+    ),
+    'Hello Dustin',
+  );
+});
+
 test('makeSnippet returns null when nothing usable is present', () => {
   assert.equal(makeSnippet(null, null), null);
   assert.equal(makeSnippet('   ', ''), null);

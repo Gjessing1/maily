@@ -21,6 +21,34 @@ export function stripScripts(html: string): string {
     .replace(/<script\b[^>]*\/>/gi, '');
 }
 
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+/**
+ * Turn either a full HTML email or a fragment into pieces for our own sandbox
+ * document. Nesting a sender's `<html><body>` inside our `<body>` makes browsers
+ * ignore its body class/style, which breaks template CSS (notably GitHub mail).
+ */
+export function mailDocumentParts(html: string): { head: string; bodyAttrs: string; body: string } {
+  const clean = stripScripts(html);
+  if (typeof DOMParser === 'undefined') return { head: '', bodyAttrs: '', body: clean };
+  const doc = new DOMParser().parseFromString(clean, 'text/html');
+  const styles = Array.from(doc.querySelectorAll('style'));
+  const head = styles.map((style) => style.outerHTML).join('');
+  for (const style of styles) style.remove();
+
+  // Preserve only inert presentation attributes. Event handlers, navigation and
+  // arbitrary metadata never cross onto the sandbox document's body element.
+  const attrs = ['id', 'class', 'style', 'dir', 'lang', 'bgcolor']
+    .map((name) => {
+      const value = doc.body.getAttribute(name);
+      return value == null ? '' : ` ${name}="${escapeAttribute(value)}"`;
+    })
+    .join('');
+  return { head, bodyAttrs: attrs, body: doc.body.innerHTML };
+}
+
 /**
  * The Content-Security-Policy meta value used inside the message iframe. `default-src
  * 'none'` blocks scripts/fetch/frames outright (defence in depth on top of the
@@ -85,6 +113,7 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
   // here per theme rather than via tokens. See pickMailColors: styled emails render
   // light even in dark mode so sender colours (authored for white) stay readable.
   const { scheme, pageBg, pageFg, linkFg } = pickMailColors(html, theme);
+  const mail = mailDocumentParts(html);
 
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${messageCsp(allowImages)}">
@@ -92,7 +121,8 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
 <base target="_blank">
 <style>
   :root { color-scheme: ${scheme}; }
-  html,body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
+  html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; }
+  body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     /* break-word breaks a long URL only when it would actually overflow, and —
        unlike overflow-wrap:anywhere / word-break:break-word — does NOT lower an
@@ -107,7 +137,7 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
      stretches centered-card layouts like GitHub's notifications full-width. An
      inline max-width on the table out-specifies this element rule and wins. */
   table { max-width:100%; }
-</style></head><body>${stripScripts(html)}</body></html>`;
+</style>${mail.head}</head><body${mail.bodyAttrs}>${mail.body}</body></html>`;
 }
 
 /**

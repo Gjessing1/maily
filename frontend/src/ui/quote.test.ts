@@ -102,4 +102,13 @@ describe('splitQuotedHtml', () => {
       '<div class="gmail_quote"><blockquote>Hele meldingen er sitat og ingenting mer her.</blockquote></div>';
     expect(splitQuotedHtml(html).quoted).toBe('');
   });
+
+  test('does not split a styled GitHub-like notification at “wrote:” prose', () => {
+    const html =
+      '<html><head><style>.card{width:544px}</style></head><body>' +
+      '<table class="card"><tr><td><p>garrettstoupe wrote:</p>' +
+      '<p>This is notification content long enough to look like quoted history.</p>' +
+      '</td></tr></table></body></html>';
+    expect(splitQuotedHtml(html)).toEqual({ visible: html, quoted: '' });
+  });
 });

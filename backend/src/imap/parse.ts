@@ -165,6 +165,19 @@ function containsHtmlTag(s: string): boolean {
 }
 
 /**
+ * Some bulk-mail generators label a CSS stylesheet as `text/plain`. The common
+ * Outlook reset starts `#outlook a { padding:0; }`; treating that as prose makes
+ * the inbox preview show CSS instead of the message. A selector followed by a
+ * declaration block right at the start is a high-confidence stylesheet signal.
+ */
+function looksLikeStylesheet(s: string): boolean {
+  const start = s.trimStart().slice(0, 600);
+  return /^(?:#outlook\b[^{]*|\.?[a-z][\w.-]*(?:\s*,\s*\.?[a-z][\w.-]*)*|(?:body|table|img|a)(?:[\s.#:[>+~][^{]*)?)\s*\{[^}]*:[^}]*\}/i.test(
+    start,
+  );
+}
+
+/**
  * Strip mailparser's plaintext link artifacts. When it derives a `text/plain`
  * alternative from HTML, an `<a href="url">label</a>` becomes `label [url]` and a
  * bare/auto link becomes `[url]`. Those bracketed URLs (often long tracking links)
@@ -246,7 +259,13 @@ export function makeSnippet(
   // plaintext alternative from their HTML and leave the `&zwnj;` preheader spacers in
   // as literal text, which filled the whole preview with "&zwnj; &zwnj; &zwnj;…".
   // Decoded, they become zero-width joiners that INVISIBLE_CHARS_RE drops below.
-  const fromPlain = plain ? (containsHtmlTag(plain) ? htmlToText(plain) : decodeHTML(plain)) : '';
+  const fromPlain = plain
+    ? containsHtmlTag(plain)
+      ? htmlToText(plain)
+      : looksLikeStylesheet(plain) && html
+        ? ''
+        : decodeHTML(plain)
+    : '';
   // Fall through to the HTML part when the plaintext yields nothing after cleaning —
   // a few senders (e.g. an old EA mailing) comment out their entire text/plain part,
   // so it looks non-empty but reduces to whitespace once the comment is dropped.

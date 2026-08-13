@@ -81,4 +81,18 @@ describe('groupConversations', () => {
       groupConversations(rows, { enabled: true, unreadAtTop: true }).map((c) => c.latest.id),
     ).toEqual(['old-unread', 'new-read']);
   });
+
+  test('can preserve search relevance order while still choosing each thread latest', () => {
+    const rows = [
+      msg({ id: 'best-old', threadId: 'best', receivedAt: '2026-01-01T00:00:00Z' }),
+      msg({ id: 'best-new', threadId: 'best', receivedAt: '2026-01-04T00:00:00Z' }),
+      msg({ id: 'second', threadId: 'second', receivedAt: '2026-02-01T00:00:00Z' }),
+    ];
+    const grouped = groupConversations(rows, {
+      enabled: true,
+      unreadAtTop: false,
+      preserveOrder: true,
+    });
+    expect(grouped.map((c) => c.latest.id)).toEqual(['best-new', 'second']);
+  });
 });

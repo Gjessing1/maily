@@ -145,3 +145,35 @@ export function cleanEditorHtml(html: string): string {
   const stripped = html.replace(/\u200b/g, '');
   return isHtmlEmpty(stripped) ? '' : stripped;
 }
+
+/** Metadata needed to turn an editor preview image into an outgoing CID reference. */
+export interface InlineUpload {
+  uploadId: string;
+  contentId?: string;
+  isInline?: boolean;
+}
+
+/**
+ * Images dropped/pasted into the editor use a data URL for their local preview and
+ * carry `data-maily-upload`. Before saving/sending, replace that temporary source
+ * with the CID of the matching inline MIME upload and remove the private marker.
+ */
+export function editorHtmlForWire(html: string, uploads: InlineUpload[]): string {
+  if (!html || !html.includes('data-maily-upload')) return cleanEditorHtml(html);
+  const byId = new Map(
+    uploads
+      .filter((u) => u.isInline && u.contentId)
+      .map((u) => [u.uploadId, u.contentId as string]),
+  );
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const img of Array.from(
+    doc.body.querySelectorAll<HTMLImageElement>('img[data-maily-upload]'),
+  )) {
+    const uploadId = img.dataset.mailyUpload;
+    const cid = uploadId ? byId.get(uploadId) : undefined;
+    if (cid) img.setAttribute('src', `cid:${cid}`);
+    else img.remove();
+    img.removeAttribute('data-maily-upload');
+  }
+  return cleanEditorHtml(doc.body.innerHTML);
+}

@@ -34,6 +34,7 @@ export function MessageRow({
   selectionMode = false,
   checked = false,
   isWide = false,
+  readOnly = false,
   onEnterSelect,
   onToggleSelect,
   onContextMenu: onContextMenuOpen,
@@ -62,6 +63,8 @@ export function MessageRow({
   checked?: boolean;
   /** Wide (desktop) layout: keep the read/unread toggle alongside the star. */
   isWide?: boolean;
+  /** Offline cached-mail mode: navigation works, mutation/select affordances do not. */
+  readOnly?: boolean;
   /** Long-press (mobile) handler to enter multi-select mode. */
   onEnterSelect?: (id: string) => void;
   /** Toggle this row's selection (also enters selection mode from empty). */
@@ -94,7 +97,7 @@ export function MessageRow({
   // A 'read'/'delete' action only counts when its handler is wired. Swipe is
   // suppressed entirely in selection mode (taps toggle selection instead).
   const canFire = (action: SwipeAction) =>
-    (action === 'read' && !!onToggleRead) || (action === 'delete' && !!onDelete);
+    !readOnly && ((action === 'read' && !!onToggleRead) || (action === 'delete' && !!onDelete));
   const rightLive = !selectionMode && canFire(swipeRight);
   const leftLive = !selectionMode && canFire(swipeLeft);
 
@@ -119,7 +122,7 @@ export function MessageRow({
     startX.current = e.touches[0]!.clientX;
     swiping.current = false;
     // Arm long-press only outside selection mode; movement/lift cancels it.
-    if (onEnterSelect && !selectionMode) {
+    if (onEnterSelect && !selectionMode && !readOnly) {
       cancelLongPress();
       longPress.current = setTimeout(() => {
         longPress.current = null;
@@ -177,7 +180,7 @@ export function MessageRow({
   // Clicking the avatar selects the row (Gmail-style) instead of opening it —
   // entering selection mode from empty. preventDefault stops the Link navigating.
   function onAvatarClick(e: React.MouseEvent) {
-    if (!onToggleSelect) return;
+    if (!onToggleSelect || readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     onToggleSelect(message.id);
@@ -275,7 +278,7 @@ export function MessageRow({
                     star shows; desktop reveals all three on hover (see hoverReveal).
                     Rendered as role="button" spans (not <button>) so they stay valid
                     inside the row's <Link> anchor — the avatar uses the same pattern. */}
-                {!selectionMode && isWide && onToggleRead && (
+                {!readOnly && !selectionMode && isWide && onToggleRead && (
                   <span
                     role="button"
                     tabIndex={0}
@@ -294,7 +297,7 @@ export function MessageRow({
                     )}
                   </span>
                 )}
-                {!selectionMode && isWide && onDelete && (
+                {!readOnly && !selectionMode && isWide && onDelete && (
                   <span
                     role="button"
                     tabIndex={0}
@@ -309,7 +312,7 @@ export function MessageRow({
                     <TrashIcon className="size-5" />
                   </span>
                 )}
-                {!selectionMode && onToggleFlag && (
+                {!readOnly && !selectionMode && onToggleFlag && (
                   <span
                     role="button"
                     tabIndex={0}
@@ -362,7 +365,7 @@ export function MessageRow({
               )}
               {/* Inline flag indicator only where there's no trailing star toggle
                   (e.g. search results); the toggle already shows state otherwise. */}
-              {message.flagged && !onToggleFlag && (
+              {message.flagged && (!onToggleFlag || readOnly) && (
                 <StarIcon className="size-3.5 shrink-0 text-accent" fill="currentColor" />
               )}
               {hasAttachment && <PaperclipIcon className="size-3.5 shrink-0 text-faint" />}

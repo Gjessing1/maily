@@ -36,16 +36,18 @@ function ConversationMessage({
   message,
   defaultExpanded,
   accounts,
+  readOnly,
 }: {
   message: MessageDto;
   defaultExpanded: boolean;
   accounts: AccountDto[];
+  readOnly: boolean;
 }) {
   const navigate = useNavigate();
   const { blockRemoteImages, markReadSeconds, trustedImageDomains } = usePrefs();
   const [expanded, setExpanded] = useState(defaultExpanded);
   // Body is fetched only while expanded — collapsed cards cost nothing.
-  const { detail, loading } = useMessageDetail(expanded ? message.id : undefined);
+  const { detail, loading, error } = useMessageDetail(expanded ? message.id : undefined);
   const [showImages, setShowImages] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [flagged, setFlagged] = useState(message.flagged);
@@ -60,7 +62,7 @@ function ConversationMessage({
 
   // Auto-mark read once when the card is expanded (honours the dwell pref; -1 = never).
   useEffect(() => {
-    if (!expanded || autoMarked.current || message.seen || markReadSeconds < 0) return;
+    if (readOnly || !expanded || autoMarked.current || message.seen || markReadSeconds < 0) return;
     autoMarked.current = true;
     const mark = () => {
       void patchCachedFlags(message.id, { seen: true });
@@ -72,10 +74,11 @@ function ConversationMessage({
     }
     const t = setTimeout(mark, markReadSeconds * 1000);
     return () => clearTimeout(t);
-  }, [expanded, message.id, message.seen, markReadSeconds]);
+  }, [expanded, message.id, message.seen, markReadSeconds, readOnly]);
 
   function toggleStar(e: React.MouseEvent) {
     e.stopPropagation();
+    if (readOnly) return;
     const next = !flagged;
     setFlagged(next);
     void patchCachedFlags(message.id, { flagged: next });
@@ -169,7 +172,13 @@ function ConversationMessage({
 
       {expanded && (
         <div>
-          {loading || !detail ? (
+          {error && !detail ? (
+            <p className="px-4 py-8 text-center text-sm text-muted">
+              {readOnly
+                ? 'This message body was not downloaded for offline reading.'
+                : 'Couldn’t load this message.'}
+            </p>
+          ) : loading || !detail ? (
             <div className="flex justify-center py-8">
               <Spinner />
             </div>
@@ -227,7 +236,8 @@ function ConversationMessage({
                   onClick={() =>
                     navigate('/compose', { state: { ...buildReply(detail), fresh: true } })
                   }
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={readOnly}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Reply"
                 >
                   <ReplyIcon className="text-fg" />
@@ -238,7 +248,8 @@ function ConversationMessage({
                       state: { ...buildReplyAll(detail, accounts), fresh: true },
                     })
                   }
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={readOnly}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Reply all"
                 >
                   <ReplyAllIcon className="text-fg" />
@@ -247,7 +258,8 @@ function ConversationMessage({
                   onClick={() =>
                     navigate('/compose', { state: { ...buildForward(detail), fresh: true } })
                   }
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={readOnly}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Forward"
                 >
                   <ForwardIcon className="text-fg" />
@@ -255,17 +267,20 @@ function ConversationMessage({
                 <div className="flex-1" />
                 <button
                   onClick={() => {
+                    if (readOnly) return;
                     void patchCachedFlags(message.id, { seen: false });
                     api.setFlags(message.id, { seen: false }).catch(() => undefined);
                   }}
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={readOnly}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Mark as unread"
                 >
                   <MailIcon className="text-fg" />
                 </button>
                 <button
                   onClick={toggleStar}
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={readOnly}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label={flagged ? 'Unstar' : 'Star'}
                 >
                   <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
@@ -283,12 +298,14 @@ export function ConversationThread({
   members,
   openId,
   accounts,
+  readOnly = false,
 }: {
   /** Thread members, oldest-first. */
   members: MessageDto[];
   /** The message the user opened — always starts expanded. */
   openId: string | undefined;
   accounts: AccountDto[];
+  readOnly?: boolean;
 }) {
   const { newestMessageFirst } = usePrefs();
   const latestId = members[members.length - 1]?.id;
@@ -306,6 +323,7 @@ export function ConversationThread({
           key={m.id}
           message={m}
           accounts={accounts}
+          readOnly={readOnly}
           // Expand the opened message, the latest, and anything unread (Gmail-style).
           defaultExpanded={m.id === openId || m.id === latestId || !m.seen}
         />

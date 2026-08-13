@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { api, getToken, onUnauthorized, setToken } from '../api/client';
 import { connectSocket, disconnectSocket } from '../api/socket';
+import { hasOfflineAccess, isOnline, useOnlineStatus } from './connectivity';
 
 interface AuthContextValue {
   authed: boolean;
@@ -26,28 +27,43 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
-  const [authed, setAuthed] = useState<boolean>(() => Boolean(getToken()));
-  const [ready, setReady] = useState<boolean>(() => Boolean(getToken()));
+  const online = useOnlineStatus();
+  const [authed, setAuthed] = useState<boolean>(
+    () => Boolean(getToken()) || (!isOnline() && hasOfflineAccess()),
+  );
+  const [ready, setReady] = useState<boolean>(() => Boolean(getToken()) || !isOnline());
 
   // Ask the backend whether in-app login is required. When it's disabled
   // (external SSO fronts the site), treat the session as authed with no token —
   // the backend ignores the missing JWT on every route and the socket handshake.
   useEffect(() => {
     let cancelled = false;
-    void api.authConfig().then(({ authRequired }) => {
-      if (cancelled) return;
-      if (!authRequired) setAuthed(true);
-      setReady(true);
-    });
+    const probe = () => {
+      if (!isOnline()) {
+        setAuthed(Boolean(getToken()) || hasOfflineAccess());
+        setReady(true);
+        return;
+      }
+      void api.authConfig().then(({ authRequired }) => {
+        if (cancelled) return;
+        setAuthed(authRequired ? Boolean(getToken()) : true);
+        setReady(true);
+      });
+    };
+    probe();
+    // An app launched offline skips the probe entirely. Verify the real server
+    // session as soon as connectivity returns without requiring a reload.
+    window.addEventListener('online', probe);
     return () => {
       cancelled = true;
+      window.removeEventListener('online', probe);
     };
   }, []);
 
   useEffect(() => {
-    if (authed) connectSocket();
+    if (authed && online) connectSocket();
     else disconnectSocket();
-  }, [authed]);
+  }, [authed, online]);
 
   useEffect(() => onUnauthorized(() => setAuthed(false)), []);
 

@@ -163,6 +163,11 @@ function findQuoteElement(body: Element): Element | null {
  * first if the attribution starts partway through it.
  */
 function findQuoteText(body: Element, doc: Document): Node | null {
+  // Styled transactional/notification mail often contains prose such as
+  // “garrettstoupe wrote:” inside a table. It is content, not reply history, and
+  // cutting there also destroys the surrounding template layout. Rich templates
+  // must use one of the explicit client quote wrappers above to be collapsed.
+  if (doc.querySelector('style') || body.querySelector('table')) return null;
   const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
   let quotedRun = 0;
   let runStart: Text | null = null;

@@ -7,6 +7,78 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
     />
     <meta name="theme-color" content="#0b0b0f" />
+    <style>
+      /* First-paint app shell. React replaces this as soon as the entry chunk is
+         ready; keeping it inline avoids a blank screen while JS downloads/parses. */
+      .boot-shell {
+        min-height: 100vh;
+        background: #0b0b0f;
+        color: #f4f4f6;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      [data-theme='light'] .boot-shell {
+        background: #fff;
+        color: #18181f;
+      }
+      .boot-head {
+        height: calc(3.5rem + env(safe-area-inset-top));
+        border-bottom: 1px solid #26262f;
+      }
+      [data-theme='light'] .boot-head {
+        border-color: #e3e3ea;
+      }
+      .boot-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin: 0 1rem;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #26262f;
+      }
+      [data-theme='light'] .boot-row {
+        border-color: #e3e3ea;
+      }
+      .boot-avatar,
+      .boot-line {
+        background: #1d1d27;
+        animation: boot-pulse 1.5s ease-in-out infinite;
+      }
+      [data-theme='light'] .boot-avatar,
+      [data-theme='light'] .boot-line {
+        background: #ececf2;
+      }
+      .boot-avatar {
+        width: 2.5rem;
+        height: 2.5rem;
+        flex: none;
+        border-radius: 999px;
+      }
+      .boot-copy {
+        flex: 1;
+      }
+      .boot-line {
+        height: 0.7rem;
+        margin: 0.45rem 0;
+        border-radius: 0.3rem;
+      }
+      .boot-line:first-child {
+        width: 38%;
+      }
+      .boot-line:last-child {
+        width: 78%;
+      }
+      @keyframes boot-pulse {
+        50% {
+          opacity: 0.45;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-avatar,
+        .boot-line {
+          animation: none;
+        }
+      }
+    </style>
     <meta name="mobile-web-app-capable" content="yes" />
     <!--
       `apple-mobile-web-app-capable` is deprecated in Chromium (which logs a
@@ -41,7 +113,39 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-shell" role="status" aria-label="Loading maily" aria-busy="true">
+        <div class="boot-head"></div>
+        <div class="boot-row">
+          <div class="boot-avatar"></div>
+          <div class="boot-copy">
+            <div class="boot-line"></div>
+            <div class="boot-line"></div>
+          </div>
+        </div>
+        <div class="boot-row">
+          <div class="boot-avatar"></div>
+          <div class="boot-copy">
+            <div class="boot-line"></div>
+            <div class="boot-line"></div>
+          </div>
+        </div>
+        <div class="boot-row">
+          <div class="boot-avatar"></div>
+          <div class="boot-copy">
+            <div class="boot-line"></div>
+            <div class="boot-line"></div>
+          </div>
+        </div>
+        <div class="boot-row">
+          <div class="boot-avatar"></div>
+          <div class="boot-copy">
+            <div class="boot-line"></div>
+            <div class="boot-line"></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

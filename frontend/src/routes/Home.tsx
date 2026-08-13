@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
@@ -10,7 +10,6 @@ import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { ReaderView } from './Reader';
 import { isArchivedView } from '../state/archived';
 import { isStarredView } from '../state/starred';
 import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../state/unified';
@@ -18,6 +17,7 @@ import { usePrefs } from '../state/prefs';
 import { avatarHue } from '../ui/format';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { Spinner } from '../ui/Spinner';
+import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 import {
   ArchiveIcon,
   CloseIcon,
@@ -28,6 +28,8 @@ import {
   SearchIcon,
   TrashIcon,
 } from '../ui/icons';
+
+const ReaderView = lazy(() => import('./Reader').then((m) => ({ default: m.ReaderView })));
 
 /** Subtle section header dividing the unread/read groups (Gmail-desktop style). */
 function SectionLabel({ children, divider }: { children: string; divider?: boolean }) {
@@ -45,6 +47,7 @@ function SectionLabel({ children, divider }: { children: string; divider?: boole
 export function Home() {
   const [params, setParams] = useSearchParams();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const online = useOnlineStatus();
 
   const accounts = useAccounts();
   const prefs = usePrefs();
@@ -165,14 +168,16 @@ export function Home() {
   // rows locally now, commits the Trash move server-side after the snackbar elapses).
   const handleDelete = useCallback(
     (id: string) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
       void requestDeleteMany(expandIds(id));
     },
-    [expandIds],
+    [expandIds, online],
   );
 
   // Optimistic toggle-read across the conversation: flip locally, reconcile per message.
   const handleToggleRead = useCallback(
     (id: string, seen: boolean) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
       for (const mid of expandIds(id)) {
         void patchCachedFlags(mid, { seen });
         api.setFlags(mid, { seen }).catch(() => {
@@ -181,26 +186,31 @@ export function Home() {
         });
       }
     },
-    [expandIds],
+    [expandIds, online],
   );
 
   // Star toggle stays per-message (the representative/latest), Gmail-style — flip
   // locally, reconcile on the server (revert + notify on failure).
-  const handleToggleFlag = useCallback((id: string, flagged: boolean) => {
-    void patchCachedFlags(id, { flagged });
-    api.setFlags(id, { flagged }).catch(() => {
-      void patchCachedFlags(id, { flagged: !flagged });
-      showNotice('Couldn’t update — reverted');
-    });
-  }, []);
+  const handleToggleFlag = useCallback(
+    (id: string, flagged: boolean) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+      void patchCachedFlags(id, { flagged });
+      api.setFlags(id, { flagged }).catch(() => {
+        void patchCachedFlags(id, { flagged: !flagged });
+        showNotice('Couldn’t update — reverted');
+      });
+    },
+    [online],
+  );
 
   // Archive the whole conversation (context menu): staged behind one undo window,
   // mirroring delete — drops locally now, moves each copy server-side once it elapses.
   const handleArchive = useCallback(
     (id: string) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
       void requestArchiveMany(expandIds(id));
     },
-    [expandIds],
+    [expandIds, online],
   );
 
   // ── Right-click context menu (desktop) ──────────────────────────────────────
@@ -214,6 +224,9 @@ export function Home() {
 
   // Leaving the folder abandons any selection.
   useEffect(() => setSelectedIds(new Set()), [folderId]);
+  useEffect(() => {
+    if (!online) setSelectedIds(new Set());
+  }, [online]);
 
   const enterSelect = useCallback((id: string) => {
     setSelectedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
@@ -232,6 +245,7 @@ export function Home() {
   // message in its thread so "mark read"/"archive"/"delete" hit whole conversations.
   const bulkMarkRead = useCallback(
     (seen: boolean) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
       for (const id of selectedIds) {
         for (const mid of expandIds(id)) {
           void patchCachedFlags(mid, { seen });
@@ -243,19 +257,21 @@ export function Home() {
       }
       clearSelect();
     },
-    [selectedIds, expandIds, clearSelect],
+    [selectedIds, expandIds, clearSelect, online],
   );
   const bulkArchive = useCallback(() => {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     // Stage the whole selection behind one undo window, mirroring bulk delete.
     void requestArchiveMany([...selectedIds].flatMap(expandIds));
     clearSelect();
-  }, [selectedIds, expandIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect, online]);
   const bulkDelete = useCallback(() => {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     // Stage the whole selection behind one undo window (snapshots + optimistic
     // removal), mirroring swipe-to-delete so a bulk delete is just as recoverable.
     void requestDeleteMany([...selectedIds].flatMap(expandIds));
     clearSelect();
-  }, [selectedIds, expandIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect, online]);
 
   // Purge Trash (local only): shown when viewing a concrete account's trash folder. Reclaims the
   // disk used by everything in it, keeping a no-resync tombstone; the provider's Trash is untouched.
@@ -268,6 +284,7 @@ export function Home() {
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [purging, setPurging] = useState(false);
   const purgeTrash = useCallback(() => {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!folder || purging) return;
     setPurging(true);
     api.cleanup
@@ -280,7 +297,7 @@ export function Home() {
         setPurging(false);
         setConfirmPurge(false);
       });
-  }, [folder, purging]);
+  }, [folder, purging, online]);
 
   // Infinite scroll sentinel.
   const sentinel = useRef<HTMLDivElement>(null);
@@ -354,7 +371,7 @@ export function Home() {
             {isTrashFolder && ((messages?.length ?? 0) > 0 || purging) && (
               <button
                 onClick={() => setConfirmPurge(true)}
-                disabled={purging}
+                disabled={!online || purging}
                 className="rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
                 aria-label="Empty Trash"
               >
@@ -404,6 +421,7 @@ export function Home() {
                     onDelete={handleDelete}
                     onToggleRead={handleToggleRead}
                     onToggleFlag={handleToggleFlag}
+                    readOnly={!online}
                     isWide={isWide}
                     swipeRight={prefs.swipeRight}
                     swipeLeft={prefs.swipeLeft}
@@ -411,9 +429,9 @@ export function Home() {
                     selected={splitMode && !!selectedId && c.ids.includes(selectedId)}
                     selectionMode={selectionMode}
                     checked={selectedIds.has(id)}
-                    onEnterSelect={enterSelect}
-                    onToggleSelect={toggleSelect}
-                    onContextMenu={openMenu}
+                    onEnterSelect={online ? enterSelect : undefined}
+                    onToggleSelect={online ? toggleSelect : undefined}
+                    onContextMenu={online ? openMenu : undefined}
                     showRecipient={showRecipient}
                     accountTag={accountTagFor(c.latest.accountId)}
                     threadCount={c.count}
@@ -450,7 +468,21 @@ export function Home() {
             {listPane}
           </div>
           <div className="min-h-0 min-w-0 flex-1">
-            <ReaderView id={selectedId} onClose={closeReader} embedded />
+            {selectedId ? (
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center">
+                    <Spinner />
+                  </div>
+                }
+              >
+                <ReaderView id={selectedId} onClose={closeReader} embedded />
+              </Suspense>
+            ) : (
+              <div className="flex h-full items-center justify-center px-6 text-center text-sm text-faint">
+                Select a message to read it here.
+              </div>
+            )}
           </div>
         </div>
       ) : (

@@ -39,11 +39,19 @@ import type {
   ServerConfigDto,
   UploadDto,
 } from '@maily/shared';
+import {
+  grantOfflineAccess,
+  hasOfflineAccess,
+  isOnline,
+  OFFLINE_READ_ONLY_MESSAGE,
+  revokeOfflineAccess,
+} from '../state/connectivity';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 const TOKEN_KEY = 'maily.token';
 
 let token: string | null = localStorage.getItem(TOKEN_KEY);
+if (token) grantOfflineAccess();
 const unauthorizedListeners = new Set<() => void>();
 
 // True once the auth-config probe reports that maily's own login is disabled, i.e.
@@ -94,8 +102,13 @@ export function getToken(): string | null {
 
 export function setToken(value: string | null): void {
   token = value;
-  if (value) localStorage.setItem(TOKEN_KEY, value);
-  else localStorage.removeItem(TOKEN_KEY);
+  if (value) {
+    localStorage.setItem(TOKEN_KEY, value);
+    grantOfflineAccess();
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+    revokeOfflineAccess();
+  }
 }
 
 /** Subscribe to forced-logout events (fired when the server rejects the token). */
@@ -121,11 +134,16 @@ export class ApiError extends Error {
  * in-flight guards that coalesce refreshes.
  */
 const REQUEST_TIMEOUT_MS = 25_000;
+const AUTH_CONFIG_TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 750;
 
-function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
@@ -141,6 +159,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   // without turning every list refresh into a user-visible error. Mutations
   // (POST/PATCH/DELETE) never retry: a timed-out send may still have committed.
   const method = (init.method ?? 'GET').toUpperCase();
+  if (!isOnline()) {
+    throw new ApiError(0, method === 'GET' ? 'offline' : OFFLINE_READ_ONLY_MESSAGE);
+  }
   let res: Response;
   try {
     res = await fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers });
@@ -228,11 +249,17 @@ export const api = {
    * (backend MAILY_DISABLE_AUTH), letting the UI skip the login screen.
    */
   async authConfig(): Promise<{ authRequired: boolean }> {
+    // The service worker + IndexedDB cache are enough to start a previously
+    // authenticated browser offline. Do not navigate through the SSO gateway: that
+    // route is deliberately network-only and would replace the cached shell with the
+    // browser's offline error page.
+    if (!isOnline()) return { authRequired: !hasOfflineAccess() };
     try {
-      const res = await fetch(`${API_BASE}/api/auth/config`);
+      const res = await fetchWithTimeout(`${API_BASE}/api/auth/config`, {}, AUTH_CONFIG_TIMEOUT_MS);
       if (res.ok) {
         const cfg = (await res.json()) as { authRequired: boolean };
         setExternalAuthGateway(!cfg.authRequired);
+        if (!cfg.authRequired) grantOfflineAccess();
         return cfg;
       }
       // A 401/403 (or a redirect to a login page) on this PUBLIC endpoint can only
@@ -253,7 +280,7 @@ export const api = {
       // an expired session and bounce back through it — never fall through to maily's
       // disabled login screen. The relogin loop guard keeps a persistently-failing
       // gateway (or a genuine offline) from machine-gunning reloads.
-      if (externalAuthGateway && gatewayRelogin()) {
+      if (isOnline() && externalAuthGateway && gatewayRelogin()) {
         return { authRequired: false }; // navigating away; the value is moot
       }
     }
@@ -265,6 +292,7 @@ export const api = {
 
   /** Exchange the master password for a JWT. Does not auto-attach a token. */
   async login(password: string): Promise<string> {
+    if (!isOnline()) throw new ApiError(0, OFFLINE_READ_ONLY_MESSAGE);
     const res = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -373,6 +401,7 @@ export const api = {
 
   /** Stream a composer attachment to the backend's staging dir; returns a send handle. */
   async uploadAttachment(file: File): Promise<UploadDto> {
+    if (!isOnline()) throw new ApiError(0, OFFLINE_READ_ONLY_MESSAGE);
     const qs = new URLSearchParams({ filename: file.name });
     if (file.type) qs.set('type', file.type);
     const headers = new Headers({ 'Content-Type': 'application/octet-stream' });
@@ -391,10 +420,11 @@ export const api = {
   deleteUpload: (uploadId: string) =>
     request<{ ok: boolean }>(`/api/uploads/${uploadId}`, { method: 'DELETE' }),
 
-  search: (q: string, opts: { accountId?: string; limit?: number } = {}) => {
+  search: (q: string, opts: { accountId?: string; limit?: number; threaded?: boolean } = {}) => {
     const qs = new URLSearchParams({ q });
     if (opts.accountId) qs.set('accountId', opts.accountId);
     if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.threaded) qs.set('threaded', '1');
     return request<MessageDto[]>(`/api/search?${qs}`);
   },
 
@@ -572,6 +602,7 @@ export function attachmentUrl(messageId: string, attId: string): string {
 /** Fetch attachment bytes as a Blob (sets the auth header via fetch). The caller owns
  * it — build an object URL for display, a File for the Web Share API, or a download. */
 export async function fetchAttachmentBlob(messageId: string, attId: string): Promise<Blob> {
+  if (!isOnline()) throw new ApiError(0, 'offline');
   const headers = new Headers();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(attachmentUrl(messageId, attId), { headers });
@@ -589,6 +620,7 @@ export async function fetchAttachmentObjectUrl(messageId: string, attId: string)
  * link). Fetches the export, then triggers a browser download via a temp anchor.
  */
 export async function downloadContactsVcf(addressbook?: string | null): Promise<void> {
+  if (!isOnline()) throw new ApiError(0, 'offline');
   const headers = new Headers();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const qs = addressbook ? `?addressbook=${encodeURIComponent(addressbook)}` : '';

@@ -5,7 +5,7 @@
  * here for the text/plain alternative.
  */
 import { describe, expect, test } from 'vitest';
-import { htmlToPlainText, plainTextToHtml } from './htmlText';
+import { editorHtmlForWire, htmlToPlainText, plainTextToHtml } from './htmlText';
 
 describe('htmlToPlainText', () => {
   test('prefixes blockquote lines with >', () => {
@@ -39,5 +39,21 @@ describe('htmlToPlainText', () => {
 describe('plainTextToHtml', () => {
   test('escapes and breaks lines', () => {
     expect(plainTextToHtml('a < b\nc')).toBe('a &lt; b<br>c');
+  });
+});
+
+describe('editorHtmlForWire', () => {
+  test('turns a dropped-image preview into a CID reference', () => {
+    const html =
+      '<div>Hello</div><img data-maily-upload="u1" src="data:image/png;base64,AAAA" alt="shot.png">';
+    expect(
+      editorHtmlForWire(html, [{ uploadId: 'u1', isInline: true, contentId: 'u1@inline' }]),
+    ).toBe('<div>Hello</div><img src="cid:u1@inline" alt="shot.png">');
+  });
+
+  test('drops an editor image whose staged upload is missing', () => {
+    expect(
+      editorHtmlForWire('<img data-maily-upload="gone" src="data:image/png;base64,AAAA">', []),
+    ).toBe('');
   });
 });

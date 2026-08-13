@@ -41,6 +41,7 @@ import {
 import { fullDate, senderName } from '../ui/format';
 import { closePopout, isPopout, openPopout, usePopoutCapable } from '../ui/popout';
 import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
+import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 
 /**
  * Message reader body. Driven by an explicit `id` + `onClose` so it works both as
@@ -57,6 +58,7 @@ export function ReaderView({
   embedded?: boolean;
 }) {
   const navigate = useNavigate();
+  const online = useOnlineStatus();
   const { detail, loading, error } = useMessageDetail(id);
   const accounts = useAccounts();
   const { blockRemoteImages, conversationView, markReadSeconds, trustedImageDomains } = usePrefs();
@@ -116,7 +118,7 @@ export function ReaderView({
   const detailId = detail?.id;
   const detailSeen = detail?.seen;
   useEffect(() => {
-    if (!detailId || autoMarkedId.current === detailId) return;
+    if (!online || !detailId || autoMarkedId.current === detailId) return;
     autoMarkedId.current = detailId;
     if (detailSeen) return; // already read on open — nothing to auto-mark
     if (markReadSeconds < 0) return; // "never"
@@ -132,7 +134,7 @@ export function ReaderView({
     }
     const timer = setTimeout(mark, markReadSeconds * 1000);
     return () => clearTimeout(timer);
-  }, [detailId, detailSeen, markReadSeconds]);
+  }, [detailId, detailSeen, markReadSeconds, online]);
 
   // A detached window is identified by its title bar, not by an in-app header — name it
   // after the message being read.
@@ -142,6 +144,7 @@ export function ReaderView({
   }, [popout, detail]);
 
   async function toggleSeen() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     const next = !seen;
     setSeen(next);
@@ -154,6 +157,7 @@ export function ReaderView({
   }
 
   async function toggleStar() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     const next = !flagged;
     setFlagged(next);
@@ -167,16 +171,19 @@ export function ReaderView({
   }
 
   function reply() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     navigate('/compose', { state: { ...buildReply(detail), fresh: true } });
   }
 
   function replyAll() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     navigate('/compose', { state: { ...buildReplyAll(detail, accounts ?? []), fresh: true } });
   }
 
   function remove() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     // Stage with an undo window (app-level snackbar persists past this navigation),
     // then leave the reader. The Trash move commits server-side once it elapses.
@@ -186,6 +193,7 @@ export function ReaderView({
   }
 
   function archive() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     // Stage with an undo window (app-level snackbar persists past this navigation),
     // then leave the reader — mirroring delete. The Archive move commits server-side
@@ -195,12 +203,14 @@ export function ReaderView({
   }
 
   function forward() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     navigate('/compose', { state: { ...buildForward(detail), fresh: true } });
   }
 
   /** Reopen a saved draft in the composer; saving/sending supersedes this copy. */
   function editDraft() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     navigate('/compose', {
       state: {
@@ -231,6 +241,7 @@ export function ReaderView({
   // Restore a trashed message: MOVE it back to the Inbox + clear the tombstone (awaited server-side),
   // then leave the reader. The `mail:restored` signal re-pulls it so it reappears in the inbox.
   function restore() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail || restoring) return;
     setRestoring(true);
     api
@@ -245,6 +256,7 @@ export function ReaderView({
   // Delete forever (trash only): EXPUNGEs the provider's copy and purges the local one.
   // Awaited — unrecoverable, so the reader only closes once the server confirms.
   function deleteForever() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail || deletingForever) return;
     setDeletingForever(true);
     api
@@ -324,7 +336,7 @@ export function ReaderView({
           <>
             <button
               onClick={restore}
-              disabled={restoring || deletingForever}
+              disabled={!online || restoring || deletingForever}
               className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-accent active:bg-surface-2 disabled:opacity-50"
             >
               <InboxIcon className="size-4" />
@@ -332,7 +344,7 @@ export function ReaderView({
             </button>
             <button
               onClick={() => setConfirmForever(true)}
-              disabled={restoring || deletingForever}
+              disabled={!online || restoring || deletingForever}
               className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
             >
               <TrashIcon className="size-4" />
@@ -343,35 +355,40 @@ export function ReaderView({
           <>
             <button
               onClick={toggleSeen}
-              className="rounded-full p-2 active:bg-surface-2"
+              disabled={!online}
+              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
               aria-label={seen ? 'Mark as unread' : 'Mark as read'}
             >
               {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
             </button>
             <button
               onClick={toggleStar}
-              className="rounded-full p-2 active:bg-surface-2"
+              disabled={!online}
+              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
               aria-label="Flag"
             >
               <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
             </button>
             <button
               onClick={() => setAddToCalendar(true)}
-              className="rounded-full p-2 active:bg-surface-2"
+              disabled={!online}
+              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
               aria-label="Add to calendar"
             >
               <CalendarIcon className="text-fg" />
             </button>
             <button
               onClick={archive}
-              className="rounded-full p-2 active:bg-surface-2"
+              disabled={!online}
+              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
               aria-label="Archive"
             >
               <ArchiveIcon className="text-fg" />
             </button>
             <button
               onClick={() => setConfirmDelete(true)}
-              className="rounded-full p-2 active:bg-surface-2"
+              disabled={!online}
+              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
               aria-label="Delete"
             >
               <TrashIcon className="text-fg" />
@@ -379,7 +396,8 @@ export function ReaderView({
             {isDraft ? (
               <button
                 onClick={editDraft}
-                className="rounded-full p-2 active:bg-surface-2"
+                disabled={!online}
+                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                 aria-label="Edit draft"
               >
                 <PencilIcon className="text-accent" />
@@ -388,21 +406,24 @@ export function ReaderView({
               <>
                 <button
                   onClick={reply}
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={!online}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Reply"
                 >
                   <ReplyIcon className="text-fg" />
                 </button>
                 <button
                   onClick={replyAll}
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={!online}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Reply all"
                 >
                   <ReplyAllIcon className="text-fg" />
                 </button>
                 <button
                   onClick={forward}
-                  className="rounded-full p-2 active:bg-surface-2"
+                  disabled={!online}
+                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
                   aria-label="Forward"
                 >
                   <ForwardIcon className="text-fg" />
@@ -419,7 +440,11 @@ export function ReaderView({
             <Spinner />
           </div>
         ) : error && !detail ? (
-          <p className="px-4 py-8 text-center text-danger">Couldn’t load this message.</p>
+          <p className="px-4 py-8 text-center text-muted">
+            {online
+              ? 'Couldn’t load this message.'
+              : 'This message body was not downloaded for offline reading.'}
+          </p>
         ) : detail && threaded ? (
           <article>
             <div className="px-4 pb-3 pt-3">
@@ -428,7 +453,12 @@ export function ReaderView({
               </h1>
               <p className="mt-1 text-xs text-faint">{threadMembers.length} messages</p>
             </div>
-            <ConversationThread members={threadMembers} openId={id} accounts={accounts ?? []} />
+            <ConversationThread
+              members={threadMembers}
+              openId={id}
+              accounts={accounts ?? []}
+              readOnly={!online}
+            />
             <div className="h-12" />
           </article>
         ) : detail ? (

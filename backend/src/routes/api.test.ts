@@ -343,3 +343,33 @@ test('GET /api/search and /api/contacts short-circuit to [] on an empty query', 
   assert.equal(contacts.statusCode, 200);
   assert.deepEqual(contacts.json(), []);
 });
+
+test('GET /api/search?threaded=1 expands a matching message to its conversation', async () => {
+  const accountId = seedAccount();
+  const folderId = seedFolder(accountId, 'inbox');
+  const parentMessageId = `<${randomUUID()}@example.com>`;
+  const parent = seedMessage(accountId, folderId, 'inbox', {
+    messageId: parentMessageId,
+    subject: 'Conversation parent',
+    bodyText: 'ordinary parent text',
+    receivedAt: new Date('2025-06-01T00:00:00Z'),
+  });
+  const child = seedMessage(accountId, folderId, 'inbox', {
+    inReplyTo: parentMessageId,
+    subject: 'Re: Conversation parent',
+    bodyText: 'uniquethreadneedle',
+    receivedAt: new Date('2025-06-02T00:00:00Z'),
+  });
+
+  const flat = await get('/api/search?q=uniquethreadneedle');
+  assert.deepEqual(
+    flat.json().map((m: { id: string }) => m.id),
+    [child],
+  );
+
+  const threaded = await get('/api/search?q=uniquethreadneedle&threaded=1');
+  assert.deepEqual(
+    threaded.json().map((m: { id: string }) => m.id),
+    [parent, child],
+  );
+});

@@ -108,6 +108,12 @@ body {
   color: var(--color-accent);
   text-decoration: underline;
 }
+.rich-editor img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.5em 0;
+}
 .rich-editor ul {
   list-style: disc;
   padding-left: 1.4em;

@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import type nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
-import type { SendMessageRequest } from '@maily/shared';
+import type { SendMessageRequest, UploadRef } from '@maily/shared';
 import type { AccountConfig } from '../config/accounts.js';
 import { createLogger } from '../logger.js';
 import { getAttachment } from '../db/queries.js';
@@ -14,6 +14,20 @@ import { ensureAttachmentOnDisk } from '../storage/attachments.js';
 import { openUpload } from '../storage/uploads.js';
 
 const log = createLogger('mail');
+
+/** Map a staged composer upload to nodemailer's MIME attachment shape. */
+export function uploadAttachmentOptions(
+  ref: UploadRef,
+  path: string,
+): NonNullable<nodemailer.SendMailOptions['attachments']>[number] {
+  return {
+    path,
+    filename: ref.filename || undefined,
+    contentType: ref.mimeType ?? undefined,
+    cid: ref.isInline ? ref.contentId : undefined,
+    contentDisposition: ref.isInline ? 'inline' : undefined,
+  };
+}
 
 /**
  * Resolve send-time attachments to nodemailer attachments: existing stored files
@@ -49,11 +63,7 @@ export async function resolveAttachments(
       log.warn(`skipping unknown upload ${ref.uploadId}`);
       continue;
     }
-    out.push({
-      path: staged.path,
-      filename: ref.filename || undefined,
-      contentType: ref.mimeType ?? undefined,
-    });
+    out.push(uploadAttachmentOptions(ref, staged.path));
   }
 
   return out.length ? out : undefined;

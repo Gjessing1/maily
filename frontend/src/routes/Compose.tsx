@@ -7,9 +7,9 @@ import { useAccounts } from '../state/data';
 import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { RecipientInput } from '../components/RecipientInput';
-import { RichTextEditor } from '../components/RichTextEditor';
+import { RichTextEditor, type InlineImage } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
-import { cleanEditorHtml, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
+import { editorHtmlForWire, htmlToPlainText, plainTextToHtml } from '../ui/htmlText';
 import { BackIcon, ClockIcon, NewWindowIcon, PaperclipIcon, SendIcon } from '../ui/icons';
 import {
   claimPopoutName,
@@ -87,6 +87,16 @@ function addrEmail(token: string): string {
 /** Pragmatic address shape check — catches typos, not a full RFC 5322 validation. */
 function isValidEmail(addr: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addrEmail(addr));
+}
+
+/** Local preview URL for an image while the matching upload is staged server-side. */
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
@@ -356,7 +366,10 @@ export function Compose() {
     }
     setSavingDraft(true);
     setError(null);
-    const html = cleanEditorHtml(bodyHtml);
+    const activeUploads = uploads.filter(
+      (u) => !u.isInline || bodyHtml.includes(`data-maily-upload="${u.uploadId}"`),
+    );
+    const html = editorHtmlForWire(bodyHtml, activeUploads);
     const ccList = showCc ? parseAddrs(cc) : [];
     const msg: SaveDraftRequest = {
       to: parseAddrs(to),
@@ -369,8 +382,14 @@ export function Compose() {
       attachments: attachments.length
         ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
         : undefined,
-      uploads: uploads.length
-        ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
+      uploads: activeUploads.length
+        ? activeUploads.map(({ uploadId, filename, mimeType, isInline, contentId }) => ({
+            uploadId,
+            filename,
+            mimeType,
+            isInline,
+            contentId,
+          }))
         : undefined,
       replaceDraftId: sourceDraftId,
     };
@@ -398,6 +417,32 @@ export function Compose() {
         setUploading((n) => n - 1);
       }
     }
+  }
+
+  /**
+   * A dropped/pasted image must become a real related MIME part. The editor keeps a
+   * data-URL preview only while composing; send/save rewrites it to this upload's CID.
+   */
+  async function uploadInlineImages(files: File[]): Promise<InlineImage[]> {
+    const placed: InlineImage[] = [];
+    for (const file of files) {
+      setUploading((n) => n + 1);
+      let uploadId: string | null = null;
+      try {
+        const dto = await api.uploadAttachment(file);
+        uploadId = dto.uploadId;
+        const previewSrc = await readAsDataUrl(file);
+        const contentId = `maily-${dto.uploadId}@inline`;
+        setUploads((prev) => [...prev, { ...dto, isInline: true, contentId }]);
+        placed.push({ uploadId: dto.uploadId, previewSrc, filename: dto.filename });
+      } catch (err) {
+        if (uploadId) void api.deleteUpload(uploadId);
+        setError((err as Error).message || `Couldn't upload ${file.name}.`);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+    return placed;
   }
 
   function removeUpload(uploadId: string) {
@@ -440,7 +485,10 @@ export function Compose() {
     }
     setSending(true);
     setError(null);
-    const html = cleanEditorHtml(bodyHtml);
+    const activeUploads = uploads.filter(
+      (u) => !u.isInline || bodyHtml.includes(`data-maily-upload="${u.uploadId}"`),
+    );
+    const html = editorHtmlForWire(bodyHtml, activeUploads);
     const text = htmlToPlainText(bodyHtml);
     const msg: SendMessageRequest = {
       to: recipients,
@@ -453,8 +501,14 @@ export function Compose() {
       attachments: attachments.length
         ? attachments.map(({ messageId, attachmentId }) => ({ messageId, attachmentId }))
         : undefined,
-      uploads: uploads.length
-        ? uploads.map(({ uploadId, filename, mimeType }) => ({ uploadId, filename, mimeType }))
+      uploads: activeUploads.length
+        ? activeUploads.map(({ uploadId, filename, mimeType, isInline, contentId }) => ({
+            uploadId,
+            filename,
+            mimeType,
+            isInline,
+            contentId,
+          }))
         : undefined,
       replaceDraftId: sourceDraftId,
       sendAt: scheduled ? sendAt : undefined,
@@ -632,7 +686,7 @@ export function Compose() {
           />
         </div>
 
-        {(attachments.length > 0 || uploads.length > 0 || uploading > 0) && (
+        {(attachments.length > 0 || uploads.some((u) => !u.isInline) || uploading > 0) && (
           <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
             {attachments.map((a) => (
               <span
@@ -653,23 +707,25 @@ export function Compose() {
                 </button>
               </span>
             ))}
-            {uploads.map((u) => (
-              <span
-                key={u.uploadId}
-                className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
-              >
-                <PaperclipIcon className="size-3.5 text-faint" />
-                <span className="max-w-[40vw] truncate">{u.filename}</span>
-                <button
-                  type="button"
-                  onClick={() => removeUpload(u.uploadId)}
-                  className="text-faint active:text-fg"
-                  aria-label="Remove attachment"
+            {uploads
+              .filter((u) => !u.isInline)
+              .map((u) => (
+                <span
+                  key={u.uploadId}
+                  className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
                 >
-                  ✕
-                </button>
-              </span>
-            ))}
+                  <PaperclipIcon className="size-3.5 text-faint" />
+                  <span className="max-w-[40vw] truncate">{u.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeUpload(u.uploadId)}
+                    className="text-faint active:text-fg"
+                    aria-label="Remove attachment"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
             {uploading > 0 && (
               <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">
                 <Spinner className="size-3.5" />
@@ -685,6 +741,7 @@ export function Compose() {
           onChange={setBodyHtml}
           placeholder="Write your message…"
           className="min-h-[40vh] px-4 py-3"
+          onInlineImages={uploadInlineImages}
         />
       </main>
 

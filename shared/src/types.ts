@@ -88,6 +88,10 @@ export interface UploadDto {
   filename: string;
   mimeType: string | null;
   sizeBytes: number;
+  /** Composer-only metadata for an image placed inside the editable body. */
+  isInline?: boolean;
+  /** CID used by the outgoing HTML and MIME part when `isInline` is true. */
+  contentId?: string;
 }
 
 /** Reference to a staged upload, attached to an outgoing message by `uploadId`. */
@@ -95,6 +99,10 @@ export interface UploadRef {
   uploadId: string;
   filename: string;
   mimeType?: string | null;
+  /** Attach as a related inline MIME part rather than a regular attachment. */
+  isInline?: boolean;
+  /** Content-ID referenced by an HTML `cid:` image URL. */
+  contentId?: string;
 }
 
 /** Outgoing message composed by the client and sent via the backend (SMTP). */

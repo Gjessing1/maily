@@ -23,6 +23,14 @@ interface Props {
   className?: string;
   /** Change this to force the editor to reseed from `initialHtml`. */
   resetKey?: string | number;
+  /** Upload local images dropped/pasted into the body and return editor previews. */
+  onInlineImages?: (files: File[]) => Promise<InlineImage[]>;
+}
+
+export interface InlineImage {
+  uploadId: string;
+  previewSrc: string;
+  filename: string;
 }
 
 // execCommand is deprecated but remains the only cross-browser primitive for rich
@@ -193,7 +201,14 @@ function applyBlockMarkdown(marker: string, root: HTMLElement): boolean {
   }
 }
 
-export function RichTextEditor({ initialHtml, onChange, placeholder, className, resetKey }: Props) {
+export function RichTextEditor({
+  initialHtml,
+  onChange,
+  placeholder,
+  className,
+  resetKey,
+  onInlineImages,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   // The caret/selection at the moment the link dialog opened. A dialog input steals
   // focus and collapses the editor selection, so we stash the range and restore it
@@ -289,6 +304,64 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
     emit();
   }
 
+  /** Resolve the caret at a drop point (with the current selection as fallback). */
+  function insertionRange(x?: number, y?: number): Range | null {
+    const root = ref.current;
+    if (!root) return null;
+    const doc = document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    let range: Range | null = null;
+    if (x != null && y != null) {
+      const pos = doc.caretPositionFromPoint?.(x, y);
+      if (pos) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      } else {
+        range = doc.caretRangeFromPoint?.(x, y) ?? null;
+      }
+    }
+    if (!range) {
+      const sel = window.getSelection();
+      range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    }
+    return range && root.contains(range.commonAncestorContainer) ? range : null;
+  }
+
+  async function placeImages(files: File[], range: Range | null): Promise<void> {
+    if (!onInlineImages || files.length === 0) return;
+    const images = await onInlineImages(files);
+    if (!images.length || !ref.current) return;
+    ref.current.focus();
+    const sel = window.getSelection();
+    if (range && sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    const markup = images
+      .map(
+        (image) =>
+          `<img src="${escapeHtml(image.previewSrc)}" alt="${escapeHtml(image.filename)}" data-maily-upload="${escapeHtml(image.uploadId)}"><br>`,
+      )
+      .join('');
+    exec('insertHTML', markup);
+    emit();
+  }
+
+  function imageFiles(files: FileList | null): File[] {
+    return Array.from(files ?? []).filter((file) => file.type.startsWith('image/'));
+  }
+
+  function transferHasImage(transfer: DataTransfer): boolean {
+    return (
+      Array.from(transfer.items).some(
+        (item) => item.kind === 'file' && item.type.startsWith('image/'),
+      ) || imageFiles(transfer.files).length > 0
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
@@ -332,6 +405,23 @@ export function RichTextEditor({ initialHtml, onChange, placeholder, className, 
         data-placeholder={placeholder}
         onKeyDown={onKeyDown}
         onInput={onInput}
+        onDragOver={(e) => {
+          // During dragover, browsers often hide DataTransfer.files until the
+          // actual drop; DataTransfer.items still exposes the MIME type.
+          if (onInlineImages && transferHasImage(e.dataTransfer)) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const files = imageFiles(e.dataTransfer.files);
+          if (!onInlineImages || files.length === 0) return;
+          e.preventDefault();
+          void placeImages(files, insertionRange(e.clientX, e.clientY));
+        }}
+        onPaste={(e) => {
+          const files = imageFiles(e.clipboardData.files);
+          if (!onInlineImages || files.length === 0) return;
+          e.preventDefault();
+          void placeImages(files, insertionRange());
+        }}
         className={`rich-editor flex-1 overflow-y-auto bg-transparent text-[15px] leading-relaxed outline-none ${className ?? ''}`}
       />
       {linkDraft && (

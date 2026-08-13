@@ -24,6 +24,7 @@ import {
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
 import { isStarredView, starredAccountId } from './starred';
 import { isUnifiedView, unifiedRole } from './unified';
+import { isOnline } from './connectivity';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
@@ -293,7 +294,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         if (viewRef.current === view) setHasMore(rows.length === PAGE);
       })
       .catch((e: Error) => {
-        if (viewRef.current === view) setError(e.message);
+        if (viewRef.current === view && isOnline()) setError(e.message);
       })
       .finally(() => {
         if (refreshingViewRef.current === view) refreshingViewRef.current = null;
@@ -319,7 +320,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         if (viewRef.current === view) setHasMore(rows.length === PAGE);
       })
       .catch((e: Error) => {
-        if (viewRef.current === view) setError(e.message);
+        if (viewRef.current === view && isOnline()) setError(e.message);
       })
       .finally(() => {
         loadingMoreRef.current = false;

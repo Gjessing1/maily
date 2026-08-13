@@ -177,13 +177,35 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     return dto;
   });
 
-  app.get<{ Querystring: { q?: string; accountId?: string; limit?: string } }>(
-    '/api/search',
-    async (req) => {
-      const q = (req.query.q ?? '').trim();
-      if (!q) return [];
-      const { limit } = pageParams(req.query);
-      return toListDtos(await searchMessages(q, { limit, accountId: req.query.accountId }));
-    },
-  );
+  app.get<{
+    Querystring: { q?: string; accountId?: string; limit?: string; threaded?: string };
+  }>('/api/search', async (req) => {
+    const q = (req.query.q ?? '').trim();
+    if (!q) return [];
+    const { limit } = pageParams(req.query);
+    const hits = await searchMessages(q, { limit, accountId: req.query.accountId });
+    if (req.query.threaded !== '1' && req.query.threaded !== 'true') return toListDtos(hits);
+
+    // Expand each ranked hit to its complete local conversation so the search
+    // row has the same participants/count/state as Inbox. Keep first-hit order
+    // (relevance); subsequent hits from a thread don't duplicate it.
+    const expanded: MessageRow[] = [];
+    const seenThreads = new Set<string>();
+    const seenMessages = new Set<string>();
+    for (const hit of hits) {
+      const threadKey = hit.threadId ? `${hit.accountId}:${hit.threadId}` : `m:${hit.id}`;
+      if (seenThreads.has(threadKey)) continue;
+      seenThreads.add(threadKey);
+      const liveMembers = hit.threadId ? listThread(hit.accountId, hit.threadId) : [hit];
+      // A Trash search intentionally returns tombstoned rows, while listThread's
+      // normal reader contract hides tombstones. Never let expansion erase the hit.
+      const members = liveMembers.length > 0 ? liveMembers : [hit];
+      for (const member of members) {
+        if (seenMessages.has(member.id)) continue;
+        seenMessages.add(member.id);
+        expanded.push(member);
+      }
+    }
+    return toListDtos(expanded);
+  });
 }

@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { onSocketReconnect } from './api/socket';
 import { useAuth } from './state/auth';
 import { useSignals } from './state/signals';
@@ -8,22 +8,77 @@ import { hydratePrefs } from './state/prefs';
 import { prefetchCleanupDashboard } from './state/cleanupDash';
 import { isPopout, onWindowMessage, sweepHandoffs } from './ui/popout';
 import { showNotice, stageSend } from './state/undo';
+import { useOnlineStatus } from './state/connectivity';
 import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
-import { Reader } from './routes/Reader';
-import { Compose } from './routes/Compose';
-import { Search } from './routes/Search';
-import { Settings } from './routes/Settings';
-import { Contacts } from './routes/Contacts';
-import { ContactDetail } from './routes/ContactDetail';
-import { Cleanup } from './routes/Cleanup';
-import { CleanupMessages } from './routes/CleanupMessages';
-import { Outbox } from './routes/Outbox';
+
+// Home is the app shell's primary view and stays eager. Everything else is loaded
+// on demand; Workbox still precaches the emitted chunks, so they remain available
+// to an installed PWA without making first paint parse the whole application.
+const Reader = lazy(() => import('./routes/Reader').then((m) => ({ default: m.Reader })));
+const Compose = lazy(() => import('./routes/Compose').then((m) => ({ default: m.Compose })));
+const Search = lazy(() => import('./routes/Search').then((m) => ({ default: m.Search })));
+const Settings = lazy(() => import('./routes/Settings').then((m) => ({ default: m.Settings })));
+const Contacts = lazy(() => import('./routes/Contacts').then((m) => ({ default: m.Contacts })));
+const ContactDetail = lazy(() =>
+  import('./routes/ContactDetail').then((m) => ({ default: m.ContactDetail })),
+);
+const Cleanup = lazy(() => import('./routes/Cleanup').then((m) => ({ default: m.Cleanup })));
+const CleanupMessages = lazy(() =>
+  import('./routes/CleanupMessages').then((m) => ({ default: m.CleanupMessages })),
+);
+const Outbox = lazy(() => import('./routes/Outbox').then((m) => ({ default: m.Outbox })));
+
+function LoadingShell() {
+  return (
+    <div className="flex h-full flex-col" aria-label="Loading maily">
+      <div className="safe-top h-14 border-b border-border bg-bg" />
+      <div className="flex-1 px-4 py-3">
+        {[0, 1, 2, 3, 4].map((row) => (
+          <div
+            key={row}
+            className="flex animate-pulse items-center gap-3 border-b border-border/60 py-3"
+          >
+            <div className="size-10 shrink-0 rounded-full bg-surface-2" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="h-3 w-2/5 rounded bg-surface-2" />
+              <div className="h-3 w-4/5 rounded bg-surface" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OfflineUnavailable({ signedOut = false }: { signedOut?: boolean }) {
+  return (
+    <div className="safe-top safe-bottom flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <h1 className="text-xl font-semibold">You’re offline</h1>
+      <p className="max-w-sm text-sm text-muted">
+        {signedOut
+          ? 'Connect once to unlock maily before using its cached mail offline.'
+          : 'This section needs the server. Cached folders and downloaded messages are still available.'}
+      </p>
+      {!signedOut && (
+        <Link to="/" className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white">
+          Back to cached mail
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function OnlineOnly({ children }: { children: ReactNode }) {
+  const online = useOnlineStatus();
+  return online ? children : <OfflineUnavailable />;
+}
 
 export function App() {
   const { authed, ready } = useAuth();
+  const online = useOnlineStatus();
 
   // Signal handling must live above the routes so flag/new-mail updates land in
   // the cache regardless of which screen is mounted.
@@ -87,28 +142,86 @@ export function App() {
 
   // Hold the first paint until the auth-config probe resolves so an external-SSO
   // deployment never flashes the login screen before auto-authing.
-  if (!ready) return null;
-  if (!authed) return <Login />;
+  if (!ready) return <LoadingShell />;
+  if (!authed) return online ? <Login /> : <OfflineUnavailable signedOut />;
 
   return (
-    <>
+    <div className="flex h-full flex-col">
       <div className="fixed inset-x-0 top-0 z-50">
         <SyncBar progress={progress} />
       </div>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/m/:id" element={<Reader />} />
-        <Route path="/compose" element={<Compose />} />
-        <Route path="/search" element={<Search />} />
-        <Route path="/cleanup" element={<Cleanup />} />
-        <Route path="/cleanup/messages" element={<CleanupMessages />} />
-        <Route path="/outbox" element={<Outbox />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/contacts" element={<Contacts />} />
-        <Route path="/contacts/:uid" element={<ContactDetail />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      {!online && (
+        <div className="shrink-0 bg-accent-soft px-3 py-1.5 text-center text-xs font-medium text-accent">
+          Offline · cached mail is read-only
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        <Suspense fallback={<LoadingShell />}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/m/:id" element={<Reader />} />
+            <Route
+              path="/compose"
+              element={
+                <OnlineOnly>
+                  <Compose />
+                </OnlineOnly>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <OnlineOnly>
+                  <Search />
+                </OnlineOnly>
+              }
+            />
+            <Route
+              path="/cleanup"
+              element={
+                <OnlineOnly>
+                  <Cleanup />
+                </OnlineOnly>
+              }
+            />
+            <Route
+              path="/cleanup/messages"
+              element={
+                <OnlineOnly>
+                  <CleanupMessages />
+                </OnlineOnly>
+              }
+            />
+            <Route
+              path="/outbox"
+              element={
+                <OnlineOnly>
+                  <Outbox />
+                </OnlineOnly>
+              }
+            />
+            <Route path="/settings" element={<Settings />} />
+            <Route
+              path="/contacts"
+              element={
+                <OnlineOnly>
+                  <Contacts />
+                </OnlineOnly>
+              }
+            />
+            <Route
+              path="/contacts/:uid"
+              element={
+                <OnlineOnly>
+                  <ContactDetail />
+                </OnlineOnly>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </div>
       <UndoSnackbar />
-    </>
+    </div>
   );
 }

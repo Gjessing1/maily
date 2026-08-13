@@ -13,6 +13,7 @@ import {
   declaresOwnTextColor,
   hasRemoteImages,
   messageCsp,
+  mailDocumentParts,
   stripScripts,
 } from './MailBody';
 
@@ -87,6 +88,28 @@ describe('buildMailSrcDoc', () => {
     const doc = buildMailSrcDoc('<p>just words, no styling</p>', true, 'dark');
     expect(doc).toContain('#15151c');
     expect(doc).toContain('color-scheme: dark');
+  });
+
+  test('preserves a full email document body class/style without nesting body tags', () => {
+    const doc = buildMailSrcDoc(
+      '<html><head><style>.github-mail{width:544px}</style></head>' +
+        '<body class="github-mail" style="margin: 0"><p>Build passed</p></body></html>',
+      true,
+      'light',
+    );
+    expect(doc).toContain('<style>.github-mail{width:544px}</style>');
+    expect(doc).toContain('<body class="github-mail" style="margin: 0">');
+    expect(doc.match(/<body/g)).toHaveLength(1);
+  });
+});
+
+describe('mailDocumentParts', () => {
+  test('drops active body attributes and scripts', () => {
+    const parts = mailDocumentParts(
+      '<body class="mail" onclick="evil()"><script>evil()</script><p>Safe</p></body>',
+    );
+    expect(parts.bodyAttrs).toBe(' class="mail"');
+    expect(parts.body).toBe('<p>Safe</p>');
   });
 });
 

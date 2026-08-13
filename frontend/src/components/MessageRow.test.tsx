@@ -124,4 +124,28 @@ describe('MessageRow swipe', () => {
     expect(onToggleRead).not.toHaveBeenCalled();
     expect(onDelete).not.toHaveBeenCalled();
   });
+
+  test('read-only mode keeps navigation but suppresses every mutation affordance', () => {
+    const onToggleRead = vi.fn();
+    const onToggleFlag = vi.fn();
+    const onDelete = vi.fn();
+    renderRow({
+      message: makeMessage(),
+      onToggleRead,
+      onToggleFlag,
+      onDelete,
+      isWide: true,
+      readOnly: true,
+    });
+
+    swipe(swipeSurface(), 110);
+    swipe(swipeSurface(), -110);
+
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/m/msg-1');
+    expect(screen.queryByRole('button', { name: 'Star' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(onToggleRead).not.toHaveBeenCalled();
+    expect(onToggleFlag).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
 });

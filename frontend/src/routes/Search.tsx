@@ -11,14 +11,10 @@ import { useNavigate, useNavigationType, useSearchParams } from 'react-router-do
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
-import {
-  requestArchiveMany,
-  requestDelete,
-  requestDeleteMany,
-  showNotice,
-  useHiddenIds,
-} from '../state/undo';
+import { requestArchiveMany, requestDeleteMany, showNotice, useHiddenIds } from '../state/undo';
 import { usePrefs } from '../state/prefs';
+import { groupConversations } from '../state/threads';
+import { senderName } from '../ui/format';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { MessageRow } from '../components/MessageRow';
 import { Spinner } from '../ui/Spinner';
@@ -203,7 +199,7 @@ export function Search() {
     setBusy(true);
     timer.current = setTimeout(() => {
       api
-        .search(query)
+        .search(query, { threaded: prefs.conversationView })
         .then((rows) => {
           setResults(rows);
           setError(null);
@@ -214,7 +210,7 @@ export function Search() {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [query]);
+  }, [query, prefs.conversationView]);
 
   // Keep the module-level session in step with the live state, so unmounting
   // (opening a result) leaves something to come back to.
@@ -252,6 +248,23 @@ export function Search() {
     [results, hidden],
   );
 
+  // Search uses the same conversation preference and aggregate row state as the
+  // inbox. Preserve backend relevance order while folding matching copies together.
+  const conversations = useMemo(
+    () =>
+      groupConversations(visible ?? [], {
+        enabled: prefs.conversationView,
+        unreadAtTop: false,
+        preserveOrder: true,
+      }),
+    [visible, prefs.conversationView],
+  );
+  const groupIds = useMemo(
+    () => new Map(conversations.map((c) => [c.latest.id, c.ids])),
+    [conversations],
+  );
+  const expandIds = useCallback((id: string) => groupIds.get(id) ?? [id], [groupIds]);
+
   // Patch a single result row in place (read/flag toggles aren't cache-driven here).
   const patchResult = useCallback(
     (id: string, patch: Partial<MessageDto>) =>
@@ -260,18 +273,23 @@ export function Search() {
   );
 
   // ── Swipe / per-row actions (parity with the inbox) ─────────────────────────
-  const handleDelete = useCallback((id: string) => void requestDelete(id), []);
+  const handleDelete = useCallback(
+    (id: string) => void requestDeleteMany(expandIds(id)),
+    [expandIds],
+  );
   const handleToggleRead = useCallback(
     (id: string, seen: boolean) => {
-      patchResult(id, { seen });
-      void patchCachedFlags(id, { seen });
-      api.setFlags(id, { seen }).catch(() => {
-        patchResult(id, { seen: !seen });
-        void patchCachedFlags(id, { seen: !seen });
-        showNotice('Couldn’t update — reverted');
-      });
+      for (const mid of expandIds(id)) {
+        patchResult(mid, { seen });
+        void patchCachedFlags(mid, { seen });
+        api.setFlags(mid, { seen }).catch(() => {
+          patchResult(mid, { seen: !seen });
+          void patchCachedFlags(mid, { seen: !seen });
+          showNotice('Couldn’t update — reverted');
+        });
+      }
     },
-    [patchResult],
+    [expandIds, patchResult],
   );
   const handleToggleFlag = useCallback(
     (id: string, flagged: boolean) => {
@@ -310,27 +328,29 @@ export function Search() {
   const bulkMarkRead = useCallback(
     (seen: boolean) => {
       for (const id of selectedIds) {
-        patchResult(id, { seen });
-        void patchCachedFlags(id, { seen });
-        api.setFlags(id, { seen }).catch(() => {
-          patchResult(id, { seen: !seen });
-          void patchCachedFlags(id, { seen: !seen });
-          showNotice('Couldn’t update — reverted');
-        });
+        for (const mid of expandIds(id)) {
+          patchResult(mid, { seen });
+          void patchCachedFlags(mid, { seen });
+          api.setFlags(mid, { seen }).catch(() => {
+            patchResult(mid, { seen: !seen });
+            void patchCachedFlags(mid, { seen: !seen });
+            showNotice('Couldn’t update — reverted');
+          });
+        }
       }
       clearSelect();
     },
-    [selectedIds, patchResult, clearSelect],
+    [selectedIds, expandIds, patchResult, clearSelect],
   );
   const bulkArchive = useCallback(() => {
     // Staged behind one undo window; the hidden-id filter drops the rows immediately.
-    void requestArchiveMany([...selectedIds]);
+    void requestArchiveMany([...selectedIds].flatMap(expandIds));
     clearSelect();
-  }, [selectedIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect]);
   const bulkDelete = useCallback(() => {
-    void requestDeleteMany([...selectedIds]);
+    void requestDeleteMany([...selectedIds].flatMap(expandIds));
     clearSelect();
-  }, [selectedIds, clearSelect]);
+  }, [selectedIds, expandIds, clearSelect]);
 
   return (
     <div className="flex h-full flex-col">
@@ -520,25 +540,36 @@ export function Search() {
               <code className="text-muted">in:trash</code>
             </p>
           </div>
-        ) : !visible || (visible.length === 0 && !busy) ? (
+        ) : conversations.length === 0 && !busy ? (
           <p className="px-4 py-16 text-center text-faint">No matches.</p>
         ) : (
-          visible.map((m) => (
-            <MessageRow
-              key={m.id}
-              message={m}
-              onDelete={handleDelete}
-              onToggleRead={handleToggleRead}
-              onToggleFlag={handleToggleFlag}
-              isWide={isWide}
-              swipeRight={prefs.swipeRight}
-              swipeLeft={prefs.swipeLeft}
-              selectionMode={selectionMode}
-              checked={selectedIds.has(m.id)}
-              onEnterSelect={enterSelect}
-              onToggleSelect={toggleSelect}
-            />
-          ))
+          conversations.map((c) => {
+            const m = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
+            const displayName =
+              c.count > 1 && c.participants.length > 1
+                ? c.participants.join(', ')
+                : c.count > 1
+                  ? senderName(c.latest.fromName, c.latest.fromAddress)
+                  : undefined;
+            return (
+              <MessageRow
+                key={m.id}
+                message={m}
+                onDelete={handleDelete}
+                onToggleRead={handleToggleRead}
+                onToggleFlag={handleToggleFlag}
+                isWide={isWide}
+                swipeRight={prefs.swipeRight}
+                swipeLeft={prefs.swipeLeft}
+                selectionMode={selectionMode}
+                checked={selectedIds.has(m.id)}
+                onEnterSelect={enterSelect}
+                onToggleSelect={toggleSelect}
+                threadCount={c.count}
+                displayName={displayName}
+              />
+            );
+          })
         )}
       </main>
     </div>

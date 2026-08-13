@@ -3,6 +3,7 @@ import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentObjectUrl } from '../api/client';
 import { Spinner } from '../ui/Spinner';
 import { PaperclipIcon } from '../ui/icons';
+import { useOnlineStatus } from '../state/connectivity';
 
 function humanSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -24,11 +25,12 @@ export function AttachmentChip({
   messageId: string;
   attachment: AttachmentDto;
 }) {
+  const online = useOnlineStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
   async function open() {
-    if (busy) return;
+    if (busy || !online) return;
     setBusy(true);
     setError(false);
     try {
@@ -44,7 +46,8 @@ export function AttachmentChip({
   return (
     <button
       onClick={open}
-      className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-left transition active:bg-surface-2"
+      disabled={!online}
+      className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-left transition active:bg-surface-2 disabled:opacity-60"
     >
       <span className="text-muted">
         {busy ? <Spinner className="size-4" /> : <PaperclipIcon className="size-4" />}
@@ -52,7 +55,11 @@ export function AttachmentChip({
       <span className="min-w-0">
         <span className="block truncate text-sm">{attachment.filename || 'attachment'}</span>
         <span className={`block text-xs ${error ? 'text-danger' : 'text-faint'}`}>
-          {error ? 'Failed — tap to retry' : humanSize(attachment.sizeBytes)}
+          {!online
+            ? 'Unavailable offline'
+            : error
+              ? 'Failed — tap to retry'
+              : humanSize(attachment.sizeBytes)}
         </span>
       </span>
     </button>

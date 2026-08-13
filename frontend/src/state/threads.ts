@@ -5,12 +5,12 @@
  * conversation's messages all live in the inbox); the count reflects only the
  * messages present in the current view, not Sent replies in another folder.
  */
-import type { CachedMessage } from '../db/cache';
+import type { MessageDto } from '@maily/shared';
 import { senderName } from '../ui/format';
 
 export interface Conversation {
   /** Representative (most recent) message — drives the row's link, date and subject. */
-  latest: CachedMessage;
+  latest: MessageDto;
   /** Every message id in the conversation, newest-first. Thread-aware actions fan out over these. */
   ids: string[];
   /** Messages in this conversation present in the current view. */
@@ -35,11 +35,15 @@ const receivedMs = (m: { receivedAt: string | null }): number =>
  * conversations with any unread message floated above the rest (stable).
  */
 export function groupConversations(
-  rows: CachedMessage[],
-  { enabled, unreadAtTop }: { enabled: boolean; unreadAtTop: boolean },
+  rows: MessageDto[],
+  {
+    enabled,
+    unreadAtTop,
+    preserveOrder = false,
+  }: { enabled: boolean; unreadAtTop: boolean; preserveOrder?: boolean },
 ): Conversation[] {
   const order: string[] = [];
-  const groups = new Map<string, CachedMessage[]>();
+  const groups = new Map<string, MessageDto[]>();
   for (const m of rows) {
     // Thread id is the grouping key when conversation view is on and the message has
     // one; otherwise the message stands alone (its own id, namespaced so a thread id
@@ -80,7 +84,9 @@ export function groupConversations(
     };
   });
 
-  conversations.sort((a, b) => receivedMs(b.latest) - receivedMs(a.latest));
+  // Folder rows arrive in date order and are explicitly re-sorted for safety. Search
+  // rows arrive in relevance order, which must survive conversation folding.
+  if (!preserveOrder) conversations.sort((a, b) => receivedMs(b.latest) - receivedMs(a.latest));
   if (unreadAtTop) {
     // Stable partition: unread conversations first, original (date) order preserved
     // within each side. Matches the per-message unread-at-top behaviour at thread level.
