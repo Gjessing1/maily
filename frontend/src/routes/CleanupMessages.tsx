@@ -186,7 +186,10 @@ export function CleanupMessages() {
   // the saved state instead — "Select all" doubles as "discard my review", and merely opening a
   // sender never leaves a "N/N marked" badge behind.
   useEffect(() => {
-    if (!actionable) return;
+    // A restored selection exists before its rows arrive. Do not overwrite its
+    // byte totals from the intentionally empty loading-state array; once loading
+    // completes this effect reruns with the real rows and refreshes the totals.
+    if (!actionable || loading) return;
     if (exec === 'done' || (mode === 'all' && excluded.size === 0 && !q)) {
       deleteDrillState(stateKey);
       return;
@@ -199,7 +202,7 @@ export function CleanupMessages() {
       excludedBytes: messages.reduce((n, m) => (excluded.has(m.id) ? n + m.bytes : n), 0),
       includedBytes: messages.reduce((n, m) => (included.has(m.id) ? n + m.bytes : n), 0),
     });
-  }, [actionable, exec, stateKey, q, mode, excluded, included, messages]);
+  }, [actionable, loading, exec, stateKey, q, mode, excluded, included, messages]);
 
   // Whether the whole-slice express path applies: 'all' mode and no active search filter. Then
   // "select all" really means every match (incl. unloaded pages), trashed via `excludeMessageIds`.
