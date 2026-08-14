@@ -132,6 +132,13 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
     overflow-wrap:break-word; }
   img { max-width:100%; height:auto; }
   a { color:${linkFg}; }
+  /* A long code/log block is local content overflow, not evidence that the whole
+     email is a fixed-width desktop template. Without this, its min-content width
+     makes the fit-to-width measurement shrink the ENTIRE message to tiny text
+     (GitHub notifications commonly put syntax-highlighted Markdown in a <pre>).
+     Wrap only preformatted blocks; fixed-width table newsletters still use the
+     zoom-to-fit path below. */
+  pre { max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }
   /* Contain tables that declare no width of their own, but DON'T override an
      email's explicit (usually narrower) max-width — forcing 100% with !important
      stretches centered-card layouts like GitHub's notifications full-width. An

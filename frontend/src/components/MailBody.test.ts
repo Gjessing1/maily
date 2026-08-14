@@ -101,6 +101,18 @@ describe('buildMailSrcDoc', () => {
     expect(doc).toContain('<body class="github-mail" style="margin: 0">');
     expect(doc.match(/<body/g)).toHaveLength(1);
   });
+
+  test('wraps long preformatted blocks instead of shrinking the whole message', () => {
+    // Reduced from a real GitHub issue notification whose syntax-highlighted
+    // Markdown block contains hundreds of spans and multi-hundred-character lines.
+    const doc = buildMailSrcDoc(
+      `<p>Comment</p><div class="highlight"><pre>${'<span>x</span>'.repeat(300)}</pre></div>`,
+      true,
+      'light',
+    );
+    expect(doc).toContain('pre { max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }');
+    expect(doc).toContain('<div class="highlight"><pre>');
+  });
 });
 
 describe('mailDocumentParts', () => {

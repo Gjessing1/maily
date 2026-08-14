@@ -167,14 +167,23 @@ function containsHtmlTag(s: string): boolean {
 /**
  * Some bulk-mail generators label a CSS stylesheet as `text/plain`. The common
  * Outlook reset starts `#outlook a { padding:0; }`; treating that as prose makes
- * the inbox preview show CSS instead of the message. A selector followed by a
- * declaration block right at the start is a high-confidence stylesheet signal.
+ * the inbox preview show CSS instead of the message. Some generators put a title
+ * before the CSS, so distinctive signatures or several early declaration blocks
+ * are treated as a high-confidence stylesheet signal.
  */
 function looksLikeStylesheet(s: string): boolean {
-  const start = s.trimStart().slice(0, 600);
-  return /^(?:#outlook\b[^{]*|\.?[a-z][\w.-]*(?:\s*,\s*\.?[a-z][\w.-]*)*|(?:body|table|img|a)(?:[\s.#:[>+~][^{]*)?)\s*\{[^}]*:[^}]*\}/i.test(
-    start,
+  const start = s.trimStart().slice(0, 1_500);
+  // A few generators prepend a title before dumping the stylesheet into their
+  // alleged text/plain part (real Dustin examples start "Velkommen til Dustin!"
+  // immediately followed by `#outlook`, while their account-confirmation mail
+  // starts with a title then `@font-face`). Do not require CSS to be byte zero.
+  // Two declaration blocks are a strong generic signal; the Outlook/font-face
+  // signatures are sufficiently distinctive to stand on their own.
+  if (/(?:#outlook\s+a\s*\{|@font-face\s*\{)/i.test(start)) return true;
+  const declarations = start.match(
+    /(?:^|[}\r\n])\s*(?:[.#]?[a-z][\w.-]*(?:\s*,\s*[.#]?[a-z][\w.-]*)*|(?:body|table|td|img|a|p)(?:[\s.#:[>+~][^{]*)?)\s*\{[^}]*:[^}]*\}/gi,
   );
+  return (declarations?.length ?? 0) >= 2;
 }
 
 /**

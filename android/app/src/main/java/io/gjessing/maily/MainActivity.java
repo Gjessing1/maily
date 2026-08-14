@@ -8,6 +8,7 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AlertDialog;
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewFeature;
@@ -39,6 +40,32 @@ public class MainActivity extends BridgeActivity {
         } else if (bridge != null) {
             bridge.getWebView().post(() -> showServerSetup(false));
         }
+        installWebViewBackNavigation();
+    }
+
+    /**
+     * BridgeActivity does not consume Android's system Back action. Without an App
+     * plugin listener or a native callback, Back finishes the activity even when
+     * React Router has pushed an inbox -> message entry into WebView history. Keep
+     * all browser history (including same-document pushState entries) inside the
+     * WebView; only let Android leave Maily when there is genuinely nothing to go
+     * back to.
+     */
+    private void installWebViewBackNavigation() {
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (bridge != null && bridge.getWebView().canGoBack()) {
+                    bridge.getWebView().goBack();
+                    return;
+                }
+                // Temporarily disable this callback so the dispatcher can perform
+                // the normal activity/launcher transition at the root of the app.
+                setEnabled(false);
+                getOnBackPressedDispatcher().onBackPressed();
+                setEnabled(true);
+            }
+        });
     }
 
     /**

@@ -52,6 +52,36 @@ test('makeSnippet ignores a stylesheet mislabeled as text/plain', () => {
   );
 });
 
+test('makeSnippet ignores CSS after a title in a polluted text/plain part', () => {
+  // Reduced from the two real Dustin messages received 2026-08-06. Their
+  // text/plain alternatives contain the HTML document title followed by the
+  // entire stylesheet, so the old start-anchored detector missed both forms.
+  const welcome =
+    'Velkommen til Dustin!#outlook a { padding:0; } ' +
+    'body { margin:0;padding:0;-webkit-text-size-adjust:100%; } ' +
+    'table, td { border-collapse:collapse; } Hei Lars';
+  assert.equal(
+    makeSnippet(
+      welcome,
+      '<html><head><title>Velkommen til Dustin!</title>' +
+        '<style>#outlook a{padding:0}</style></head><body>Hei Lars. Din konto er nå opprettet.</body></html>',
+    ),
+    'Hei Lars. Din konto er nå opprettet.',
+  );
+
+  const confirmation =
+    "Activate Account Email\n@font-face { font-family:'Dustin Sans'; src:url(font.woff2); } " +
+    "* { font-family:'Dustin Sans', Verdana; } E-postbekreftelse";
+  assert.equal(
+    makeSnippet(
+      confirmation,
+      '<html><head><title>Activate Account Email</title><style>@font-face{font-family:Dustin}</style></head>' +
+        '<body>E-postbekreftelse. Bekreft e-postadressen din.</body></html>',
+    ),
+    'E-postbekreftelse. Bekreft e-postadressen din.',
+  );
+});
+
 test('makeSnippet returns null when nothing usable is present', () => {
   assert.equal(makeSnippet(null, null), null);
   assert.equal(makeSnippet('   ', ''), null);
