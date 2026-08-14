@@ -7,9 +7,13 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { MessageStructureObject } from 'imapflow';
 import test from 'node:test';
-import { parseSourceContent } from './source-parse.js';
+import { materializeMimeBody } from './body-resolver.js';
+import { extractStructure } from './parse.js';
+import { deriveBodyFromSource, parseSourceContent } from './source-parse.js';
 
 const CRLF = '\r\n';
 
@@ -64,11 +68,11 @@ test('§3.7.E: parseSourceContent derives content columns from the raw .eml', as
     assert.equal(c.references, '<root@example.com> <parent@example.com>');
     assert.equal(c.sentAt?.toISOString(), '2025-06-03T10:15:00.000Z');
 
-    // bodyText is kept verbatim (mailparser leaves a trailing newline, as on the live
-    // path); the snippet is the whitespace-collapsed preview.
+    // The selected HTML alternative is what the reader renders, while bodyText keeps
+    // the clean fallback. The snippet therefore follows visible HTML text.
     assert.equal(c.bodyText?.trim(), 'Plain body text here.');
     assert.match(c.bodyHtml ?? '', /HTML body here\./);
-    assert.equal(c.snippet, 'Plain body text here.');
+    assert.equal(c.snippet, 'HTML body here.');
     // No text/calendar part in this message → bodyCalendar stays null.
     assert.equal(c.bodyCalendar, null);
   } finally {
@@ -120,4 +124,76 @@ test('§3.7.E: parseSourceContent captures an inline text/calendar part as bodyC
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('Gmail rendering: live, bulk and rebuild agree on adversarial MIME selection', async () => {
+  const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/gmail-rendering.eml');
+  const structure = {
+    type: 'multipart/mixed',
+    childNodes: [
+      {
+        type: 'multipart/alternative',
+        childNodes: [
+          { type: 'text/plain', part: '1.1' },
+          {
+            type: 'multipart/related',
+            parameters: { start: '<root@example.com>' },
+            childNodes: [
+              {
+                type: 'image/png',
+                part: '1.2.1',
+                disposition: 'inline',
+                id: '<logo@example.com>',
+              },
+              {
+                type: 'multipart/alternative',
+                id: '<root@example.com>',
+                childNodes: [
+                  { type: 'text/plain', part: '1.2.2.1' },
+                  { type: 'text/html', part: '1.2.2.2' },
+                  { type: 'text/html', part: '1.2.2.3' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'message/rfc822',
+        part: '2',
+        disposition: 'attachment',
+        dispositionParameters: { filename: 'forwarded.eml' },
+        childNodes: [{ type: 'text/html', part: '2.1' }],
+      },
+    ],
+  } as unknown as MessageStructureObject;
+
+  const selected = extractStructure(structure);
+  assert.deepEqual(selected.displayParts, [{ kind: 'html', partId: '1.2.2.3' }]);
+  assert.equal(selected.textPartId, '1.2.2.1');
+
+  const values = new Map([
+    ['1.2.2.1', 'Nested readable fallback.\r\n'],
+    [
+      '1.2.2.3',
+      '<div style="display:none">Hidden preview trap</div><p>Visible HTML winner.</p><img src="cid:logo@example.com" alt="Brand logo">\r\n',
+    ],
+  ]);
+  const bulk = materializeMimeBody({
+    display: selected.displayParts.map((part) => ({
+      kind: part.kind,
+      value: values.get(part.partId)!,
+    })),
+    plainFallback: values.get(selected.textPartId!)!,
+    calendar: null,
+  });
+  const live = await deriveBodyFromSource(fixture);
+  const rebuild = await parseSourceContent(fixture);
+
+  assert.equal(live.bodyText?.trim(), bulk.bodyText?.trim());
+  assert.equal(live.bodyHtml?.trim(), bulk.bodyHtml?.trim());
+  assert.equal(rebuild.bodyText?.trim(), live.bodyText?.trim());
+  assert.equal(rebuild.bodyHtml?.trim(), live.bodyHtml?.trim());
+  assert.equal(rebuild.snippet, 'Visible HTML winner. Brand logo');
+  assert.doesNotMatch(rebuild.bodyHtml ?? '', /Forwarded body/);
 });

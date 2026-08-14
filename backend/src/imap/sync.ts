@@ -16,6 +16,7 @@ import { type Capabilities, detectCapabilities } from './connection.js';
 import { env } from '../env.js';
 import { canDownloadSource, recordDownloadedBytes } from './budget.js';
 import { deriveBodyFromSource, type DerivedBody } from './source-parse.js';
+import { materializeMimeBody } from './body-resolver.js';
 import { discardSource, sourcePathFor, writeSourceStream } from '../storage/source.js';
 import { updateFolderSyncState } from './folders.js';
 import { extractStructure, flagsFromSet } from './parse.js';
@@ -130,16 +131,22 @@ async function downloadTextPart(
  */
 async function downloadBodyParts(ctx: SyncContext, msg: CapturedMessage): Promise<DerivedBody> {
   const structure = extractStructure(msg.bodyStructure);
-  const bodyText = structure.textPartId
-    ? await downloadTextPart(ctx, msg.uid, structure.textPartId)
-    : null;
-  const bodyHtml = structure.htmlPartId
-    ? await downloadTextPart(ctx, msg.uid, structure.htmlPartId)
-    : null;
-  const bodyCalendar = structure.calendarPartId
-    ? await downloadTextPart(ctx, msg.uid, structure.calendarPartId)
-    : null;
-  return { bodyText, bodyHtml, bodyCalendar };
+  const wanted = new Set(structure.displayParts.map((part) => part.partId));
+  if (structure.textPartId) wanted.add(structure.textPartId);
+  if (structure.calendarPartId) wanted.add(structure.calendarPartId);
+  const values = new Map<string, string>();
+  for (const partId of wanted) {
+    const value = await downloadTextPart(ctx, msg.uid, partId);
+    if (value != null) values.set(partId, value);
+  }
+  return materializeMimeBody({
+    display: structure.displayParts.flatMap((part) => {
+      const value = values.get(part.partId);
+      return value == null ? [] : [{ kind: part.kind, value }];
+    }),
+    plainFallback: structure.textPartId ? (values.get(structure.textPartId) ?? null) : null,
+    calendar: structure.calendarPartId ? (values.get(structure.calendarPartId) ?? null) : null,
+  });
 }
 
 /** A staged full-source capture: the pre-assigned UUID, its `.eml` path + size, and the body. */

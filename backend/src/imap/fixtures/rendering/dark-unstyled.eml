@@ -1,0 +1,7 @@
+From: Fixture Sender <fixture@example.invalid>
+To: Reader <reader@example.invalid>
+Subject: Dark unstyled fixture
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<!doctype html><html><body><h1>Dark inherited message</h1><p>This message brings no palette, so it should inherit maily's dark reading sheet.</p><a href="https://example.invalid">Readable accent link</a></body></html>

@@ -1,0 +1,7 @@
+From: Fixture Sender <fixture@example.invalid>
+To: Reader <reader@example.invalid>
+Subject: Isolated overflow fixture
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<!doctype html><html><body><h1>Build report</h1><p id="control">Normal prose must remain readable at its natural size.</p><pre>npm ERR! sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</pre><p data-case="url">https://example.invalid/releases/this-is-a-single-very-long-unbroken-url-segment-that-must-wrap-locally-without-zooming-the-message</p><table><tr><td>Label</td><td data-case="cell">ONE_UNBROKEN_TABLE_VALUE_THAT_IS_INTENTIONALLY_MUCH_WIDER_THAN_A_PHONE_VIEWPORT_0123456789</td></tr></table><p>Normal prose after the offenders remains readable too.</p></body></html>

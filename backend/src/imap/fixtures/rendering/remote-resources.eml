@@ -1,0 +1,7 @@
+From: Fixture Sender <fixture@example.invalid>
+To: Reader <reader@example.invalid>
+Subject: Blocked remote resources fixture
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<!doctype html><html><head><link rel="stylesheet" href="https://sender.invalid/remote.css"><style>@font-face{font-family:SenderFont;src:url(https://sender.invalid/sender-font.woff2)} .sender-copy{font-family:SenderFont,sans-serif}</style></head><body><p class="sender-copy">Remote resources are privacy gated.</p><img src="https://sender.invalid/tracking.png" alt="Blocked tracking image"><video src="https://sender.invalid/promo.mp4"></video></body></html>

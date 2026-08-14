@@ -58,7 +58,9 @@ export function mailDocumentParts(html: string): { head: string; bodyAttrs: stri
  */
 export function messageCsp(allowImages: boolean): string {
   const remote = allowImages ? 'data: https: http:' : 'data:';
-  return `default-src 'none'; img-src ${remote}; media-src ${remote}; style-src 'unsafe-inline'; font-src data: https: http:;`;
+  // Sender-controlled remote fonts are never needed to understand a message and
+  // are just as trackable as remote images. Keep only embedded data: fonts.
+  return `default-src 'none'; img-src ${remote}; media-src ${remote}; style-src 'unsafe-inline'; font-src data:;`;
 }
 
 /**
@@ -122,7 +124,7 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
 <style>
   :root { color-scheme: ${scheme}; }
   html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; }
-  body { margin:0; padding:12px; background:${pageBg}; color:${pageFg};
+  body { box-sizing:border-box; margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     /* break-word breaks a long URL only when it would actually overflow, and —
        unlike overflow-wrap:anywhere / word-break:break-word — does NOT lower an
@@ -139,12 +141,70 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
      Wrap only preformatted blocks; fixed-width table newsletters still use the
      zoom-to-fit path below. */
   pre { max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }
+  code, samp, kbd { overflow-wrap:anywhere; }
+  video, audio, iframe, object, embed { max-width:100%; }
   /* Contain tables that declare no width of their own, but DON'T override an
      email's explicit (usually narrower) max-width — forcing 100% with !important
      stretches centered-card layouts like GitHub's notifications full-width. An
      inline max-width on the table out-specifies this element rule and wins. */
   table { max-width:100%; }
 </style>${mail.head}</head><body${mail.bodyAttrs}>${mail.body}</body></html>`;
+}
+
+/**
+ * Contain a single pathological descendant before deciding that an entire email is
+ * a fixed-width desktop template. This mutates only inline layout styles inside the
+ * disposable sandbox document.
+ */
+export function containIsolatedOverflow(doc: Document, availableWidth: number): void {
+  if (availableWidth <= 0) return;
+  const elements = Array.from(doc.body.querySelectorAll<HTMLElement>('*'));
+  for (const element of elements) {
+    if (element.scrollWidth <= availableWidth + 1) continue;
+    const tag = element.tagName.toLowerCase();
+    if (/^(?:img|video|audio|iframe|object|embed)$/.test(tag)) {
+      element.style.maxWidth = '100%';
+      if (tag === 'img' || tag === 'video') element.style.height = 'auto';
+      continue;
+    }
+    if (/^(?:pre|code|samp|kbd)$/.test(tag)) {
+      element.style.maxWidth = '100%';
+      element.style.whiteSpace = tag === 'pre' ? 'pre-wrap' : 'normal';
+      element.style.overflowWrap = 'anywhere';
+      continue;
+    }
+    if (/^(?:td|th)$/.test(tag) || /\S{48,}/u.test(element.textContent ?? '')) {
+      element.style.maxWidth = `${availableWidth}px`;
+      element.style.overflowWrap = 'anywhere';
+      element.style.wordBreak = 'break-word';
+    }
+  }
+}
+
+/** True only for a wide top-level layout, not an arbitrary overflowing descendant. */
+export function hasFixedWidthTemplate(doc: Document, availableWidth: number): boolean {
+  const candidates = Array.from(doc.body.querySelectorAll<HTMLElement>('table,[width],[style]'));
+  return candidates.some((element) => {
+    let depth = 0;
+    for (
+      let parent = element.parentElement;
+      parent && parent !== doc.body;
+      parent = parent.parentElement
+    )
+      depth += 1;
+    if (depth > 2 || element.scrollWidth <= availableWidth + 1) return false;
+    const widthAttribute = Number.parseFloat(element.getAttribute('width') ?? '');
+    const style = element.getAttribute('style') ?? '';
+    const numericWidths = Array.from(
+      style.matchAll(/(?:^|;)\s*(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)px/gi),
+      (match) => Number(match[1]),
+    );
+    return (
+      element.tagName === 'TABLE' ||
+      widthAttribute > availableWidth ||
+      numericWidths.some((width) => width > availableWidth)
+    );
+  });
 }
 
 /**
@@ -172,10 +232,10 @@ function QuoteToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () =
 /**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
- * email's CSS can't leak into the app. A `<meta>` CSP hardens it further and, when
- * `allowImages` is false, blocks remote image/media loads (tracking pixels) while
- * still permitting inline `data:` images (e.g. embedded CID art). Height is measured
- * from the same-origin srcdoc document and the iframe grows to fit (no inner scrollbars).
+ * email's CSS can't leak into the app. A `<meta>` CSP hardens it further, gates remote
+ * image/media loads while still permitting inline `data:` images (e.g. embedded CID
+ * art), and always blocks remote fonts. Height is measured from the same-origin srcdoc
+ * document and the iframe grows to fit (no inner scrollbars).
  */
 function MailFrame({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
   const ref = useRef<HTMLIFrameElement>(null);
@@ -192,6 +252,12 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
     // of the frame, lay the email out at its natural width and scale the whole body
     // down to fit — the "zoom to fit" Gmail/Apple Mail do. Content that already fits
     // is left untouched (scale 1), so centered-card layouts aren't shrunk needlessly.
+    let resizeObserver: ResizeObserver | null = null;
+    let removeImageListeners: (() => void) | null = null;
+    let animationFrame = 0;
+    let lastObservedLayout = '';
+    let disposed = false;
+
     const measure = () => {
       const doc = iframe.contentDocument;
       const body = doc?.body;
@@ -200,14 +266,23 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
       // Reset any prior fit so we can read the email's natural dimensions.
       body.style.transform = '';
       body.style.width = '';
+      body.style.maxWidth = '';
+      body.style.overflowX = '';
       const avail = iframe.clientWidth;
+      containIsolatedOverflow(doc, avail);
       const naturalW = el.scrollWidth;
       let scale = 1;
-      if (avail > 0 && naturalW > avail + 1) {
+      if (avail > 0 && naturalW > avail + 1 && hasFixedWidthTemplate(doc, avail)) {
         scale = avail / naturalW;
         // Pin the body to its natural width so the scaled result lands exactly on
         // `avail`, and so the layout height is measured at the wide (un-reflowed) size.
         body.style.width = `${naturalW}px`;
+      } else if (avail > 0 && naturalW > avail + 1) {
+        // An isolated offender that resisted wrapping must not make all text tiny.
+        // Clamp it to the reading sheet; explicit top-level desktop templates are
+        // the only documents eligible for whole-message zoom above.
+        body.style.maxWidth = `${avail}px`;
+        body.style.overflowX = 'hidden';
       }
       // Collapse the frame before reading the height: `documentElement.scrollHeight`
       // can only report the frame's own box when the content is SHORTER than it, so
@@ -225,15 +300,65 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
       // would stick.
       iframe.style.height = `${next}px`;
       setHeight(next);
+      lastObservedLayout = `${body.scrollWidth}:${body.scrollHeight}:${avail}`;
     };
-    iframe.addEventListener('load', measure);
-    window.addEventListener('resize', measure);
-    // Re-measure shortly after load for late image reflow.
-    const t = setTimeout(measure, 600);
+
+    const scheduleMeasure = (force = false) => {
+      const body = iframe.contentDocument?.body;
+      if (!body || disposed) return;
+      const signature = `${body.scrollWidth}:${body.scrollHeight}:${iframe.clientWidth}`;
+      if (!force && signature === lastObservedLayout) return;
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = 0;
+        measure();
+      });
+    };
+
+    const installLayoutObservers = () => {
+      resizeObserver?.disconnect();
+      removeImageListeners?.();
+      const doc = iframe.contentDocument;
+      const body = doc?.body;
+      if (!doc || !body) return;
+      measure();
+
+      const Observer = window.ResizeObserver;
+      if (Observer) {
+        const observer = new Observer(() => scheduleMeasure());
+        observer.observe(body);
+        resizeObserver = observer;
+      }
+
+      const images = Array.from(doc.images);
+      const onImageSettled = () => scheduleMeasure();
+      for (const image of images) {
+        image.addEventListener('load', onImageSettled);
+        image.addEventListener('error', onImageSettled);
+      }
+      removeImageListeners = () => {
+        for (const image of images) {
+          image.removeEventListener('load', onImageSettled);
+          image.removeEventListener('error', onImageSettled);
+        }
+      };
+
+      // Embedded/data fonts can still alter metrics after load. Remote sender fonts
+      // are blocked by CSP, so this promise never creates a network side channel.
+      void doc.fonts?.ready.then(() => scheduleMeasure());
+    };
+
+    iframe.addEventListener('load', installLayoutObservers);
+    const onWindowResize = () => scheduleMeasure(true);
+    window.addEventListener('resize', onWindowResize);
+    if (iframe.contentDocument?.readyState === 'complete') installLayoutObservers();
     return () => {
-      iframe.removeEventListener('load', measure);
-      window.removeEventListener('resize', measure);
-      clearTimeout(t);
+      disposed = true;
+      iframe.removeEventListener('load', installLayoutObservers);
+      window.removeEventListener('resize', onWindowResize);
+      resizeObserver?.disconnect();
+      removeImageListeners?.();
+      if (animationFrame) cancelAnimationFrame(animationFrame);
     };
   }, [srcDoc]);
 

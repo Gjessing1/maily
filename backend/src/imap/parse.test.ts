@@ -8,12 +8,12 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { makeSnippet } from './parse.js';
+import { htmlToVisibleText, makeSnippet } from './parse.js';
 
-test('makeSnippet uses the plaintext part as-is when it is clean prose', () => {
+test('makeSnippet follows the selected HTML representation instead of its plaintext alternative', () => {
   assert.equal(
     makeSnippet('Hello there, your order shipped.', '<p>ignored html</p>'),
-    'Hello there, your order shipped.',
+    'ignored html',
   );
 });
 
@@ -24,15 +24,38 @@ test('makeSnippet does not mistake prose punctuation for markup', () => {
   );
 });
 
-test('makeSnippet strips a stray <html> tag leaking into a text/plain part', () => {
+test('makeSnippet strips a stray <html> tag when plaintext is the displayed representation', () => {
   // Real-world Eloqua breakage: the plaintext alternative starts with an HTML tag
   // before the readable preheader. The snippet must show the prose, not the tag.
   const dirtyText =
     '<html xml:lang="en" xmlns="http://www.w3.org/1999/xhtml" lang="en"> ' +
     'Ditt medlemskap utløper i dag | Vi vil høre om din opplevelse';
   assert.equal(
-    makeSnippet(dirtyText, '<p>html body</p>'),
+    makeSnippet(dirtyText, null),
     'Ditt medlemskap utløper i dag | Vi vil høre om din opplevelse',
+  );
+});
+
+test('visible HTML extraction excludes hidden preheaders and keeps layout/alt text', () => {
+  const html = `
+    <style>.css-preheader { display: none !important }</style>
+    <div class="css-preheader">CSS secret preview</div>
+    <div hidden>attribute secret</div>
+    <div style="visibility:hidden">inline secret</div>
+    <div style="max-height:0; overflow:hidden">zero-height secret</div>
+    <p>Hello<br>reader <img src="cid:logo" alt="Acme logo"></p>
+    <p>Second block</p>`;
+  assert.equal(htmlToVisibleText(html), 'Hello\nreader Acme logo\nSecond block');
+  assert.equal(makeSnippet('plain fallback', html), 'Hello reader Acme logo Second block');
+});
+
+test('makeSnippet falls back to plaintext when selected HTML has no visible text', () => {
+  assert.equal(
+    makeSnippet(
+      'Readable fallback',
+      '<div hidden>hidden</div><img width="0" height="0" alt="tracker">',
+    ),
+    'Readable fallback',
   );
 });
 

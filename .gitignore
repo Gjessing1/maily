@@ -9,6 +9,7 @@ node_modules/
 
 # --- Build output ---
 dist/
+dev-dist/
 build/
 *.tsbuildinfo
 # Built PWA copied here by backend/Dockerfile for production serving.
@@ -32,3 +33,5 @@ npm-debug.log*
 .DS_Store
 coverage/
 .vite/
+test-results/
+playwright-report/

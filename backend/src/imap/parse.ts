@@ -7,7 +7,9 @@
  * later (ARCHITECTURE §4 / KEY GOTCHA: no bulk eager attachment fetch during sync).
  */
 import { decodeHTML } from 'entities';
+import * as cheerio from 'cheerio';
 import type { MessageStructureObject } from 'imapflow';
+import { resolveMimeBody, type MimeBodyNode } from './body-resolver.js';
 import type { MessageFlags, ParsedAttachment } from './types.js';
 
 export interface ExtractedStructure {
@@ -21,6 +23,8 @@ export interface ExtractedStructure {
    * here; a `.ics` *attachment* is classified as an attachment and fetched lazily.
    */
   calendarPartId: string | null;
+  /** MIME-selected display parts, preserving independent multipart/mixed branches. */
+  displayParts: Array<{ kind: 'plain' | 'html'; partId: string }>;
   attachments: ParsedAttachment[];
 }
 
@@ -60,9 +64,25 @@ export function extractStructure(root: MessageStructureObject | undefined): Extr
     textPartId: null,
     htmlPartId: null,
     calendarPartId: null,
+    displayParts: [],
     attachments: [],
   };
   if (!root) return out;
+
+  const toBodyNode = (node: MessageStructureObject): MimeBodyNode<string> => ({
+    type: node.type || '',
+    disposition: node.disposition,
+    hasFilename: Boolean(filenameOf(node)),
+    contentId: node.id ?? null,
+    relatedStart: node.parameters?.start ?? null,
+    value: node.childNodes?.length ? undefined : (node.part ?? '1'),
+    children: node.childNodes?.map(toBodyNode),
+  });
+  const selectedBody = resolveMimeBody(toBodyNode(root));
+  out.displayParts = selectedBody.display.map((part) => ({ kind: part.kind, partId: part.value }));
+  out.textPartId = selectedBody.plainFallback;
+  out.htmlPartId = selectedBody.display.find((part) => part.kind === 'html')?.value ?? null;
+  out.calendarPartId = selectedBody.calendar;
 
   const visit = (node: MessageStructureObject): void => {
     if (node.childNodes && node.childNodes.length > 0) {
@@ -97,10 +117,6 @@ export function extractStructure(root: MessageStructureObject | undefined): Extr
       });
       return;
     }
-
-    if (type === 'text/plain' && !out.textPartId) out.textPartId = partId;
-    else if (type === 'text/html' && !out.htmlPartId) out.htmlPartId = partId;
-    else if (type === 'text/calendar' && !out.calendarPartId) out.calendarPartId = partId;
   };
 
   visit(root);
@@ -130,25 +146,78 @@ const INVISIBLE_CHARS_RE =
   // word joiner…invisible plus, BOM/zero-width no-break space
   /[\u034F\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 
-/** Very light HTML→text for snippet/fallback use (not a full sanitizer). */
-function htmlToText(html: string): string {
-  const untagged = html
-    // Comments first — Word/Outlook mail wraps its settings blocks in downlevel-hidden
-    // conditional comments (`<!--[if gte mso 9]><xml><w:WordDocument>…`). Stripping only
-    // the tags leaves their *text* behind, which surfaced as "Clean Clean DocumentEmail
-    // false 21 … X-NONE MicrosoftInternetExplorer4" in front of the real preheader.
-    // Downlevel-*revealed* comments (`<!--[if !mso]><!-->real content<!--<![endif]-->`)
-    // survive: each marker is its own comment, so the content between them is kept.
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    // Non-prose blocks: scripts, stylesheets, the document head (meta/title/link) and
-    // any bare Office `<xml>` island that wasn't inside a conditional comment.
-    // (`\b` so `<header>` isn't mistaken for `<head>`.)
-    .replace(/<\s*(script|style|head|xml)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ');
-  // Full entity decode: newsletters lean on entities well beyond the basic four
-  // (&zwnj; preheader spacers, &Auml;/&oslash; for non-ASCII prose), which would
-  // otherwise surface verbatim in the inbox preview.
-  return decodeHTML(untagged).replace(/\s+/g, ' ').trim();
+const BLOCK_TAGS =
+  'address,article,aside,blockquote,div,dl,dt,dd,fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hr,li,main,nav,ol,p,section,table,tbody,td,tfoot,th,thead,tr,ul';
+
+/**
+ * Deterministic, no-network visible-text extraction for the representation the
+ * reader displays. It handles the hiding techniques used by email preheaders and
+ * preserves useful block/line boundaries plus image alternative text.
+ */
+export function htmlToVisibleText(html: string): string {
+  const withoutHiddenComments = html.replace(/<!--[\s\S]*?-->/g, ' ');
+  const $ = cheerio.load(withoutHiddenComments);
+
+  // Apply simple author stylesheet rules whose declaration makes the whole matched
+  // node invisible. This covers the common `.preheader { display:none }` pattern;
+  // complex/media-query selectors that Cheerio cannot evaluate are ignored safely.
+  $('style').each((_index, style) => {
+    const css = $(style)
+      .text()
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const declarations = rule[2] ?? '';
+      if (
+        !/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|mso-hide\s*:\s*all)\b/i.test(
+          declarations,
+        )
+      )
+        continue;
+      for (const selector of (rule[1] ?? '').split(',')) {
+        try {
+          $(selector.trim()).remove();
+        } catch {
+          // Unsupported selector: deterministic best effort, never fail ingestion.
+        }
+      }
+    }
+  });
+
+  $('script,style,head,xml,template,noscript,[hidden],[aria-hidden="true" i]').remove();
+  $('*').each((_index, element) => {
+    const el = $(element);
+    const style = el.attr('style') ?? '';
+    const hiddenByStyle =
+      /(?:^|;)\s*display\s*:\s*none\b/i.test(style) ||
+      /(?:^|;)\s*visibility\s*:\s*(?:hidden|collapse)\b/i.test(style) ||
+      /(?:^|;)\s*mso-hide\s*:\s*all\b/i.test(style) ||
+      /(?:^|;)\s*opacity\s*:\s*0(?:\.0+)?\s*(?:;|$)/i.test(style) ||
+      (/(?:^|;)\s*(?:max-)?height\s*:\s*0(?:px)?\b/i.test(style) &&
+        /(?:^|;)\s*overflow\s*:\s*hidden\b/i.test(style));
+    const width = el.attr('width');
+    const height = el.attr('height');
+    const zeroSized =
+      width != null &&
+      height != null &&
+      /^(?:0|0px)$/.test(width.trim()) &&
+      /^(?:0|0px)$/.test(height.trim()) &&
+      el.is('img,iframe,object,embed');
+    if (hiddenByStyle || zeroSized) el.remove();
+  });
+
+  $('img').each((_index, image) => {
+    const alt = $(image).attr('alt')?.trim();
+    $(image).replaceWith(alt ? ` ${alt} ` : ' ');
+  });
+  $('br').replaceWith('\n');
+  $(BLOCK_TAGS).each((_index, element) => {
+    $(element).prepend('\n').append('\n');
+  });
+  return $.root()
+    .text()
+    .replace(/[\t\f\v ]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim();
 }
 
 /**
@@ -262,23 +331,22 @@ export function makeSnippet(
   max = 200,
 ): string | null {
   const plain = text?.trim();
-  // Prefer the plaintext part, but if it's contaminated with HTML markup run it
-  // through the same tag-stripper as the HTML body so the snippet stays readable.
+  // The inbox preview must describe what the reader displays. A selected HTML body
+  // therefore wins over its plaintext alternative; plaintext is only the fallback
+  // when HTML has no usable visible text.
   // A clean-looking `text/plain` part still gets an entity decode: senders derive the
   // plaintext alternative from their HTML and leave the `&zwnj;` preheader spacers in
   // as literal text, which filled the whole preview with "&zwnj; &zwnj; &zwnj;…".
   // Decoded, they become zero-width joiners that INVISIBLE_CHARS_RE drops below.
   const fromPlain = plain
     ? containsHtmlTag(plain)
-      ? htmlToText(plain)
+      ? htmlToVisibleText(plain)
       : looksLikeStylesheet(plain) && html
         ? ''
         : decodeHTML(plain)
     : '';
-  // Fall through to the HTML part when the plaintext yields nothing after cleaning —
-  // a few senders (e.g. an old EA mailing) comment out their entire text/plain part,
-  // so it looks non-empty but reduces to whitespace once the comment is dropped.
-  const source = fromPlain.trim() || (html ? htmlToText(html) : '');
+  const fromHtml = html ? htmlToVisibleText(html) : '';
+  const source = fromHtml.trim() || fromPlain.trim();
   if (!source) return null;
   const cleaned = stripEmptyBrackets(stripBareUrls(stripLinkArtifacts(source)))
     .replace(INVISIBLE_CHARS_RE, '')

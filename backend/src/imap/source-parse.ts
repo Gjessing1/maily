@@ -8,14 +8,22 @@
  * walk (`extractStructure`) so `part_ordinal` stays identical across the live and
  * bulk paths; only the text bodies are sourced from the `.eml` here.
  *
- * `simpleParser` does buffer the whole message, but this only runs for low-volume
- * new mail (live) or one message at a time (rebuild) — never the bulk sweep, which
- * stays body-only. The streaming, never-buffer extractor is reserved for the
- * on-demand attachment resolver (E4).
+ * Body selection and decoding use mailsplit's streaming tree walk, so only selected
+ * body leaves are buffered. Rebuild additionally uses `simpleParser` for RFC header
+ * metadata one message at a time; bulk sync remains body-part-only.
  */
 import { createReadStream } from 'node:fs';
+import { Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { Joiner, Splitter, Streamer, type MimeNode } from '@zone-eu/mailsplit';
 import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser';
 import type { EmailAddress } from '@maily/shared';
+import {
+  materializeMimeBody,
+  resolveMimeBody,
+  type MimeBodyNode,
+  type ResolvedMimeBody,
+} from './body-resolver.js';
 import { makeSnippet } from './parse.js';
 
 export interface DerivedBody {
@@ -25,33 +33,133 @@ export interface DerivedBody {
   bodyCalendar: string | null;
 }
 
-/** Parse a saved `.eml` with the body-only options shared by the live + rebuild paths. */
+/** Parse RFC header/address metadata for rebuild without synthesising an HTML body. */
 function parseEml(path: string): Promise<ParsedMail> {
   return simpleParser(createReadStream(path), { skipImageLinks: true, skipTextToHtml: true });
 }
 
-/**
- * mailparser surfaces a text/calendar part as an attachment carrying its raw bytes
- * (no filename for the inline invite form). Pull the first one back out as text.
- */
-function calendarOf(parsed: ParsedMail): string | null {
-  const part = parsed.attachments.find(
-    (a) => (a.contentType || '').toLowerCase() === 'text/calendar',
-  );
-  const text = part?.content?.toString('utf-8').trim();
-  return text ? text : null;
+function devNull(): Writable {
+  return new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
 }
 
-/** text/plain + text/html + text/calendar bodies from a parsed `.eml` (null when blank). */
-function bodiesOf(parsed: ParsedMail): DerivedBody {
-  const bodyText = parsed.text && parsed.text.trim() ? parsed.text : null;
-  const bodyHtml = typeof parsed.html === 'string' && parsed.html.trim() ? parsed.html : null;
-  return { bodyText, bodyHtml, bodyCalendar: calendarOf(parsed) };
+interface SourceLeaf {
+  ordinal: number;
+  charset: string | null;
+}
+
+function relatedStartOf(node: MimeNode): string | null {
+  const contentType = node.headers ? node.headers.getFirst('content-type') : '';
+  const match = /(?:^|;)\s*start\s*=\s*(?:"<([^">]+)>"|<([^>]+)>|"([^"]+)"|([^;\s]+))/i.exec(
+    contentType,
+  );
+  return match?.slice(1).find(Boolean) ?? null;
+}
+
+/** Build a lightweight MIME tree without buffering any body bytes. */
+async function sourceBodyTree(path: string): Promise<MimeBodyNode<SourceLeaf> | undefined> {
+  const byNode = new Map<MimeNode, MimeBodyNode<SourceLeaf>>();
+  let root: MimeBodyNode<SourceLeaf> | undefined;
+  let leafOrdinal = 0;
+  const splitter = new Splitter();
+  splitter.on('data', (chunk) => {
+    if (chunk.type !== 'node') return;
+    const node = chunk as unknown as MimeNode;
+    const isLeaf = !node.multipart && !node.rfc822;
+    const projected: MimeBodyNode<SourceLeaf> = {
+      type: node.contentType || '',
+      disposition: node.disposition || '',
+      hasFilename: Boolean(node.filename),
+      contentId: node.headers ? node.headers.getFirst('content-id').replace(/^<|>$/g, '') : null,
+      relatedStart: relatedStartOf(node),
+      value: isLeaf
+        ? { ordinal: leafOrdinal++, charset: node.charset ? String(node.charset) : null }
+        : undefined,
+      children: [],
+    };
+    byNode.set(node, projected);
+    if (node.parentNode) byNode.get(node.parentNode)?.children?.push(projected);
+    else root = projected;
+  });
+  await pipeline(createReadStream(path), splitter, new Joiner(), devNull());
+  return root;
+}
+
+function decodeText(bytes: Buffer, charset: string | null): string {
+  try {
+    return new TextDecoder(charset || 'utf-8').decode(bytes);
+  } catch {
+    return bytes.toString('utf-8');
+  }
+}
+
+/** Stream-decode only the leaves selected by the shared MIME-tree resolver. */
+async function readSourceSelection(
+  path: string,
+  selection: ResolvedMimeBody<SourceLeaf>,
+): Promise<ResolvedMimeBody<string>> {
+  const wanted = new Map<number, SourceLeaf>();
+  for (const part of selection.display) wanted.set(part.value.ordinal, part.value);
+  if (selection.plainFallback) wanted.set(selection.plainFallback.ordinal, selection.plainFallback);
+  if (selection.calendar) wanted.set(selection.calendar.ordinal, selection.calendar);
+
+  const decoded = new Map<number, string>();
+  const reads: Promise<void>[] = [];
+  let leafOrdinal = 0;
+  let selectedOrdinal = -1;
+  const streamer = new Streamer((node) => {
+    if (node.multipart || node.rfc822) return false;
+    const ordinal = leafOrdinal++;
+    if (!wanted.has(ordinal)) return false;
+    selectedOrdinal = ordinal;
+    return true;
+  });
+  streamer.on('node', (data) => {
+    const ordinal = selectedOrdinal;
+    const chunks: Buffer[] = [];
+    const read = new Promise<void>((resolve, reject) => {
+      data.decoder.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      data.decoder.on('end', () => {
+        decoded.set(
+          ordinal,
+          decodeText(Buffer.concat(chunks), wanted.get(ordinal)?.charset ?? null),
+        );
+        data.done();
+        resolve();
+      });
+      data.decoder.on('error', (error) => {
+        data.done();
+        reject(error);
+      });
+    });
+    reads.push(read);
+  });
+  await pipeline(createReadStream(path), new Splitter(), streamer, new Joiner(), devNull());
+  await Promise.all(reads);
+
+  return {
+    display: selection.display.flatMap((part) => {
+      const value = decoded.get(part.value.ordinal);
+      return value == null ? [] : [{ kind: part.kind, value }];
+    }),
+    plainFallback: selection.plainFallback
+      ? (decoded.get(selection.plainFallback.ordinal) ?? null)
+      : null,
+    calendar: selection.calendar ? (decoded.get(selection.calendar.ordinal) ?? null) : null,
+  };
+}
+
+async function bodiesFromSource(path: string): Promise<DerivedBody> {
+  const selected = resolveMimeBody(await sourceBodyTree(path));
+  return materializeMimeBody(await readSourceSelection(path, selected));
 }
 
 /** Parse a saved `.eml` and return its text/plain, text/html and text/calendar bodies. */
 export async function deriveBodyFromSource(path: string): Promise<DerivedBody> {
-  return bodiesOf(await parseEml(path));
+  return bodiesFromSource(path);
 }
 
 /**
@@ -88,13 +196,12 @@ function mapAddresses(field: AddressObject | AddressObject[] | undefined): Email
 
 /**
  * Reparse a saved `.eml` into the full set of content columns the rebuild rewrites.
- * One `simpleParser` pass, the same parser the live path uses — the `.eml` is the
- * canonical content store, so this is the authoritative derivation of the display
- * fields, bodies and snippet (which together feed FTS via the messages-table trigger).
+ * Mailparser supplies RFC metadata while the shared MIME resolver supplies bodies;
+ * the `.eml` is canonical, so this is the authoritative derivation of the display
+ * fields and snippet (which together feed FTS via the messages-table trigger).
  */
 export async function parseSourceContent(path: string): Promise<RebuiltContent> {
-  const parsed = await parseEml(path);
-  const body = bodiesOf(parsed);
+  const [parsed, body] = await Promise.all([parseEml(path), bodiesFromSource(path)]);
   const from = parsed.from?.value.find((a) => a.address);
   const references = Array.isArray(parsed.references)
     ? parsed.references.join(' ')

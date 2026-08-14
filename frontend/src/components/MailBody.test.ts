@@ -9,9 +9,11 @@
 import { describe, expect, test } from 'vitest';
 import {
   buildMailSrcDoc,
+  containIsolatedOverflow,
   declaresOwnBackground,
   declaresOwnTextColor,
   hasRemoteImages,
+  hasFixedWidthTemplate,
   messageCsp,
   mailDocumentParts,
   stripScripts,
@@ -46,6 +48,12 @@ describe('messageCsp', () => {
 
   test('inline styles stay allowed so sender CSS renders', () => {
     expect(messageCsp(true)).toContain("style-src 'unsafe-inline'");
+  });
+
+  test('remote sender fonts stay blocked even after image consent', () => {
+    expect(messageCsp(true)).toContain('font-src data:;');
+    expect(messageCsp(true)).not.toMatch(/font-src[^;]*https?:/);
+    expect(messageCsp(false)).not.toMatch(/font-src[^;]*https?:/);
   });
 });
 
@@ -113,6 +121,11 @@ describe('buildMailSrcDoc', () => {
     expect(doc).toContain('pre { max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }');
     expect(doc).toContain('<div class="highlight"><pre>');
   });
+
+  test('keeps body padding inside the width used by whole-message scaling', () => {
+    const doc = buildMailSrcDoc('<table width="640"><tr><td>wide</td></tr></table>', true, 'light');
+    expect(doc).toContain('body { box-sizing:border-box;');
+  });
 });
 
 describe('mailDocumentParts', () => {
@@ -122,6 +135,25 @@ describe('mailDocumentParts', () => {
     );
     expect(parts.bodyAttrs).toBe(' class="mail"');
     expect(parts.body).toBe('<p>Safe</p>');
+  });
+});
+
+describe('overflow containment', () => {
+  test('wraps one wide token locally instead of classifying the message as fixed-width', () => {
+    document.body.innerHTML = `<p id="wide">${'x'.repeat(100)}</p>`;
+    const wide = document.querySelector<HTMLElement>('#wide')!;
+    Object.defineProperty(wide, 'scrollWidth', { value: 700 });
+    containIsolatedOverflow(document, 320);
+    expect(wide.style.overflowWrap).toBe('anywhere');
+    expect(hasFixedWidthTemplate(document, 320)).toBe(false);
+  });
+
+  test('recognises an explicitly wide top-level newsletter table', () => {
+    document.body.innerHTML =
+      '<table width="600px"><tbody><tr><td>newsletter</td></tr></tbody></table>';
+    const table = document.querySelector('table')!;
+    Object.defineProperty(table, 'scrollWidth', { value: 600 });
+    expect(hasFixedWidthTemplate(document, 320)).toBe(true);
   });
 });
 

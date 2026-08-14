@@ -1,0 +1,7 @@
+From: Fixture Sender <fixture@example.invalid>
+To: Reader <reader@example.invalid>
+Subject: Dark authored fixture
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<!doctype html><html><body><div style="color:#555555"><h1>Sender-authored palette</h1><p>This grey was authored for white and must stay on a light reading sheet.</p></div></body></html>

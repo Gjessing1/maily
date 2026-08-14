@@ -1,0 +1,53 @@
+From: Fixture <fixture@example.com>
+To: reader@example.com
+Subject: MIME parity fixture
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: multipart/alternative; boundary="OUTER"
+
+--OUTER
+Content-Type: text/plain; charset="utf-8"
+
+Outer fallback that must lose.
+--OUTER
+Content-Type: multipart/related; boundary="REL"; start="<root@example.com>"
+
+--REL
+Content-Type: image/png
+Content-Disposition: inline
+Content-ID: <logo@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--REL
+Content-Type: multipart/alternative; boundary="INNER"
+Content-ID: <root@example.com>
+
+--INNER
+Content-Type: text/plain; charset="utf-8"
+
+Nested readable fallback.
+--INNER
+Content-Type: text/html; charset="utf-8"
+
+<p>Stale HTML alternative.</p>
+--INNER
+Content-Type: text/html; charset="utf-8"
+
+<div style="display:none">Hidden preview trap</div><p>Visible HTML winner.</p><img src="cid:logo@example.com" alt="Brand logo">
+--INNER--
+--REL--
+--OUTER--
+--MIX
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Nested <nested@example.com>
+To: reader@example.com
+Subject: Forwarded
+Content-Type: text/html; charset="utf-8"
+
+<p>Forwarded body must not render.</p>
+--MIX--

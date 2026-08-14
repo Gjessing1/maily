@@ -1,0 +1,7 @@
+From: Fixture Sender <fixture@example.invalid>
+To: Reader <reader@example.invalid>
+Subject: Delayed image fixture
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<!doctype html><html><body><p>Content before the delayed image.</p><img data-delayed-src="/rendering-fixtures/delayed.svg" alt="Delayed fixture art"><p>Content after the delayed image.</p></body></html>

@@ -34,14 +34,11 @@ const defaultRoot = resolve(here, '../../public');
  * **srcdoc inherits this CSP.** An `about:srcdoc` document (the reading-pane iframe)
  * inherits its embedder's policy *on top of* its own `<meta>` CSP, and the browser
  * enforces the intersection. So this policy is also the **ceiling** for email content:
- * remote `img`/`media`/`font` sources must be permitted here or the iframe's permissive
- * `img-src ... https: http:` is overruled and remote images silently fail to load. The
- * actual per-message gating (tracking-pixel blocking via `allowImages`) still happens in
- * the iframe's own stricter `<meta>` CSP — this just stops the shell from clamping it to
- * `'self' data: blob:`. The shell itself never references remote media, so widening these
- * here costs the shell nothing.
+ * remote `img`/`media` sources must be permitted here or the iframe's consented loads
+ * are silently clamped. The iframe's own stricter `<meta>` CSP still applies per-message
+ * tracking-pixel consent. Remote fonts remain blocked in both policies.
  */
-function buildAppShellCsp(html: string): string {
+export function buildAppShellCsp(html: string): string {
   const hashes = new Set<string>();
   // Match inline <script>…</script> (no src=); hash the exact inner bytes the browser sees.
   const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
@@ -56,11 +53,12 @@ function buildAppShellCsp(html: string): string {
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    // img/media/font widened to remote schemes so the inherited srcdoc iframe can load
-    // email images (see the ceiling note above); the shell loads none of these remotely.
+    // img/media widened to remote schemes so the inherited srcdoc iframe can load
+    // consented email images (see the ceiling note above). Sender fonts stay local/data:
+    // permanently; a remote @font-face is also a tracking request.
     "img-src 'self' data: blob: https: http:",
     "media-src 'self' data: https: http:",
-    "font-src 'self' data: https: http:",
+    "font-src 'self' data:",
     "connect-src 'self'",
     "frame-src 'self'",
     "worker-src 'self'",
