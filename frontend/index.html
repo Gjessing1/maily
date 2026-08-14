@@ -16,12 +16,15 @@
         color: #f4f4f6;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
+      :root {
+        --app-safe-area-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+      }
       [data-theme='light'] .boot-shell {
         background: #fff;
         color: #18181f;
       }
       .boot-head {
-        height: calc(3.5rem + env(safe-area-inset-top));
+        height: calc(3.5rem + var(--app-safe-area-top));
         border-bottom: 1px solid #26262f;
       }
       [data-theme='light'] .boot-head {

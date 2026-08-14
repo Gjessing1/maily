@@ -29,6 +29,12 @@
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
+  /* Capacitor supplies --safe-area-inset-* on Android. Standards-based env()
+     remains the fallback for installed PWAs and iOS. */
+  --app-safe-area-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --app-safe-area-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --app-safe-area-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --app-safe-area-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
 }
 
 :root[data-theme='light'] {
@@ -65,10 +71,17 @@ body {
 
 /* Respect the device notch / home indicator on installed PWAs. */
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--app-safe-area-top);
 }
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--app-safe-area-bottom);
+}
+
+/* Every routed screen ends above Android's gesture/three-button navigation bar.
+   Fixed bottom controls add their own safe-bottom padding so their background
+   continues cleanly to the physical screen edge. */
+.app-safe-shell {
+  padding-bottom: var(--app-safe-area-bottom);
 }
 
 /* Hide scrollbars but keep scrolling (native-app feel). */

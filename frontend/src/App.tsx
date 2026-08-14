@@ -13,6 +13,7 @@ import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
+import { findNativeAppUpdate, getNativeAppInfo } from './nativeAndroid';
 
 // Home is the app shell's primary view and stays eager. Everything else is loaded
 // on demand; Workbox still precaches the emitted chunks, so they remain available
@@ -109,6 +110,21 @@ export function App() {
     };
   }, [authed]);
 
+  // The hosted UI updates with the server; only notify when the native container
+  // itself has a newer signed APK. Installation is available in Settings.
+  useEffect(() => {
+    if (!authed) return;
+    const timer = setTimeout(() => {
+      void getNativeAppInfo()
+        .then(async (info) => findNativeAppUpdate(info))
+        .then((release) => {
+          if (release) showNotice(`Maily ${release.versionName} is ready in Settings`);
+        })
+        .catch(() => undefined);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [authed]);
+
   // Detached windows (reader/composer popouts) hand their undo window back here: a popout
   // that sends closes immediately, so its own "Undo send" snackbar would never be seen.
   // Only the main window listens — a popout must not re-arm what it just delegated.
@@ -146,7 +162,7 @@ export function App() {
   if (!authed) return online ? <Login /> : <OfflineUnavailable signedOut />;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="app-safe-shell flex h-full flex-col">
       <div className="fixed inset-x-0 top-0 z-50">
         <SyncBar progress={progress} />
       </div>

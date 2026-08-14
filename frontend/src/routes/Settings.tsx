@@ -19,6 +19,15 @@ import { checkForUpdate, type UpdateCheckResult } from '../pwa';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DetachSection } from '../components/DetachSection';
 import { BackIcon, CloseIcon } from '../ui/icons';
+import {
+  configureNativeServer,
+  findNativeAppUpdate,
+  getNativeAppInfo,
+  isNativeAndroid,
+  nativeDownloadUrl,
+  openNativeExternal,
+  type NativeAppRelease,
+} from '../nativeAndroid';
 
 /** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
 function windowLabel(days: number): string {
@@ -545,6 +554,94 @@ function UpdateButton({ pending }: { pending: boolean }) {
   );
 }
 
+function NativeAndroidSection() {
+  const [serverUrl, setServerUrl] = useState('');
+  const [version, setVersion] = useState('');
+  const [release, setRelease] = useState<NativeAppRelease | null>(null);
+  const [status, setStatus] = useState('Loading Android app information…');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void getNativeAppInfo()
+      .then(async (info) => {
+        if (!alive || !info) return;
+        setServerUrl(info.serverUrl);
+        setVersion(`${info.versionName} (${info.versionCode})`);
+        const next = await findNativeAppUpdate(info);
+        if (!alive) return;
+        setRelease(next);
+        setStatus(next ? `Maily ${next.versionName} is available.` : 'The native app is current.');
+      })
+      .catch((error: unknown) => {
+        if (alive)
+          setStatus(error instanceof Error ? error.message : 'Could not read app details.');
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setStatus('Saving server address…');
+    try {
+      await configureNativeServer(serverUrl);
+      setStatus('Restarting with the new server…');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save the server address.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="mt-6">
+      <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
+        Android app
+      </p>
+      <div className="space-y-3 border-y border-border px-4 py-3">
+        <label className="block">
+          <span className="mb-1 block text-sm">Maily server address</span>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              value={serverUrl}
+              onChange={(event) => setServerUrl(event.target.value)}
+              placeholder="https://mail.gjessing.io"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-full bg-surface-2 px-4 py-2 text-sm font-medium disabled:opacity-60"
+            >
+              Apply
+            </button>
+          </div>
+        </label>
+        <p className="text-xs text-faint">
+          Installed app {version || '…'} · {status}
+        </p>
+        {release && (
+          <button
+            type="button"
+            onClick={() => void openNativeExternal(nativeDownloadUrl(release))}
+            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
+          >
+            Download {release.versionName}
+          </button>
+        )}
+      </div>
+      <p className="px-4 pt-2 text-xs text-faint">
+        The HTTPS address is stored only on this device. Applying it restarts Maily.
+      </p>
+    </section>
+  );
+}
+
 export function Settings() {
   const navigate = useNavigate();
   const accounts = useAccounts();
@@ -1042,6 +1139,8 @@ export function Settings() {
         </section>
 
         <DetachSection accounts={accounts ?? []} />
+
+        {isNativeAndroid() && <NativeAndroidSection />}
 
         <section className="mt-6 mb-10">
           <div className="border-y border-border">

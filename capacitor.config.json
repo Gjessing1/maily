@@ -1,0 +1,11 @@
+{
+  "appId": "io.gjessing.maily",
+  "appName": "Maily",
+  "webDir": "mobile",
+  "loggingBehavior": "debug",
+  "android": {
+    "appendUserAgent": "MailyAndroid/1",
+    "allowMixedContent": false,
+    "resolveServiceWorkerRequests": false
+  }
+}

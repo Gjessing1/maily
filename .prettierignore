@@ -7,3 +7,4 @@ drizzle
 *.sqlite
 CLAUDE.md
 docs
+android/app/src/main/assets

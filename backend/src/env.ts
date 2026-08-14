@@ -28,6 +28,8 @@ const uploadsDir = resolve(dataDir, 'uploads');
 const sourceDir = resolve(dataDir, 'source');
 /** WAL-safe SQLite snapshot dir — the off-host backup (backrest) grabs this, not the live DB. */
 const backupDir = resolve(dataDir, 'backups');
+/** Signed Android APK + atomic release metadata published by scripts/publish-android.sh. */
+const androidAppDir = resolve(dataDir, optional('MAILY_ANDROID_APP_DIR', 'app'));
 
 // Ensure the data directory exists before SQLite tries to open the file.
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -123,6 +125,7 @@ export const env = {
   uploadsDir,
   sourceDir,
   backupDir,
+  androidAppDir,
   /**
    * WAL-safe SQLite snapshot for off-host backup (ARCHITECTURE §1/§12). The live DB runs in
    * WAL mode, so an external backup tool copying `mail.sqlite` directly can capture a torn

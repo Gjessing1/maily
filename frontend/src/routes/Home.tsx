@@ -495,7 +495,7 @@ export function Home() {
         <Link
           to="/compose"
           state={{ fresh: true }}
-          className="safe-bottom fixed bottom-5 right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
+          className="fixed bottom-[calc(1.25rem+var(--app-safe-area-bottom))] right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
           aria-label="Compose"
         >
           <PencilIcon />
