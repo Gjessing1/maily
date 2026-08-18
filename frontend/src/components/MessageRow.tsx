@@ -103,6 +103,7 @@ export function MessageRow({
 
   const [dx, setDx] = useState(0);
   const startX = useRef<number | null>(null);
+  const startY = useRef(0);
   const swiping = useRef(false);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -120,6 +121,7 @@ export function MessageRow({
 
   function onTouchStart(e: React.TouchEvent) {
     startX.current = e.touches[0]!.clientX;
+    startY.current = e.touches[0]!.clientY;
     swiping.current = false;
     // Arm long-press only outside selection mode; movement/lift cancels it.
     if (onEnterSelect && !selectionMode && !readOnly) {
@@ -134,6 +136,10 @@ export function MessageRow({
 
   function onTouchMove(e: React.TouchEvent) {
     if (startX.current === null) return;
+    // Vertical travel is a scroll or a pull-to-refresh, not a hold — cancel the
+    // long-press so those gestures can't drop the list into selection mode. It is
+    // deliberately not treated as a swipe: the browser already suppresses the click.
+    if (Math.abs(e.touches[0]!.clientY - startY.current) > 6) cancelLongPress();
     let delta = e.touches[0]!.clientX - startX.current;
     // Suppress a direction whose action is disabled/unwired so the row doesn't
     // slide into a no-op. Right swipe → swipeRight; left swipe → swipeLeft.

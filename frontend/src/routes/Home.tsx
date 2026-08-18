@@ -17,6 +17,8 @@ import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../s
 import { usePrefs } from '../state/prefs';
 import { avatarHue } from '../ui/format';
 import { useMediaQuery } from '../ui/useMediaQuery';
+import { usePullToRefresh } from '../ui/usePullToRefresh';
+import { PullToRefreshIndicator } from '../ui/PullToRefreshIndicator';
 import { Spinner } from '../ui/Spinner';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 import {
@@ -131,7 +133,8 @@ export function Home() {
     [unifiedView, accountById],
   );
 
-  const { messages, loading, refreshing, hasMore, error, loadMore } = useMessages(folderId);
+  const { messages, loading, refreshing, hasMore, error, loadMore, refresh } =
+    useMessages(folderId);
 
   // Fold the loaded rows into conversations (one row per thread) when conversation
   // view is on; otherwise each message is its own conversation. groupConversations
@@ -247,6 +250,10 @@ export function Home() {
   // the `msg` param with `replace`, and multi-select is pure component state.
   useBackHandler(selectionMode, clearSelect);
   useBackHandler(splitMode && !!selectedId, closeReader);
+
+  // Pull-down-to-refresh (touch only). Suppressed in multi-select, where dragging over
+  // the list belongs to the rows rather than to navigation.
+  const pull = usePullToRefresh(refresh, { enabled: !selectionMode, busy: refreshing });
 
   // Bulk actions select conversations (by representative id); each fans out to every
   // message in its thread so "mark read"/"archive"/"delete" hit whole conversations.
@@ -398,7 +405,16 @@ export function Home() {
         )}
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${!isWide ? 'pb-16' : ''}`}>
+      <main
+        className={`flex-1 overflow-y-auto no-scrollbar ${!isWide ? 'pb-16' : ''}`}
+        {...pull.handlers}
+      >
+        <PullToRefreshIndicator
+          distance={pull.distance}
+          progress={pull.progress}
+          refreshing={pull.refreshing}
+          dragging={pull.dragging}
+        />
         {error && <p className="px-4 py-2 text-sm text-danger">Couldn’t refresh: {error}</p>}
 
         {loading ? (
