@@ -14,7 +14,7 @@ import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
-import { findNativeAppUpdate, getNativeAppInfo } from './nativeAndroid';
+import { applyNativeSystemBars, findNativeAppUpdate, getNativeAppInfo } from './nativeAndroid';
 
 // Home is the app shell's primary view and stays eager. Everything else is loaded
 // on demand; Workbox still precaches the emitted chunks, so they remain available
@@ -154,12 +154,16 @@ export function App() {
   // Reflect the resolved theme onto <html> (drives the CSS token overrides) and
   // the PWA status-bar colour. The pre-paint script in index.html sets the initial
   // attribute; this keeps it in sync when the pref or OS preference changes.
+  // Android's system bars are told separately — they are painted by the OS, which
+  // otherwise follows the *device* night mode and hides the clock/battery icons
+  // whenever the in-app theme disagrees with it.
   const theme = useTheme();
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', theme === 'light' ? '#ffffff' : '#0b0b0f');
+    void applyNativeSystemBars(theme);
   }, [theme]);
 
   // Hold the first paint until the auth-config probe resolves so an external-SSO

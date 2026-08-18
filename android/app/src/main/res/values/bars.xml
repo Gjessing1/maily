@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  System-bar defaults for the launch window, which stays the activity's theme for the
+  whole session. They cover the stretch before the web app has booted and reported its
+  own theme (applyNativeSystemBars -> SystemBars.setStyle plus
+  MailyNativePlugin.setSystemBarsColor): the system splash screen, the SSO detour and
+  the connection-error page. Those all follow the device night mode, so these do too
+  (night values in values-night/). The colour additionally applies below Android 15,
+  where the bars are opaque; from 15 the system ignores it.
+-->
+<resources>
+    <color name="systemBarBackground">#ffffff</color>
+    <!-- "Light bar" = light background, so the system paints dark icons onto it. -->
+    <bool name="lightSystemBars">true</bool>
+</resources>
