@@ -126,7 +126,11 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
 <base target="_blank">
 <style>
   :root { color-scheme: ${scheme}; }
-  html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; }
+  /* The frame is sized to its content and never scrolls itself, but a sub-pixel
+     remainder can still leave the inner document a fraction scrollable — enough for
+     a touch to latch onto it and show the Android overscroll stretch instead of
+     scrolling the reader behind it. Refuse the chain. */
+  html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; overscroll-behavior:none; }
   body { box-sizing:border-box; margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     /* break-word breaks a long URL only when it would actually overflow, and —
@@ -243,6 +247,35 @@ interface MailFrameProps {
 }
 
 /**
+ * Snapshot every scrolled ancestor of `from`, and return the undo.
+ *
+ * Measuring the frame means collapsing it to `height:0` for a moment (see `measure`),
+ * which takes the entire message out of the page: each scrolling ancestor's content
+ * shrinks by the message height and the browser clamps its `scrollTop` to the new,
+ * much smaller maximum. Restoring the height does not restore the position — so a
+ * re-measure that lands while the reader is scrolling snaps it back to where it was.
+ * That is the "first swipe doesn't scroll, the message just nudges" report: the late
+ * `load`/`error` and `fonts.ready` re-measures all cluster in the first second after
+ * a message opens, exactly when the first swipe happens. Later swipes work because
+ * measurement has settled by then.
+ *
+ * Restoring inside the same synchronous block means the collapsed state is never
+ * painted, so this is invisible either way.
+ */
+function keepScrollPositions(from: Element): () => void {
+  const saved: { el: Element; top: number }[] = [];
+  for (let node: Element | null = from; node; node = node.parentElement) {
+    // scrollTop 0 cannot be clamped any lower — nothing to put back.
+    if (node.scrollTop > 0) saved.push({ el: node, top: node.scrollTop });
+  }
+  const pageY = window.scrollY;
+  return () => {
+    for (const { el, top } of saved) el.scrollTop = top;
+    if (pageY > 0) window.scrollTo(window.scrollX, pageY);
+  };
+}
+
+/**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
  * email's CSS can't leak into the app. A `<meta>` CSP hardens it further, gates remote
@@ -306,6 +339,9 @@ function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
       // can only report the frame's own box when the content is SHORTER than it, so
       // measuring at the current height would pin every short body to whatever the
       // frame already was (the initial 200px, leaving a dead gap under a one-line reply).
+      // The collapse takes the whole message out of the page for the length of this
+      // block, so hold the reader's scroll position across it (see keepScrollPositions).
+      const restoreScroll = keepScrollPositions(iframe);
       iframe.style.height = '0px';
       const naturalH = el.scrollHeight;
       if (scale !== 1) {
@@ -317,6 +353,7 @@ function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
       // current state React skips the re-render, and the collapsed inline style above
       // would stick.
       iframe.style.height = `${next}px`;
+      restoreScroll();
       setHeight(next);
       lastObservedLayout = `${body.scrollWidth}:${body.scrollHeight}:${avail}`;
     };
