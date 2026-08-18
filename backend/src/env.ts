@@ -16,7 +16,8 @@ function optional(name: string, fallback: string): string {
 }
 
 /**
- * Persistent data root. In production this is the mounted host volume /mnt/data/maily.
+ * Persistent data root. In production this is the mounted volume at /data inside the
+ * container, bind-mounted from host /home/gjessing/data/maily.
  * Locally it defaults to ./data so development needs no setup.
  */
 const dataDir = resolve(optional('MAILY_DATA_DIR', './data'));

@@ -1,5 +1,8 @@
 # Deploy from /home/gjessing/docker/maily (compose + .env live there).
-# Persistent data is bind-mounted from the host at /mnt/data/maily so it survives redeploys.
+# Persistent data is bind-mounted from the host at /home/gjessing/data/maily so it survives
+# redeploys. That is the system NVMe (nvme0n1p2). The former root /mnt/data/maily lives on a
+# second NVMe that began returning unrecoverable media read errors on 2026-08-06; maily was
+# restored onto the healthy disk and must not be pointed back at /mnt.
 services:
   backend:
     build:
@@ -15,4 +18,5 @@ services:
     ports:
       - '3000:3000'
     volumes:
-      - /mnt/data/maily:/data
+      # Host persistent data (SQLite DB + attachments) -> container /data.
+      - /home/gjessing/data/maily:/data

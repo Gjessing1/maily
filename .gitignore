@@ -20,7 +20,7 @@ backend/public/
 .env.*
 !.env.example
 
-# --- Persistent data (host: /mnt/data/maily) ---
+# --- Persistent data (host: /home/gjessing/data/maily) ---
 data/
 attachments/
 *.sqlite
