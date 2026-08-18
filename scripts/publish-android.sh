@@ -6,7 +6,10 @@ set -euo pipefail
 apk="${1:?path to the signed APK}"
 version_code="${2:?Android versionCode (integer)}"
 version_name="${3:?version name, for example 0.1.0}"
-app_dir="${MAILY_ANDROID_PUBLISH_DIR:-/mnt/data/maily/app}"
+# Default to the host dir the running container actually bind-mounts as /data, where the
+# backend resolves androidAppDir to /data/app. Publishing anywhere else succeeds silently
+# and the phone never sees the update. Override for a host that mounts data elsewhere.
+app_dir="${MAILY_ANDROID_PUBLISH_DIR:-/home/gjessing/data/maily/app}"
 
 if [[ ! -f "$apk" ]]; then
   echo "APK not found: $apk" >&2

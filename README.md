@@ -59,7 +59,7 @@ npm ci
 ./scripts/publish-android.sh android/app/build/outputs/apk/release/app-release.apk 1 0.1.0
 ```
 
-The publish script writes to `/mnt/data/maily/app` by default. The standard Docker volume exposes this as `/data/app`, which the backend serves at `/api/app/version` and `/api/app/download`. Set `MAILY_ANDROID_PUBLISH_DIR` to change the host publication path; set backend `MAILY_ANDROID_APP_DIR` if the APK directory is elsewhere inside its container.
+The publish script writes to `/home/gjessing/data/maily/app` by default — the host directory this deployment bind-mounts into the container as `/data`. The standard Docker volume exposes this as `/data/app`, which the backend serves at `/api/app/version` and `/api/app/download`. Set `MAILY_ANDROID_PUBLISH_DIR` to change the host publication path; set backend `MAILY_ANDROID_APP_DIR` if the APK directory is elsewhere inside its container.
 
 For local development, `npm run android:build:debug` writes `android/app/build/outputs/apk/debug/app-debug.apk`. Never publish a debug-signed build: Android cannot install it over a release-signed app.
 
