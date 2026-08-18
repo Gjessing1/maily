@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { openNativeExternal } from '../nativeAndroid';
+import { showNotice } from '../state/undo';
 import { useTheme, type ResolvedTheme } from '../state/theme';
 import { splitQuotedHtml, splitQuotedText } from '../ui/quote';
+import { createMailLinkClickHandler, type MailtoLink } from '../ui/mailLink';
 
 /** True if the HTML references a remote (http/https) image or CSS background url(). */
 export function hasRemoteImages(html: string): boolean {
@@ -229,6 +232,16 @@ function QuoteToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () =
   );
 }
 
+interface MailFrameProps {
+  html: string;
+  allowImages?: boolean;
+  /**
+   * Open the app composer for a `mailto:` link in the message. Optional: without it
+   * the address is handed to the platform's own mail handler instead.
+   */
+  onMailto?: (link: MailtoLink) => void;
+}
+
 /**
  * Render email HTML safely. Untrusted sender HTML is dropped into a sandboxed
  * iframe (no allow-scripts) so embedded scripts/inline handlers can't run and the
@@ -237,12 +250,16 @@ function QuoteToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () =
  * art), and always blocks remote fonts. Height is measured from the same-origin srcdoc
  * document and the iframe grows to fit (no inner scrollbars).
  */
-function MailFrame({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
+function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
   const theme = useTheme();
 
   const srcDoc = buildMailSrcDoc(html, allowImages, theme);
+
+  // Held in a ref so a new handler identity never re-runs (and re-measures) the frame.
+  const mailtoRef = useRef(onMailto);
+  mailtoRef.current = onMailto;
 
   useEffect(() => {
     const iframe = ref.current;
@@ -254,6 +271,7 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
     // is left untouched (scale 1), so centered-card layouts aren't shrunk needlessly.
     let resizeObserver: ResizeObserver | null = null;
     let removeImageListeners: (() => void) | null = null;
+    let removeLinkHandler: (() => void) | null = null;
     let animationFrame = 0;
     let lastObservedLayout = '';
     let disposed = false;
@@ -315,6 +333,36 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
       });
     };
 
+    /**
+     * Route the sender's links from OUT here. The frame is sandboxed without
+     * `allow-top-navigation` and the Android WebView opens no popup window, so an
+     * anchor left to itself does nothing at all (see ui/mailLink). The listener is
+     * registered by the app document — the frame itself still runs no scripts.
+     */
+    const installLinkRouting = (doc: Document) => {
+      removeLinkHandler?.();
+      const onClick = createMailLinkClickHandler({
+        openExternal: (url) => {
+          void openNativeExternal(url).catch(() => showNotice('Could not open that link'));
+        },
+        openCompose: (link) => {
+          const compose = mailtoRef.current;
+          // No composer to hand it to (the rendering-fixture page): let the platform
+          // resolve the address rather than swallowing the tap.
+          if (compose) compose(link);
+          else window.location.href = `mailto:${link.to.join(',')}`;
+        },
+        // Non-web schemes navigate the APP document, not the sandboxed frame: the host
+        // (Capacitor on Android, the browser elsewhere) turns them into a dialer/SMS
+        // hand-off there, which the frame is not allowed to trigger.
+        openPlatform: (url) => {
+          window.location.href = url;
+        },
+      });
+      doc.addEventListener('click', onClick);
+      removeLinkHandler = () => doc.removeEventListener('click', onClick);
+    };
+
     const installLayoutObservers = () => {
       resizeObserver?.disconnect();
       removeImageListeners?.();
@@ -346,6 +394,8 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
       // Embedded/data fonts can still alter metrics after load. Remote sender fonts
       // are blocked by CSP, so this promise never creates a network side channel.
       void doc.fonts?.ready.then(() => scheduleMeasure());
+
+      installLinkRouting(doc);
     };
 
     iframe.addEventListener('load', installLayoutObservers);
@@ -358,6 +408,7 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
       window.removeEventListener('resize', onWindowResize);
       resizeObserver?.disconnect();
       removeImageListeners?.();
+      removeLinkHandler?.();
       if (animationFrame) cancelAnimationFrame(animationFrame);
     };
   }, [srcDoc]);
@@ -379,16 +430,16 @@ function MailFrame({ html, allowImages = true }: { html: string; allowImages?: b
  * it, hidden behind a `•••` chip. The two halves get their own iframes rather than
  * one frame with a toggle inside it, because the frame can't run scripts.
  */
-export function MailHtml({ html, allowImages = true }: { html: string; allowImages?: boolean }) {
+export function MailHtml({ html, allowImages = true, onMailto }: MailFrameProps) {
   const { visible, quoted } = useMemo(() => splitQuotedHtml(html), [html]);
   const [expanded, setExpanded] = useState(false);
 
-  if (!quoted) return <MailFrame html={html} allowImages={allowImages} />;
+  if (!quoted) return <MailFrame html={html} allowImages={allowImages} onMailto={onMailto} />;
   return (
     <>
-      <MailFrame html={visible} allowImages={allowImages} />
+      <MailFrame html={visible} allowImages={allowImages} onMailto={onMailto} />
       <QuoteToggle expanded={expanded} onToggle={() => setExpanded((v) => !v)} />
-      {expanded && <MailFrame html={quoted} allowImages={allowImages} />}
+      {expanded && <MailFrame html={quoted} allowImages={allowImages} onMailto={onMailto} />}
     </>
   );
 }

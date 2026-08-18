@@ -12,9 +12,11 @@ import type { AccountDto, MessageDto } from '@maily/shared';
 import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
 import { useMessageDetail } from '../state/data';
+import { OFFLINE_READ_ONLY_MESSAGE } from '../state/connectivity';
+import { showNotice } from '../state/undo';
 import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
-import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
+import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { fullDate, senderName, shortDate } from '../ui/format';
 import { joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
@@ -206,7 +208,18 @@ function ConversationMessage({
                 </div>
               )}
               {detail.bodyHtml ? (
-                <MailHtml html={detail.bodyHtml} allowImages={allowImages} />
+                <MailHtml
+                  html={detail.bodyHtml}
+                  allowImages={allowImages}
+                  onMailto={(link) => {
+                    // Offline the composer is unavailable, exactly as for the reply
+                    // buttons below (which are disabled outright).
+                    if (readOnly) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+                    navigate('/compose', {
+                      state: { ...buildMailto(link, detail.accountId), fresh: true },
+                    });
+                  }}
+                />
               ) : (
                 <div className="px-4 py-3">
                   <MailText text={detail.bodyText ?? '(no content)'} />

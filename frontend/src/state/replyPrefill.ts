@@ -7,6 +7,7 @@
 import type { AccountDto, MessageDetailDto } from '@maily/shared';
 import { fullDate, senderName } from '../ui/format';
 import { escapeHtml } from '../ui/htmlText';
+import type { MailtoLink } from '../ui/mailLink';
 import type { ComposeAttachment, ComposePrefill } from '../routes/Compose';
 
 /**
@@ -104,6 +105,21 @@ export function buildReplyAll(detail: MessageDetailDto, accounts: AccountDto[]):
     new Set([...own, ...to.map((a) => a.toLowerCase())]),
   );
   return { ...replyCommon(detail), to, cc };
+}
+
+/**
+ * Compose prefill for a `mailto:` link tapped inside a message body — maily answers
+ * those itself rather than handing the address to a foreign mail app. `accountId` is
+ * the account the message arrived on, so the reply goes out from the same address.
+ */
+export function buildMailto(link: MailtoLink, accountId?: string): ComposePrefill {
+  return {
+    accountId,
+    to: link.to,
+    cc: link.cc,
+    subject: link.subject,
+    body: link.body,
+  };
 }
 
 export function buildForward(detail: MessageDetailDto): ComposePrefill {

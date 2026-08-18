@@ -8,6 +8,7 @@ import { ConversationThread } from '../components/ConversationThread';
 import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { plainTextToHtml } from '../ui/htmlText';
+import type { MailtoLink } from '../ui/mailLink';
 import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { ImageAttachment, isImageAttachment } from '../components/ImageAttachment';
@@ -40,7 +41,7 @@ import {
 } from '../ui/icons';
 import { fullDate, senderName } from '../ui/format';
 import { closePopout, isPopout, openPopout, usePopoutCapable } from '../ui/popout';
-import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
+import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 
 /**
@@ -206,6 +207,12 @@ export function ReaderView({
     if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     navigate('/compose', { state: { ...buildForward(detail), fresh: true } });
+  }
+
+  /** A `mailto:` link in the message body opens our composer, not a foreign mail app. */
+  function composeTo(link: MailtoLink) {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+    navigate('/compose', { state: { ...buildMailto(link, detail?.accountId), fresh: true } });
   }
 
   /** Reopen a saved draft in the composer; saving/sending supersedes this copy. */
@@ -533,7 +540,7 @@ export function ReaderView({
                 </div>
               )}
               {detail.bodyHtml ? (
-                <MailHtml html={detail.bodyHtml} allowImages={allowImages} />
+                <MailHtml html={detail.bodyHtml} allowImages={allowImages} onMailto={composeTo} />
               ) : (
                 <div className="px-4 py-3">
                   <MailText text={detail.bodyText ?? '(no content)'} />

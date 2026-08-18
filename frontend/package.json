@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "test:rendering": "playwright test --config playwright.android.config.ts"
+    "test:rendering": "playwright test --config playwright.android.config.ts",
+    "test:web": "playwright test --config playwright.web.config.ts"
   },
   "dependencies": {
     "@maily/shared": "*",
