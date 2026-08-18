@@ -84,7 +84,7 @@ export function useFolders(accountId: string | undefined): FolderDto[] | undefin
 }
 
 interface MessagesResult {
-  messages: CachedMessage[] | undefined;
+  messages: MessageDto[] | undefined;
   loading: boolean;
   refreshing: boolean;
   hasMore: boolean;
@@ -92,6 +92,40 @@ interface MessagesResult {
   loadMore: () => void;
   refresh: () => void;
 }
+
+/** One row per id, first occurrence winning. */
+function dedupById(rows: MessageDto[]): MessageDto[] {
+  const seen = new Set<string>();
+  const out: MessageDto[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
+/** Rows fetched or rendered for one view, used as a paint fallback (see below). */
+interface ViewRows {
+  view: string;
+  rows: MessageDto[];
+}
+
+function rowsFor(snapshot: ViewRows | null, view: string | undefined): MessageDto[] | null {
+  return snapshot && view && snapshot.view === view ? snapshot.rows : null;
+}
+
+/**
+ * The rows a view last rendered, kept module-level (like Search's session, see
+ * Search.tsx) so leaving the list and coming back paints instantly. `useLiveQuery`
+ * keeps its previous result across a folder switch but NOT across a remount, and the
+ * reader is a route of its own — so returning from a message dropped the inbox back to
+ * a spinner until IndexedDB answered again, which on a phone (a head refresh walks
+ * every cached row of the folder for reconciliation, behind whatever writes that
+ * refresh queued) can be a very long wait. Overwritten by the live query within a
+ * tick; never a source of truth.
+ */
+let lastRendered: ViewRows | null = null;
 
 export function useMessages(folderId: string | undefined): MessagesResult {
   const [refreshing, setRefreshing] = useState(false);
@@ -119,7 +153,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const starred = isStarredView(folderId);
   const starredFor = starred ? starredAccountId(folderId) : undefined;
 
-  const messages = useLiveQuery(async () => {
+  const cached = useLiveQuery(async () => {
     if (!folderId) return [];
     // Resolve the view to a membership predicate, then walk the receivedAt index
     // newest-first and stop once the display window is full. receivedAt is an ISO
@@ -184,6 +218,33 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     unreadAtTop,
     displayLimit,
   ]);
+
+  /**
+   * Rows from this view's own fetches, kept as the second paint fallback: the list must
+   * never be held hostage by the cache read (§1/§6 — the backend is the source of truth
+   * and IndexedDB a disposable accelerator), so whichever answers first is rendered.
+   */
+  const [fetched, setFetched] = useState<ViewRows | null>(null);
+
+  // `useLiveQuery` hands back the PREVIOUS view's rows until the new query answers, so
+  // a freshly switched view must not render (or snapshot) rows belonging to the old one.
+  // Only a new emission — a new array identity — is known to match `folderId`.
+  const emitted = useRef<CachedMessage[] | undefined>(undefined);
+  const emittedView = useRef<string | undefined>(undefined);
+  if (cached !== emitted.current) {
+    emitted.current = cached;
+    emittedView.current = folderId;
+  }
+  const live = emittedView.current === folderId ? cached : undefined;
+
+  // What the list actually renders: the cache once it has answered for this view, else
+  // the rows fetched for it, else the rows it last showed. Only a genuinely unknown view
+  // (first visit, cold cache, nothing fetched yet) stays `undefined` — i.e. loading.
+  const messages =
+    live ?? rowsFor(fetched, folderId) ?? rowsFor(lastRendered, folderId) ?? undefined;
+  useEffect(() => {
+    if (folderId && messages) lastRendered = { view: folderId, rows: messages };
+  }, [folderId, messages]);
 
   // One page fetch for a unified view, an archived view, or a real folder. The inbox
   // keeps its dedicated endpoint; other roles go through the generic unified route.
@@ -291,7 +352,16 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         if (unreadRows) await cacheMessages(unreadRows);
         await reconcile(rows, rows.length === PAGE);
         if (unreadRows) await reconcileUnread(unreadRows);
-        if (viewRef.current === view) setHasMore(rows.length === PAGE);
+        if (viewRef.current === view) {
+          setHasMore(rows.length === PAGE);
+          // Same shape the cache read produces: the unread section first, then the
+          // date-ordered read rows (a row can only be in one of the two — but dedup
+          // anyway, in case it was read between the two requests).
+          setFetched({
+            view,
+            rows: unreadRows ? dedupById([...unreadRows, ...rows.filter((m) => m.seen)]) : rows,
+          });
+        }
       })
       .catch((e: Error) => {
         if (viewRef.current === view && isOnline()) setError(e.message);
@@ -317,7 +387,13 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     fetchPage({ before })
       .then(async (rows) => {
         await cacheMessages(rows);
-        if (viewRef.current === view) setHasMore(rows.length === PAGE);
+        if (viewRef.current === view) {
+          setHasMore(rows.length === PAGE);
+          // Extend the fallback too, so scrolling still works while it is what paints.
+          setFetched((prev) =>
+            prev && prev.view === view ? { view, rows: dedupById([...prev.rows, ...rows]) } : prev,
+          );
+        }
       })
       .catch((e: Error) => {
         if (viewRef.current === view && isOnline()) setError(e.message);
