@@ -12,18 +12,11 @@ export interface NativeAppRelease {
   sha256: string;
 }
 
-/** Handle returned by Capacitor's generated `addListener` shim (synchronous on Android). */
-interface NativeListener {
-  remove(): void;
-}
-
 interface MailyNativePlugin {
   getInfo(): Promise<NativeAppInfo>;
   configureServer(options: { serverUrl: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
-  exitApp(): Promise<void>;
   setSystemBarsColor(options: { color: string }): Promise<void>;
-  addListener(eventName: 'backButton', callback: () => void): NativeListener;
 }
 
 /**
@@ -111,21 +104,27 @@ export async function applyNativeSystemBars(theme: 'dark' | 'light'): Promise<vo
 }
 
 /**
- * Subscribe to the Android system Back press. The native side only forwards the press
- * while a listener is registered here, and falls back to WebView history otherwise —
- * so the returned unsubscribe must run when the app stops handling Back itself.
- * Returns a no-op unsubscribe on the web, where there is no Back button to claim.
+ * Claim the Android system Back press by answering the native shell's question.
+ *
+ * The shell asks the page directly — it evaluates `window.mailyBack()` in the WebView
+ * on every press — rather than delivering the press through a Capacitor listener.
+ * Maily is served from a remote origin, so a plain global is the one channel that does
+ * not depend on the bridge's plugin JS having been injected into this document and on
+ * an asynchronous listener registration having completed before the press arrives.
+ *
+ * `handler` must answer **synchronously**: true when it consumed the press, false when
+ * the app is at its root and the shell should leave Maily. A page that installs nothing
+ * (the SSO detour, the connection-error page, a WebView whose JS has not booted) leaves
+ * the global undefined, and the shell falls back to its own WebView history.
+ *
+ * Returns the uninstall. Harmless on the web, where nothing calls the global.
  */
-export function onNativeBack(handler: () => void): () => void {
-  const plugin = nativePlugin();
-  if (typeof plugin?.addListener !== 'function') return () => {};
-  const listener = plugin.addListener('backButton', handler);
-  return () => listener.remove();
-}
-
-/** Leave the Android app (Back at the root of the navigation stack). No-op on the web. */
-export async function exitNativeApp(): Promise<void> {
-  await nativePlugin()?.exitApp();
+export function setNativeBackHandler(handler: () => boolean): () => void {
+  const host = globalThis as typeof globalThis & { mailyBack?: () => boolean };
+  host.mailyBack = handler;
+  return () => {
+    if (host.mailyBack === handler) delete host.mailyBack;
+  };
 }
 
 /** Return a newer APK published by this Maily server, or null. */

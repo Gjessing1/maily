@@ -1,11 +1,15 @@
 /**
- * Routes the Android system Back press into the app.
+ * Answers the Android system Back press for the app.
+ *
+ * The native shell asks this handler on every press and acts on the answer, so the
+ * question it puts is "did you consume it?" — true when Back moved inside Maily,
+ * false when the app is at its root and the shell should leave.
  *
  * Order of resolution:
  *  1. transient UI registered through `useBackHandler` (drawer, dialogs, selection);
  *  2. React Router history, when this document has an entry to pop;
  *  3. the inbox, when Back happens on a deep link opened as the first entry;
- *  4. leaving the app.
+ *  4. false — nothing left to pop, let the shell close Maily.
  *
  * Step 2 deliberately does not consult `WebView.canGoBack()`: the native side already
  * asked us first precisely because its back/forward list also contains the pages
@@ -15,7 +19,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { exitNativeApp, onNativeBack } from '../nativeAndroid';
+import { setNativeBackHandler } from '../nativeAndroid';
 import { runBackHandler } from './backButton';
 
 /** Depth of the current entry within React Router's stack, or null if unstamped. */
@@ -45,21 +49,21 @@ export function useAndroidBackButton(): void {
 
   useEffect(
     () =>
-      onNativeBack(() => {
+      setNativeBackHandler(() => {
         try {
-          if (runBackHandler()) return;
+          if (runBackHandler()) return true;
         } catch {
           // A dismisser that throws must not wedge Back — fall through to navigating.
         }
         if (Math.max(routerHistoryIndex() ?? 0, depth.current) > 0) {
           navigate(-1);
-          return;
+          return true;
         }
         if (pathname.current !== '/') {
           navigate('/', { replace: true });
-          return;
+          return true;
         }
-        void exitNativeApp();
+        return false;
       }),
     [navigate],
   );

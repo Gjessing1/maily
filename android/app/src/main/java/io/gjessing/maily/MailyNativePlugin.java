@@ -57,28 +57,6 @@ public class MailyNativePlugin extends Plugin {
     }
 
     /**
-     * Offer the system Back press to the web app. Only the web layer knows about
-     * transient UI that owns no history entry (folder drawer, dialogs, multi-select)
-     * and about React Router's own stack, so it decides first. Returns false when no
-     * listener is registered — an error page, the SSO detour, or a WebView whose JS
-     * has not booted — so the caller can fall back to native history.
-     */
-    boolean dispatchBackButton(boolean webViewCanGoBack) {
-        if (!hasListeners("backButton")) return false;
-        JSObject event = new JSObject();
-        event.put("canGoBack", webViewCanGoBack);
-        notifyListeners("backButton", event);
-        return true;
-    }
-
-    /** Leave Maily, for a Back press the web app resolved to "nothing left to pop". */
-    @PluginMethod
-    public void exitApp(PluginCall call) {
-        call.resolve();
-        getActivity().runOnUiThread(() -> getActivity().finish());
-    }
-
-    /**
      * Paint whatever sits behind the system bars in the web app's own background
      * colour, so the status bar reads as part of Maily rather than a leftover strip
      * of the launch theme. What that "whatever" is depends on the release:
