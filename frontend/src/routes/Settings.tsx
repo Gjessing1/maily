@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   AccountDto,
@@ -11,6 +11,7 @@ import type {
 import { api } from '../api/client';
 import { useAccounts, useFolders } from '../state/data';
 import { useAuth } from '../state/auth';
+import { useBackHandler } from '../state/backButton';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
@@ -18,7 +19,9 @@ import { untrustImageDomain } from '../state/trustedImages';
 import { checkForUpdate, type UpdateCheckResult } from '../pwa';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DetachSection } from '../components/DetachSection';
-import { BackIcon, CloseIcon } from '../ui/icons';
+import { BackIcon, ChevronRightIcon, CloseIcon } from '../ui/icons';
+import { useMediaQuery } from '../ui/useMediaQuery';
+import { SETTINGS_SECTIONS, settingsSection, type SettingsSectionId } from '../ui/settingsSections';
 import {
   configureNativeServer,
   findNativeAppUpdate,
@@ -76,6 +79,31 @@ function timeAgo(ms: number | null): string {
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
+}
+
+/**
+ * One captioned block of rows — the visual unit Settings has always used, now nested
+ * inside a section instead of standing alone at the top level. `note` is the small
+ * explanatory paragraph that hangs under the block.
+ */
+function Group({
+  title,
+  note,
+  children,
+}: {
+  title?: string;
+  note?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mt-6 first:mt-4">
+      {title && (
+        <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">{title}</p>
+      )}
+      <div className="border-y border-border">{children}</div>
+      {note && <div className="px-4 pt-2 text-xs text-faint">{note}</div>}
+    </section>
+  );
 }
 
 /** Keys of Prefs whose value is a boolean — the only ones ToggleRow can drive. */
@@ -397,22 +425,17 @@ function elapsed(sinceMs: number): string {
 }
 
 /**
- * Enrichment progress (Settings → Enrichment). Surfaces the LLM (Ollama) backlog — the
- * slow part the user watches catch up — with a progress bar, processed/failed counts,
- * and the live "currently working on" line. Falls back to the deterministic overall
- * count when the LLM enricher isn't configured.
+ * Enrichment progress. Surfaces the LLM (Ollama) backlog — the slow part the user
+ * watches catch up — with a progress bar, processed/failed counts, and the live
+ * "currently working on" line. Falls back to the deterministic overall count when the
+ * LLM enricher isn't configured.
  */
-function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
+function EnrichmentGroup({ status }: { status: EnrichmentStatusDto | null }) {
   if (status === null) {
     return (
-      <section className="mt-6">
-        <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-          Enrichment
-        </p>
-        <div className="border-y border-border px-4 py-3">
-          <p className="text-sm text-faint">Loading…</p>
-        </div>
-      </section>
+      <Group title="Enrichment">
+        <p className="px-4 py-3 text-sm text-faint">Loading…</p>
+      </Group>
     );
   }
 
@@ -429,9 +452,11 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
     status.overall.pending + status.overall.failed - status.llm.pending - status.llm.failed;
 
   return (
-    <section className="mt-6">
-      <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Enrichment</p>
-      <div className="border-y border-border px-4 py-3">
+    <Group
+      title="Enrichment"
+      note="New mail is enriched on arrival; the historical backlog catches up gradually in the background so it never slows the server."
+    >
+      <div className="px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <span className="min-w-0 truncate text-[15px]">
             {status.llmEnabled ? 'AI summaries & categories' : 'Deterministic enrichers'}
@@ -500,11 +525,7 @@ function EnrichmentSection({ status }: { status: EnrichmentStatusDto | null }) {
           </p>
         )}
       </div>
-      <p className="px-4 pt-2 text-xs text-faint">
-        New mail is enriched on arrival; the historical backlog catches up gradually in the
-        background so it never slows the server.
-      </p>
-    </section>
+    </Group>
   );
 }
 
@@ -554,7 +575,8 @@ function UpdateButton({ pending }: { pending: boolean }) {
   );
 }
 
-function NativeAndroidSection() {
+/** Server address and APK updates for the Capacitor shell — native builds only. */
+function NativeAndroidGroup() {
   const [serverUrl, setServerUrl] = useState('');
   const [version, setVersion] = useState('');
   const [release, setRelease] = useState<NativeAppRelease | null>(null);
@@ -595,11 +617,11 @@ function NativeAndroidSection() {
   };
 
   return (
-    <section className="mt-6">
-      <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-        Android app
-      </p>
-      <div className="space-y-3 border-y border-border px-4 py-3">
+    <Group
+      title="Android app"
+      note="The HTTPS address is stored only on this device. Applying it restarts Maily."
+    >
+      <div className="space-y-3 px-4 py-3">
         <label className="block">
           <span className="mb-1 block text-sm">Maily server address</span>
           <div className="flex gap-2">
@@ -635,42 +657,361 @@ function NativeAndroidSection() {
           </button>
         )}
       </div>
-      <p className="px-4 pt-2 text-xs text-faint">
-        The HTTPS address is stored only on this device. Applying it restarts Maily.
-      </p>
-    </section>
+    </Group>
   );
 }
 
-export function Settings() {
-  const navigate = useNavigate();
-  const accounts = useAccounts();
+/* --------------------------------------------------------------- sections */
+
+/** Which mailboxes exist, which of their labels reach the drawer, and locking up. */
+function AccountsSection({ accounts }: { accounts: AccountDto[] | undefined }) {
   const { logout } = useAuth();
-  const { signature, readingPane, conversationView } = usePrefs();
+  return (
+    <>
+      <Group title="Accounts">
+        <ul>
+          {accounts?.map((a) => (
+            <li key={a.id} className="flex flex-col px-4 py-3">
+              <span className="text-[15px]">{a.displayName || a.email}</span>
+              <span className="text-xs text-faint">
+                {a.email} · {a.provider}
+              </span>
+            </li>
+          ))}
+          {!accounts?.length && (
+            <li className="px-4 py-3 text-sm text-faint">No accounts configured.</li>
+          )}
+        </ul>
+      </Group>
+
+      <Group title="Folder menu">
+        <ToggleRow
+          label="Collapse mailboxes by default"
+          hint="Start each account's folders collapsed in the folder menu. The inbox stays visible; expand an account any time."
+          prefKey="collapseAccountsByDefault"
+        />
+      </Group>
+
+      <Group
+        title="Labels"
+        note="Turn a label off to hide it from the folder list (e.g. Gmail’s “Important”). Nothing is deleted — the label and its mail stay on the server."
+      >
+        {accounts?.map((a) => (
+          <AccountLabels key={a.id} account={a} />
+        ))}
+      </Group>
+
+      <Group note="Signs you out on this device and returns to the password screen. Your mail, settings, and Local archive stay put — you’ll need the master password to unlock again.">
+        <button
+          onClick={logout}
+          className="w-full px-4 py-3 text-left text-[15px] text-danger active:bg-surface-2"
+        >
+          Lock app
+        </button>
+      </Group>
+    </>
+  );
+}
+
+/** Theme, where a message opens on a big screen, and how dates read. */
+function AppearanceSection() {
+  const { readingPane } = usePrefs();
+  return (
+    <>
+      <Group title="Theme">
+        <SelectRow
+          label="Theme"
+          hint="System follows your device’s light/dark setting."
+          prefKey="theme"
+          options={[
+            { value: 'system', label: 'System' },
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
+        />
+      </Group>
+
+      <Group title="Layout">
+        <SelectRow
+          label="Reading pane"
+          hint="Where a message opens on larger screens. On phones it always opens full-screen."
+          prefKey="readingPane"
+          options={[
+            { value: 'none', label: 'No split' },
+            { value: 'right', label: 'Right of list' },
+            { value: 'below', label: 'Below list' },
+          ]}
+        />
+        {readingPane !== 'none' && (
+          <SelectRow
+            label="Split from"
+            hint="Minimum window width for the split to appear. Narrower windows open messages full-screen — handy when the browser's side tab strip leaves little room."
+            prefKey="readingPaneMinWidth"
+            options={[
+              { value: 768, label: 'Compact (768)' },
+              { value: 1024, label: 'Standard (1024)' },
+              { value: 1280, label: 'Wide (1280)' },
+            ]}
+          />
+        )}
+      </Group>
+
+      <Group title="Dates">
+        <SelectRow
+          label="Date format"
+          hint="How message dates are shown in lists and the reader."
+          prefKey="dateFormat"
+          options={[
+            { value: 'system', label: 'System' },
+            { value: 'dmy', label: 'DD.MM.YYYY' },
+            { value: 'mdy', label: 'MM/DD/YYYY' },
+            { value: 'ymd', label: 'YYYY-MM-DD' },
+          ]}
+        />
+      </Group>
+    </>
+  );
+}
+
+/** How the message list orders, pages and answers a swipe. */
+function ListSection() {
+  return (
+    <>
+      <Group title="Ordering">
+        <ToggleRow
+          label="Unread at top"
+          hint="Float unread messages above read ones in lists."
+          prefKey="unreadAtTop"
+        />
+        <SelectRow
+          label="Messages per page"
+          hint="How many to load before fetching more."
+          prefKey="pageSize"
+          options={[
+            { value: 50, label: '50' },
+            { value: 100, label: '100' },
+            { value: 200, label: '200' },
+          ]}
+        />
+      </Group>
+
+      <Group title="Gestures">
+        <SelectRow
+          label="Swipe right"
+          hint="Action when you swipe a message row left → right."
+          prefKey="swipeRight"
+          options={[
+            { value: 'read', label: 'Toggle read' },
+            { value: 'delete', label: 'Delete' },
+            { value: 'none', label: 'Off' },
+          ]}
+        />
+        <SelectRow
+          label="Swipe left"
+          hint="Action when you swipe a message row right → left."
+          prefKey="swipeLeft"
+          options={[
+            { value: 'read', label: 'Toggle read' },
+            { value: 'delete', label: 'Delete' },
+            { value: 'none', label: 'Off' },
+          ]}
+        />
+      </Group>
+    </>
+  );
+}
+
+/** Remote images, conversation grouping and when a message counts as read. */
+function ReadingSection() {
+  const { conversationView } = usePrefs();
+  return (
+    <>
+      <Group title="Images">
+        <ToggleRow
+          label="Block remote images"
+          hint="Hide tracking pixels until you tap “Show images” on a message. Trusted senders load automatically."
+          prefKey="blockRemoteImages"
+        />
+        <TrustedImageDomains />
+      </Group>
+
+      <Group title="Conversations">
+        <ToggleRow
+          label="Conversation view"
+          hint="Group a message and its replies into one conversation, in lists and the reader."
+          prefKey="conversationView"
+        />
+        {conversationView && (
+          <ToggleRow
+            label="Newest message on top"
+            hint="Show the most recent message at the top of a conversation (off = oldest first)."
+            prefKey="newestMessageFirst"
+          />
+        )}
+      </Group>
+
+      <Group title="Marking read">
+        <SelectRow
+          label="Mark as read on open"
+          hint="When opening a message should it count as read."
+          prefKey="markReadSeconds"
+          options={[
+            { value: -1, label: 'Never' },
+            { value: 0, label: 'Immediately' },
+            { value: 2, label: 'After 2s' },
+            { value: 5, label: 'After 5s' },
+            { value: 10, label: 'After 10s' },
+          ]}
+        />
+      </Group>
+    </>
+  );
+}
+
+/** Undo-send window, which account a fresh compose uses, and the signature. */
+function ComposingSection({ accounts }: { accounts: AccountDto[] | undefined }) {
+  const { signature } = usePrefs();
+  return (
+    <>
+      <Group title="Sending">
+        <SelectRow
+          label="Undo send"
+          hint="Hold a sent message this long (cancelable) before it goes out. The send commits on the server even if you close the app."
+          prefKey="undoSendSeconds"
+          options={[
+            { value: 0, label: 'Off' },
+            { value: 5, label: '5s' },
+            { value: 10, label: '10s' },
+            { value: 20, label: '20s' },
+            { value: 30, label: '30s' },
+          ]}
+        />
+        {(accounts?.length ?? 0) > 1 && (
+          <SelectRow
+            label="Default account"
+            hint="Which account a fresh compose sends from. Replies keep the account their mail arrived on."
+            prefKey="defaultComposeAccountId"
+            options={[
+              { value: '', label: 'Automatic' },
+              ...(accounts ?? []).map((a) => ({
+                value: a.id,
+                label: a.displayName || a.email,
+              })),
+            ]}
+          />
+        )}
+      </Group>
+
+      <Group title="Signature">
+        <ToggleRow
+          label="Append signature"
+          hint="Add your signature to the bottom of new messages."
+          prefKey="signatureEnabled"
+        />
+        <div className="px-4 py-3">
+          <label className="mb-2 block text-[15px]">Signature</label>
+          <textarea
+            value={signature}
+            onChange={(e) => setPref('signature', e.target.value)}
+            rows={4}
+            placeholder="Lars Gjessing&#10;Sent from maily"
+            className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none placeholder:text-faint"
+          />
+        </div>
+      </Group>
+    </>
+  );
+}
+
+/** CardDAV books to sync, and the CalDAV calendar new events land in. */
+function ContactsSection() {
+  return (
+    <>
+      <Group
+        title="Address books"
+        note="Turn a book on to sync its contacts and show them in the picker. New contacts are saved to the default book."
+      >
+        <AddressBooks />
+      </Group>
+
+      <Group
+        title="Calendars"
+        note="“Add to calendar” in the reader saves events to the default calendar unless you pick another one in the form."
+      >
+        <Calendars />
+      </Group>
+    </>
+  );
+}
+
+/** Web Push opt-in, plus the iOS install prerequisite (ARCHITECTURE §10). */
+function NotificationsSection() {
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
-  const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
-  const [enrich, setEnrich] = useState<EnrichmentStatusDto | null>(null);
-  const [config, setConfig] = useState<ServerConfigDto | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
   // Show the manual "Add to Home Screen" guidance on iOS Safari (not yet installed):
   // Apple blocks programmatic install prompts and Web Push needs the installed PWA.
   const showIosInstall = isIos() && !isStandalone();
 
-  // Server config is static for the session — fetch once.
-  useEffect(() => {
-    let alive = true;
-    api
-      .config()
-      .then((c) => alive && setConfig(c))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
+  async function toggleNotifications() {
+    setBusy(true);
+    try {
+      if (state === 'granted') {
+        await disablePush();
+        // Permission itself can't be revoked programmatically; reflect unsubscribe.
+        setState(pushState());
+      } else {
+        const ok = await enablePush();
+        setState(ok ? 'granted' : pushState());
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  // Poll sync + enrichment status while Settings is open (cheap; both drift as the
-  // worker processes mail — the LLM backlog catches up over many passes).
+  return (
+    <Group
+      note={state === 'denied' ? 'Notifications are blocked in your browser settings.' : undefined}
+    >
+      {showIosInstall && (
+        <div className="px-4 py-3">
+          <p className="text-[15px]">Install maily on your Home Screen</p>
+          <p className="mt-1 text-xs text-faint">
+            Background notifications on iPhone/iPad need the app installed. In Safari, tap the Share
+            button, then “Add to Home Screen”. Open maily from the new icon and enable notifications
+            here.
+          </p>
+        </div>
+      )}
+      {showIosInstall ? null : state === 'unsupported' ? (
+        <p className="px-4 py-3 text-sm text-faint">
+          Background notifications aren’t supported here. On iOS, install the app to your Home
+          Screen first.
+        </p>
+      ) : (
+        <button
+          onClick={toggleNotifications}
+          disabled={busy || state === 'denied'}
+          className="flex w-full items-center justify-between px-4 py-3 text-left active:bg-surface-2 disabled:opacity-50"
+        >
+          <span className="text-[15px]">Background notifications</span>
+          <span className="text-sm text-accent">
+            {state === 'granted' ? 'On' : state === 'denied' ? 'Blocked' : 'Enable'}
+          </span>
+        </button>
+      )}
+    </Group>
+  );
+}
+
+/**
+ * Per-account IMAP state and the enrichment queue. Both drift as the worker processes
+ * mail, so this polls — but only while the section is open, which is a direct win from
+ * the drill-down: Settings used to poll both endpoints every 5s whatever you came for.
+ */
+function SyncSection() {
+  const [sync, setSync] = useState<AccountSyncStatusDto[] | null>(null);
+  const [enrich, setEnrich] = useState<EnrichmentStatusDto | null>(null);
+
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -691,21 +1032,95 @@ export function Settings() {
     };
   }, []);
 
-  async function toggleNotifications() {
-    setBusy(true);
-    try {
-      if (state === 'granted') {
-        await disablePush();
-        // Permission itself can't be revoked programmatically; reflect unsubscribe.
-        setState(pushState());
-      } else {
-        const ok = await enablePush();
-        setState(ok ? 'granted' : pushState());
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
+  return (
+    <>
+      <Group
+        title="Sync"
+        note={
+          <>
+            {sync && sync.length > 0 && (
+              <p>
+                Local storage used:{' '}
+                <span className="font-medium text-fg">
+                  {humanBytes(sync.reduce((sum, a) => sum + (a.contentBytes ?? 0), 0))}
+                </span>
+              </p>
+            )}
+            <p className="pt-2">
+              Counts are messages cached locally per folder. This is on-disk size here — archived
+              message sources plus message bodies and any downloaded attachments — not your
+              mailbox’s server-side total. It’s normally far smaller because attachments are fetched
+              on demand, and older mail stays on the server until you open it.
+            </p>
+          </>
+        }
+      >
+        {sync === null ? (
+          <p className="px-4 py-3 text-sm text-faint">Loading…</p>
+        ) : sync.length === 0 ? (
+          <p className="px-4 py-3 text-sm text-faint">No active sync engines.</p>
+        ) : (
+          sync.map((acc) => {
+            // "Syncing" until every folder has completed its first pass; once all
+            // are synced and the IDLE link is up, the account is unambiguously
+            // caught up. Offline trumps both.
+            const syncing = acc.folders.some((f) => !f.synced);
+            const status = !acc.connected
+              ? { dot: 'bg-faint', label: 'Offline' }
+              : syncing
+                ? { dot: 'bg-amber-500 animate-pulse', label: 'Syncing…' }
+                : { dot: 'bg-green-500', label: 'Up to date' };
+            return (
+              <div key={acc.accountId} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-[15px]">{acc.email}</span>
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs">
+                    <span className={`size-2 rounded-full ${status.dot}`} />
+                    {status.label}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-faint">
+                  {acc.connected && !syncing
+                    ? `Synced ${timeAgo(acc.lastSyncAt)}`
+                    : `Last sync ${timeAgo(acc.lastSyncAt)}`}
+                  {` · ${humanBytes(acc.contentBytes)}`}
+                </p>
+                <ul className="mt-2 space-y-0.5">
+                  {acc.folders
+                    .filter((f) => f.cached > 0 || f.synced)
+                    .map((f) => (
+                      <li
+                        key={f.id}
+                        className="flex items-center justify-between gap-2 text-xs text-muted"
+                      >
+                        <span className="min-w-0 truncate capitalize">{f.name}</span>
+                        <span className="shrink-0 tabular-nums text-faint">
+                          {f.cached.toLocaleString()}
+                          {!f.synced && ' · syncing…'}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            );
+          })
+        )}
+      </Group>
+
+      <EnrichmentGroup status={enrich} />
+    </>
+  );
+}
+
+/** The browser's offline cache, the server's sync window, and detach-to-local. */
+function StorageSection({
+  accounts,
+  config,
+}: {
+  accounts: AccountDto[] | undefined;
+  config: ServerConfigDto | null;
+}) {
+  const [confirmClear, setConfirmClear] = useState(false);
 
   async function clearCache() {
     await cache.delete();
@@ -713,466 +1128,49 @@ export function Settings() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 text-lg font-semibold">Settings</h1>
-      </header>
-
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        <section className="mt-4">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Accounts
-          </p>
-          <ul className="border-y border-border">
-            {accounts?.map((a) => (
-              <li key={a.id} className="flex flex-col px-4 py-3">
-                <span className="text-[15px]">{a.displayName || a.email}</span>
-                <span className="text-xs text-faint">
-                  {a.email} · {a.provider}
-                </span>
-              </li>
-            ))}
-            {!accounts?.length && (
-              <li className="px-4 py-3 text-sm text-faint">No accounts configured.</li>
-            )}
-          </ul>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Appearance
-          </p>
-          <div className="border-y border-border">
-            <SelectRow
-              label="Theme"
-              hint="System follows your device’s light/dark setting."
-              prefKey="theme"
-              options={[
-                { value: 'system', label: 'System' },
-                { value: 'light', label: 'Light' },
-                { value: 'dark', label: 'Dark' },
-              ]}
-            />
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Reading
-          </p>
-          <div className="border-y border-border">
-            <ToggleRow
-              label="Block remote images"
-              hint="Hide tracking pixels until you tap “Show images” on a message. Trusted senders load automatically."
-              prefKey="blockRemoteImages"
-            />
-            <TrustedImageDomains />
-            <ToggleRow
-              label="Unread at top"
-              hint="Float unread messages above read ones in lists."
-              prefKey="unreadAtTop"
-            />
-            <ToggleRow
-              label="Conversation view"
-              hint="Group a message and its replies into one conversation, in lists and the reader."
-              prefKey="conversationView"
-            />
-            {conversationView && (
-              <ToggleRow
-                label="Newest message on top"
-                hint="Show the most recent message at the top of a conversation (off = oldest first)."
-                prefKey="newestMessageFirst"
-              />
-            )}
-            <SelectRow
-              label="Mark as read on open"
-              hint="When opening a message should it count as read."
-              prefKey="markReadSeconds"
-              options={[
-                { value: -1, label: 'Never' },
-                { value: 0, label: 'Immediately' },
-                { value: 2, label: 'After 2s' },
-                { value: 5, label: 'After 5s' },
-                { value: 10, label: 'After 10s' },
-              ]}
-            />
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Layout</p>
-          <div className="border-y border-border">
-            <ToggleRow
-              label="Collapse mailboxes by default"
-              hint="Start each account's folders collapsed in the folder menu. The inbox stays visible; expand an account any time."
-              prefKey="collapseAccountsByDefault"
-            />
-            <SelectRow
-              label="Reading pane"
-              hint="Where a message opens on larger screens. On phones it always opens full-screen."
-              prefKey="readingPane"
-              options={[
-                { value: 'none', label: 'No split' },
-                { value: 'right', label: 'Right of list' },
-                { value: 'below', label: 'Below list' },
-              ]}
-            />
-            {readingPane !== 'none' && (
-              <SelectRow
-                label="Split from"
-                hint="Minimum window width for the split to appear. Narrower windows open messages full-screen — handy when the browser's side tab strip leaves little room."
-                prefKey="readingPaneMinWidth"
-                options={[
-                  { value: 768, label: 'Compact (768)' },
-                  { value: 1024, label: 'Standard (1024)' },
-                  { value: 1280, label: 'Wide (1280)' },
-                ]}
-              />
-            )}
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Labels</p>
-          <div className="border-y border-border">
-            {accounts?.map((a) => (
-              <AccountLabels key={a.id} account={a} />
-            ))}
-          </div>
-          <p className="px-4 pt-2 text-xs text-faint">
-            Turn a label off to hide it from the folder list (e.g. Gmail’s “Important”). Nothing is
-            deleted — the label and its mail stay on the server.
-          </p>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Gestures
-          </p>
-          <div className="border-y border-border">
-            <SelectRow
-              label="Swipe right"
-              hint="Action when you swipe a message row left → right."
-              prefKey="swipeRight"
-              options={[
-                { value: 'read', label: 'Toggle read' },
-                { value: 'delete', label: 'Delete' },
-                { value: 'none', label: 'Off' },
-              ]}
-            />
-            <SelectRow
-              label="Swipe left"
-              hint="Action when you swipe a message row right → left."
-              prefKey="swipeLeft"
-              options={[
-                { value: 'read', label: 'Toggle read' },
-                { value: 'delete', label: 'Delete' },
-                { value: 'none', label: 'Off' },
-              ]}
-            />
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Display
-          </p>
-          <div className="border-y border-border">
-            <SelectRow
-              label="Date format"
-              hint="How message dates are shown in lists and the reader."
-              prefKey="dateFormat"
-              options={[
-                { value: 'system', label: 'System' },
-                { value: 'dmy', label: 'DD.MM.YYYY' },
-                { value: 'mdy', label: 'MM/DD/YYYY' },
-                { value: 'ymd', label: 'YYYY-MM-DD' },
-              ]}
-            />
-            <SelectRow
-              label="Messages per page"
-              hint="How many to load before fetching more."
-              prefKey="pageSize"
-              options={[
-                { value: 50, label: '50' },
-                { value: 100, label: '100' },
-                { value: 200, label: '200' },
-              ]}
-            />
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Composing
-          </p>
-          <div className="border-y border-border">
-            <SelectRow
-              label="Undo send"
-              hint="Hold a sent message this long (cancelable) before it goes out. The send commits on the server even if you close the app."
-              prefKey="undoSendSeconds"
-              options={[
-                { value: 0, label: 'Off' },
-                { value: 5, label: '5s' },
-                { value: 10, label: '10s' },
-                { value: 20, label: '20s' },
-                { value: 30, label: '30s' },
-              ]}
-            />
-            {(accounts?.length ?? 0) > 1 && (
-              <SelectRow
-                label="Default account"
-                hint="Which account a fresh compose sends from. Replies keep the account their mail arrived on."
-                prefKey="defaultComposeAccountId"
-                options={[
-                  { value: '', label: 'Automatic' },
-                  ...(accounts ?? []).map((a) => ({
-                    value: a.id,
-                    label: a.displayName || a.email,
-                  })),
-                ]}
-              />
-            )}
-            <ToggleRow
-              label="Append signature"
-              hint="Add your signature to the bottom of new messages."
-              prefKey="signatureEnabled"
-            />
-            <div className="px-4 py-3">
-              <label className="mb-2 block text-[15px]">Signature</label>
-              <textarea
-                value={signature}
-                onChange={(e) => setPref('signature', e.target.value)}
-                rows={4}
-                placeholder="Lars Gjessing&#10;Sent from maily"
-                className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none placeholder:text-faint"
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Address books
-          </p>
-          <div className="border-y border-border">
-            <AddressBooks />
-          </div>
-          <p className="px-4 pt-2 text-xs text-faint">
-            Turn a book on to sync its contacts and show them in the picker. New contacts are saved
-            to the default book.
-          </p>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Calendars
-          </p>
-          <div className="border-y border-border">
-            <Calendars />
-          </div>
-          <p className="px-4 pt-2 text-xs text-faint">
-            “Add to calendar” in the reader saves events to the default calendar unless you pick
-            another one in the form.
-          </p>
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Notifications
-          </p>
-          <div className="border-y border-border">
-            {showIosInstall && (
-              <div className="px-4 py-3">
-                <p className="text-[15px]">Install maily on your Home Screen</p>
-                <p className="mt-1 text-xs text-faint">
-                  Background notifications on iPhone/iPad need the app installed. In Safari, tap the
-                  Share button, then “Add to Home Screen”. Open maily from the new icon and enable
-                  notifications here.
-                </p>
-              </div>
-            )}
-            {showIosInstall ? null : state === 'unsupported' ? (
-              <p className="px-4 py-3 text-sm text-faint">
-                Background notifications aren’t supported here. On iOS, install the app to your Home
-                Screen first.
-              </p>
-            ) : (
-              <button
-                onClick={toggleNotifications}
-                disabled={busy || state === 'denied'}
-                className="flex w-full items-center justify-between px-4 py-3 text-left active:bg-surface-2 disabled:opacity-50"
-              >
-                <span className="text-[15px]">Background notifications</span>
-                <span className="text-sm text-accent">
-                  {state === 'granted' ? 'On' : state === 'denied' ? 'Blocked' : 'Enable'}
-                </span>
-              </button>
-            )}
-          </div>
-          {state === 'denied' && (
-            <p className="px-4 pt-2 text-xs text-faint">
-              Notifications are blocked in your browser settings.
-            </p>
-          )}
-        </section>
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">Sync</p>
-          <div className="border-y border-border">
-            {sync === null ? (
-              <p className="px-4 py-3 text-sm text-faint">Loading…</p>
-            ) : sync.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-faint">No active sync engines.</p>
-            ) : (
-              sync.map((acc) => {
-                // "Syncing" until every folder has completed its first pass; once all
-                // are synced and the IDLE link is up, the account is unambiguously
-                // caught up. Offline trumps both.
-                const syncing = acc.folders.some((f) => !f.synced);
-                const status = !acc.connected
-                  ? { dot: 'bg-faint', label: 'Offline' }
-                  : syncing
-                    ? { dot: 'bg-amber-500 animate-pulse', label: 'Syncing…' }
-                    : { dot: 'bg-green-500', label: 'Up to date' };
-                return (
-                  <div key={acc.accountId} className="px-4 py-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-[15px]">{acc.email}</span>
-                      <span className="flex shrink-0 items-center gap-1.5 text-xs">
-                        <span className={`size-2 rounded-full ${status.dot}`} />
-                        {status.label}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-faint">
-                      {acc.connected && !syncing
-                        ? `Synced ${timeAgo(acc.lastSyncAt)}`
-                        : `Last sync ${timeAgo(acc.lastSyncAt)}`}
-                      {` · ${humanBytes(acc.contentBytes)}`}
-                    </p>
-                    <ul className="mt-2 space-y-0.5">
-                      {acc.folders
-                        .filter((f) => f.cached > 0 || f.synced)
-                        .map((f) => (
-                          <li
-                            key={f.id}
-                            className="flex items-center justify-between gap-2 text-xs text-muted"
-                          >
-                            <span className="min-w-0 truncate capitalize">{f.name}</span>
-                            <span className="shrink-0 tabular-nums text-faint">
-                              {f.cached.toLocaleString()}
-                              {!f.synced && ' · syncing…'}
-                            </span>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          {sync && sync.length > 0 && (
-            <p className="px-4 pt-2 text-xs text-faint">
-              Local storage used:{' '}
-              <span className="font-medium text-fg">
-                {humanBytes(sync.reduce((sum, a) => sum + (a.contentBytes ?? 0), 0))}
-              </span>
-            </p>
-          )}
-          <p className="px-4 pt-2 text-xs text-faint">
-            Counts are messages cached locally per folder. This is on-disk size here — archived
-            message sources plus message bodies and any downloaded attachments — not your mailbox’s
-            server-side total. It’s normally far smaller because attachments are fetched on demand,
-            and older mail stays on the server until you open it.
-          </p>
-        </section>
-
-        <EnrichmentSection status={enrich} />
-
-        <section className="mt-6">
-          <p className="px-4 pb-1 text-xs font-medium uppercase tracking-wide text-faint">
-            Storage
-          </p>
-          <div className="border-y border-border">
-            <SelectRow
-              label="Keep on this device"
-              hint="How long mail stays in this browser’s offline cache before it’s evicted."
-              prefKey="clientCacheDays"
-              options={[
-                { value: 7, label: '7 days' },
-                { value: 30, label: '30 days' },
-                { value: 90, label: '90 days' },
-                { value: 365, label: '1 year' },
-              ]}
-            />
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <span className="min-w-0">
-                <span className="block text-[15px]">Server cache window</span>
-                <span className="mt-0.5 block text-xs text-faint">
-                  How far back the server syncs into its local archive (set on the server).
-                </span>
-              </span>
-              <span className="shrink-0 text-sm text-faint">
-                {config ? windowLabel(config.cacheWindowDays) : '…'}
-              </span>
-            </div>
-            <button
-              onClick={() => setConfirmClear(true)}
-              className="w-full px-4 py-3 text-left text-[15px] active:bg-surface-2"
-            >
-              Clear local cache
-            </button>
-          </div>
-          <p className="px-4 pt-2 text-xs text-faint">
+    <>
+      <Group
+        title="Offline cache"
+        note={
+          <>
             This only clears mail stored in <strong>this browser</strong>. It does{' '}
             <strong>not</strong> touch the server or your Local archive below — everything
             re-downloads from the server on reload. The one thing it can’t bring back is mail that
             was already purged from the server itself.
-          </p>
-        </section>
+          </>
+        }
+      >
+        <SelectRow
+          label="Keep on this device"
+          hint="How long mail stays in this browser’s offline cache before it’s evicted."
+          prefKey="clientCacheDays"
+          options={[
+            { value: 7, label: '7 days' },
+            { value: 30, label: '30 days' },
+            { value: 90, label: '90 days' },
+            { value: 365, label: '1 year' },
+          ]}
+        />
+        <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <span className="min-w-0">
+            <span className="block text-[15px]">Server cache window</span>
+            <span className="mt-0.5 block text-xs text-faint">
+              How far back the server syncs into its local archive (set on the server).
+            </span>
+          </span>
+          <span className="shrink-0 text-sm text-faint">
+            {config ? windowLabel(config.cacheWindowDays) : '…'}
+          </span>
+        </div>
+        <button
+          onClick={() => setConfirmClear(true)}
+          className="w-full px-4 py-3 text-left text-[15px] active:bg-surface-2"
+        >
+          Clear local cache
+        </button>
+      </Group>
 
-        <DetachSection accounts={accounts ?? []} />
-
-        {isNativeAndroid() && <NativeAndroidSection />}
-
-        <section className="mt-6 mb-10">
-          <div className="border-y border-border">
-            <button
-              onClick={logout}
-              className="w-full px-4 py-3 text-left text-[15px] text-danger active:bg-surface-2"
-            >
-              Lock app
-            </button>
-          </div>
-          <p className="px-4 pt-2 text-xs text-faint">
-            Signs you out on this device and returns to the password screen. Your mail, settings,
-            and Local archive stay put — you’ll need the master password to unlock again.
-          </p>
-        </section>
-
-        {/* About: the bundled build id is what the service worker is actually serving —
-            comparing it against the server's proves whether an update has landed here. */}
-        <section className="mb-8 px-4 text-center text-xs text-faint">
-          <p>
-            maily · build <span className="font-mono">{__BUILD_ID__}</span> ·{' '}
-            {new Date(__BUILT_AT__).toLocaleString()}
-          </p>
-          {config && config.buildId !== __BUILD_ID__ && (
-            <p className="mt-1 text-accent">
-              Server is on build <span className="font-mono">{config.buildId}</span> — an app update
-              is waiting.
-            </p>
-          )}
-          <UpdateButton pending={!!config && config.buildId !== __BUILD_ID__} />
-        </section>
-      </main>
+      <DetachSection accounts={accounts ?? []} />
 
       <ConfirmDialog
         open={confirmClear}
@@ -1186,6 +1184,137 @@ export function Settings() {
         }}
         onCancel={() => setConfirmClear(false)}
       />
+    </>
+  );
+}
+
+/** Which build runs here, whether the server has a newer one, and the Android shell. */
+function SystemSection({ config }: { config: ServerConfigDto | null }) {
+  const stale = !!config && config.buildId !== __BUILD_ID__;
+  return (
+    <>
+      {/* About: the bundled build id is what the service worker is actually serving —
+          comparing it against the server's proves whether an update has landed here. */}
+      <Group title="About">
+        <div className="px-4 py-3 text-xs text-faint">
+          <p>
+            maily · build <span className="font-mono">{__BUILD_ID__}</span> ·{' '}
+            {new Date(__BUILT_AT__).toLocaleString()}
+          </p>
+          {stale && (
+            <p className="mt-1 text-accent">
+              Server is on build <span className="font-mono">{config.buildId}</span> — an app update
+              is waiting.
+            </p>
+          )}
+          <UpdateButton pending={stale} />
+        </div>
+      </Group>
+
+      {isNativeAndroid() && <NativeAndroidGroup />}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ shell */
+
+/**
+ * Settings, grouped by task instead of stacked in one scroll (see
+ * `ui/settingsSections.ts`). A phone shows the section menu and drills into one at a
+ * time — Android's Back pops the drill first, like every other overlay in the app —
+ * while a wide window keeps the menu as a sidebar beside the open section.
+ *
+ * Only the open section is mounted, so a section's fetches and polling start when it
+ * is reached and stop when it is left.
+ */
+export function Settings() {
+  const navigate = useNavigate();
+  const accounts = useAccounts();
+  const wide = useMediaQuery('(min-width: 768px)');
+  const [section, setSection] = useState<SettingsSectionId | null>(null);
+  const [config, setConfig] = useState<ServerConfigDto | null>(null);
+
+  // Server config is static for the session — fetch once, shared by Storage and System.
+  useEffect(() => {
+    let alive = true;
+    api
+      .config()
+      .then((c) => alive && setConfig(c))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const opened = settingsSection(section);
+  // A wide window always has a section on screen; a phone starts on the bare menu.
+  const current = opened ?? (wide ? (SETTINGS_SECTIONS[0] ?? null) : null);
+  const drilled = !wide && opened !== null;
+
+  // Back out of the drill before leaving Settings — same contract as the drawer/dialogs.
+  useBackHandler(drilled, () => setSection(null));
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
+        <button
+          onClick={() => (drilled ? setSection(null) : navigate(-1))}
+          className="rounded-full p-2 active:bg-surface-2"
+          aria-label={drilled ? 'Back to settings' : 'Back'}
+        >
+          <BackIcon />
+        </button>
+        <h1 className="flex-1 truncate text-lg font-semibold">
+          {drilled && opened ? opened.label : 'Settings'}
+        </h1>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {!drilled && (
+          <nav
+            aria-label="Settings sections"
+            className={`overflow-y-auto no-scrollbar ${
+              wide ? 'w-72 shrink-0 border-r border-border py-2' : 'flex-1 py-2'
+            }`}
+          >
+            {SETTINGS_SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                aria-current={current?.id === s.id ? 'page' : undefined}
+                className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-2 ${
+                  wide && current?.id === s.id ? 'bg-surface-2' : ''
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-[15px]">{s.label}</span>
+                  <span className="mt-0.5 block text-xs text-faint">{s.hint}</span>
+                </span>
+                {!wide && <ChevronRightIcon className="size-5 shrink-0 text-faint" />}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {current && (wide || drilled) && (
+          <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
+            {/* Capped so a wide window doesn't stretch rows and hint text across the
+                whole pane; a no-op at phone widths. */}
+            <div className="mx-auto w-full max-w-2xl">
+              {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
+              {current.id === 'appearance' && <AppearanceSection />}
+              {current.id === 'list' && <ListSection />}
+              {current.id === 'reading' && <ReadingSection />}
+              {current.id === 'composing' && <ComposingSection accounts={accounts} />}
+              {current.id === 'contacts' && <ContactsSection />}
+              {current.id === 'notifications' && <NotificationsSection />}
+              {current.id === 'sync' && <SyncSection />}
+              {current.id === 'storage' && <StorageSection accounts={accounts} config={config} />}
+              {current.id === 'system' && <SystemSection config={config} />}
+            </div>
+          </main>
+        )}
+      </div>
     </div>
   );
 }

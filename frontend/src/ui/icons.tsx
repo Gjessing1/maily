@@ -86,6 +86,13 @@ export const BackIcon = (p: IconProps) => (
   </Base>
 );
 
+/** Chevron pointing into a sub-screen — the settings menu's drill-down affordance. */
+export const ChevronRightIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m9 18 6-6-6-6" />
+  </Base>
+);
+
 export const StarIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 21l1.1-6.5L2.6 9.8l6.5-.9Z" />
