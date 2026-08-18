@@ -1,9 +1,11 @@
 /**
  * Reusable confirmation modal for destructive actions (delete / reset) — see the
  * "audit destructive actions" backlog item. Declarative + controlled: render it
- * with `open` and wire `onConfirm`/`onCancel`. Dismisses on Escape or backdrop tap.
+ * with `open` and wire `onConfirm`/`onCancel`. Dismisses on Escape, backdrop tap, or
+ * Android's system Back.
  */
 import { useEffect } from 'react';
+import { useBackHandler } from '../state/backButton';
 
 export function ConfirmDialog({
   open,
@@ -30,6 +32,9 @@ export function ConfirmDialog({
   onCancel: () => void;
   onNeutral?: () => void;
 }) {
+  // Android Back cancels the dialog rather than navigating away behind it.
+  useBackHandler(open, onCancel);
+
   // Escape cancels while the dialog is open.
   useEffect(() => {
     if (!open) return;

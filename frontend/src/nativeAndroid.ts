@@ -12,10 +12,17 @@ export interface NativeAppRelease {
   sha256: string;
 }
 
+/** Handle returned by Capacitor's generated `addListener` shim (synchronous on Android). */
+interface NativeListener {
+  remove(): void;
+}
+
 interface MailyNativePlugin {
   getInfo(): Promise<NativeAppInfo>;
   configureServer(options: { serverUrl: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
+  exitApp(): Promise<void>;
+  addListener(eventName: 'backButton', callback: () => void): NativeListener;
 }
 
 function nativePlugin(): MailyNativePlugin | null {
@@ -46,6 +53,24 @@ export async function openNativeExternal(url: string): Promise<void> {
     return;
   }
   await plugin.openExternal({ url });
+}
+
+/**
+ * Subscribe to the Android system Back press. The native side only forwards the press
+ * while a listener is registered here, and falls back to WebView history otherwise —
+ * so the returned unsubscribe must run when the app stops handling Back itself.
+ * Returns a no-op unsubscribe on the web, where there is no Back button to claim.
+ */
+export function onNativeBack(handler: () => void): () => void {
+  const plugin = nativePlugin();
+  if (typeof plugin?.addListener !== 'function') return () => {};
+  const listener = plugin.addListener('backButton', handler);
+  return () => listener.remove();
+}
+
+/** Leave the Android app (Back at the root of the navigation stack). No-op on the web. */
+export async function exitNativeApp(): Promise<void> {
+  await nativePlugin()?.exitApp();
 }
 
 /** Return a newer APK published by this Maily server, or null. */

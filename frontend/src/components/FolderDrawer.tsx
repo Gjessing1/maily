@@ -6,6 +6,7 @@ import { archivedFolder } from '../state/archived';
 import { starredFolder, isStarredView } from '../state/starred';
 import { unifiedFolderFor } from '../state/unified';
 import { useAuth } from '../state/auth';
+import { useBackHandler } from '../state/backButton';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
 import {
   ArchiveIcon,
@@ -250,6 +251,10 @@ export function FolderDrawer({
   /** Enable the left-edge swipe-to-open affordance (mobile only). */
   swipeToOpen?: boolean;
 }) {
+  // The drawer is an overlay with no history entry, so Android Back has to be told
+  // to close it instead of leaving the folder underneath.
+  useBackHandler(open, onClose);
+
   const { logout } = useAuth();
   const { theme, collapseAccountsByDefault } = usePrefs();
   const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];

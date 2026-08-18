@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { onSocketReconnect } from './api/socket';
 import { useAuth } from './state/auth';
+import { useAndroidBackButton } from './state/androidBack';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { hydratePrefs } from './state/prefs';
@@ -80,6 +81,11 @@ function OnlineOnly({ children }: { children: ReactNode }) {
 export function App() {
   const { authed, ready } = useAuth();
   const online = useOnlineStatus();
+
+  // Claim Android's system Back for the whole app — including the login and offline
+  // screens, where the only sensible Back is leaving Maily rather than reversing out
+  // of the WebView into whatever page preceded it.
+  useAndroidBackButton();
 
   // Signal handling must live above the routes so flag/new-mail updates land in
   // the cache regardless of which screen is mounted.

@@ -6,6 +6,7 @@ import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
 import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useBackHandler } from '../state/backButton';
 import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor, type InlineImage } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
@@ -342,6 +343,13 @@ export function Compose() {
       leave();
     }
   }
+
+  // Android Back leaves the composer through the same guard as the ✕ button: an
+  // untouched draft just closes, a dirty one raises the save/discard dialog (which
+  // claims Back for itself while open). The send-later popover opens last, so it
+  // closes first.
+  useBackHandler(true, cancel);
+  useBackHandler(scheduleOpen, () => setScheduleOpen(false));
 
   /** Discard staged uploads + the persisted draft, then leave the composer. */
   function discardDraft() {

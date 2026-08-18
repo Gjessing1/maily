@@ -14,6 +14,8 @@ import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewFeature;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.CapConfig;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginHandle;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "Maily";
@@ -44,28 +46,40 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * BridgeActivity does not consume Android's system Back action. Without an App
-     * plugin listener or a native callback, Back finishes the activity even when
-     * React Router has pushed an inbox -> message entry into WebView history. Keep
-     * all browser history (including same-document pushState entries) inside the
-     * WebView; only let Android leave Maily when there is genuinely nothing to go
-     * back to.
+     * BridgeActivity does not consume Android's system Back action, so without a
+     * callback Back finishes the activity from anywhere in the app.
+     *
+     * The web app decides first: Maily is served from a remote origin as a React
+     * Router SPA, and most of what Back should dismiss (folder drawer, confirm
+     * dialogs, multi-select, the split-pane reader) owns no WebView history entry at
+     * all, so {@code WebView.canGoBack()} is the wrong question to ask. It stays as
+     * the fallback for pages the web layer does not control — the SSO detour, the
+     * connection-error page, or a WebView whose JS has not booted yet.
      */
     private void installWebViewBackNavigation() {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (bridge != null && bridge.getWebView().canGoBack()) {
+                boolean canGoBack = bridge != null && bridge.getWebView().canGoBack();
+                MailyNativePlugin plugin = mailyPlugin();
+                if (plugin != null && plugin.dispatchBackButton(canGoBack)) return;
+                if (canGoBack) {
                     bridge.getWebView().goBack();
                     return;
                 }
-                // Temporarily disable this callback so the dispatcher can perform
-                // the normal activity/launcher transition at the root of the app.
-                setEnabled(false);
-                getOnBackPressedDispatcher().onBackPressed();
-                setEnabled(true);
+                // Root of the app. Finish directly rather than re-dispatching through
+                // the dispatcher: predictive back (default from targetSdk 36) does not
+                // support re-entering onBackPressed() from inside a callback.
+                finish();
             }
         });
+    }
+
+    private MailyNativePlugin mailyPlugin() {
+        if (bridge == null) return null;
+        PluginHandle handle = bridge.getPlugin("MailyNative");
+        Plugin instance = handle == null ? null : handle.getInstance();
+        return instance instanceof MailyNativePlugin ? (MailyNativePlugin) instance : null;
     }
 
     /**

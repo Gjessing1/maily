@@ -10,6 +10,7 @@ import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useBackHandler } from '../state/backButton';
 import { isArchivedView } from '../state/archived';
 import { isStarredView } from '../state/starred';
 import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../state/unified';
@@ -240,6 +241,12 @@ export function Home() {
     });
   }, []);
   const clearSelect = useCallback(() => setSelectedIds(new Set()), []);
+
+  // Android Back peels the inbox's overlays before it leaves the folder — whichever
+  // was opened last goes first. Neither owns a history entry: the reading pane swaps
+  // the `msg` param with `replace`, and multi-select is pure component state.
+  useBackHandler(selectionMode, clearSelect);
+  useBackHandler(splitMode && !!selectedId, closeReader);
 
   // Bulk actions select conversations (by representative id); each fans out to every
   // message in its thread so "mark read"/"archive"/"delete" hit whole conversations.

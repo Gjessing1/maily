@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { patchCachedFlags } from '../db/cache';
 import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
+import { useBackHandler } from '../state/backButton';
 import { ConversationThread } from '../components/ConversationThread';
 import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
@@ -73,6 +74,8 @@ export function ReaderView({
   const [deletingForever, setDeletingForever] = useState(false);
   // "Add to calendar" sheet (pre-filled from the message's enrichment drafts).
   const [addToCalendar, setAddToCalendar] = useState(false);
+  // Android Back closes the sheet instead of leaving the message behind it.
+  useBackHandler(addToCalendar, () => setAddToCalendar(false));
   const autoMarkedId = useRef<string | null>(null);
   // Detached-window affordance: desktop only, and never inside a popout (it's already one).
   const popout = isPopout();

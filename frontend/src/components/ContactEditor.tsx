@@ -14,6 +14,7 @@ import type {
   TypedValueDto,
 } from '@maily/shared';
 import { api } from '../api/client';
+import { useBackHandler } from '../state/backButton';
 import { avatarHue, initials } from '../ui/format';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CloseIcon, PlusIcon, TrashIcon } from '../ui/icons';
@@ -87,6 +88,10 @@ export function ContactEditor({
   onClose,
   onSaved,
 }: Props) {
+  // Mounted only while the sheet is open, so Android Back dismisses it rather than
+  // navigating out from under an in-progress edit.
+  useBackHandler(true, onClose);
+
   const editing = card !== null;
   // Photo is tri-state on the wire (set / clear / leave-as-is); `photoDirty` decides whether
   // we send the field at all, so an unrelated edit never rewrites an existing PHOTO.

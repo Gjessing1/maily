@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AccountDto, MessageDto } from '@maily/shared';
 import { api } from '../api/client';
+import { useBackHandler } from '../state/backButton';
 import { buildForward, buildReply, buildReplyAll } from '../state/replyPrefill';
 import {
   ArchiveIcon,
@@ -56,6 +57,9 @@ export function MessageContextMenu({
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
+
+  // Mounted only while open, so Back always means "dismiss the menu".
+  useBackHandler(true, onClose);
 
   // Flip the menu back inside the viewport when opened near the right/bottom edge.
   useLayoutEffect(() => {
