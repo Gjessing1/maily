@@ -129,8 +129,14 @@ export function buildMailSrcDoc(html: string, allowImages: boolean, theme: Resol
   /* The frame is sized to its content and never scrolls itself, but a sub-pixel
      remainder can still leave the inner document a fraction scrollable — enough for
      a touch to latch onto it and show the Android overscroll stretch instead of
-     scrolling the reader behind it. Refuse the chain. */
-  html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; overscroll-behavior:none; }
+     scrolling the reader behind it. Take the scroll away rather than refusing the
+     chain: overscroll-behavior:none here lands on this document's ROOT element, so it
+     propagates to the frame's viewport and blocks chaining out to the reader even when
+     there is nothing inside to scroll — which left the message unscrollable altogether
+     on the APK. overflow:hidden leaves the frame with no scroll port to latch onto, so
+     the touch chains to the reader the way an unscrollable frame should. Note this is
+     inside a JS template literal: no backticks in these comments. */
+  html { margin:0; padding:0; background:${pageBg}; color:${pageFg}; overflow:hidden; }
   body { box-sizing:border-box; margin:0; padding:12px; background:${pageBg}; color:${pageFg};
     font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     /* break-word breaks a long URL only when it would actually overflow, and —
