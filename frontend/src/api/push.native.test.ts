@@ -1,100 +1,142 @@
 /**
  * The Android APK cannot use Web Push: System WebView exposes no `PushManager`, so the
- * subscription flow the PWA uses reports "unsupported" and the notifications toggle would
- * be permanently unavailable. On native the same toggle drives FCM instead — the shell
- * returns a device token, which is registered with the backend over this session.
+ * subscription flow the PWA uses reports "unsupported" and the notifications toggle
+ * would be permanently unavailable. On native the same toggle drives maily's own push
+ * stream instead — the server mints a device secret, the shell stores it and runs a
+ * foreground service that holds the connection.
+ *
+ * What is pinned here is the credential's lifecycle, because every failure mode is
+ * invisible: a secret minted for a shell that never started it leaves a server row being
+ * notified into nothing, and a shell that lost its secret leaves the toggle claiming
+ * notifications are on when nothing is listening.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pushKey = vi.fn(() => Promise.resolve({ publicKey: 'vapid', fcm: true }));
-const pushRegisterDevice = vi.fn(() => Promise.resolve({ ok: true }));
+const pushKey = vi.fn(() =>
+  Promise.resolve({ publicKey: 'vapid', stream: true, connectedDevices: 0 }),
+);
+const pushRegisterDevice = vi.fn(() => Promise.resolve({ token: 'device-secret-1' }));
 const pushUnregisterDevice = vi.fn(() => Promise.resolve({ ok: true }));
 
 vi.mock('./client', () => ({
   api: { pushKey, pushRegisterDevice, pushUnregisterDevice },
 }));
 
-const getNativePushToken = vi.fn();
-const clearNativePushToken = vi.fn(() => Promise.resolve());
+const enableNativePush = vi.fn();
+const disableNativePush = vi.fn(() => Promise.resolve<string | null>(null));
+const nativePushStatus = vi.fn();
 let native = true;
 
 vi.mock('../nativeAndroid', () => ({
   isNativeAndroid: () => native,
-  getNativePushToken,
-  clearNativePushToken,
+  enableNativePush,
+  disableNativePush,
+  nativePushStatus,
 }));
+
+const ON = { enabled: true, granted: true, unrestricted: true };
 
 describe('background notifications in the Android APK', () => {
   beforeEach(() => {
     native = true;
     localStorage.clear();
     vi.clearAllMocks();
-    pushKey.mockResolvedValue({ publicKey: 'vapid', fcm: true });
+    pushRegisterDevice.mockResolvedValue({ token: 'device-secret-1' });
+    disableNativePush.mockResolvedValue(null);
   });
 
-  it('registers the FCM token instead of reporting the WebView unsupported', async () => {
+  it('hands a minted secret to the shell instead of reporting the WebView unsupported', async () => {
     const { enablePush, pushState } = await import('./push');
     expect(pushState()).toBe('default');
 
-    getNativePushToken.mockResolvedValue({ granted: true, token: 'device-token-1' });
+    enableNativePush.mockResolvedValue(ON);
     await expect(enablePush()).resolves.toEqual({ ok: true });
 
-    expect(pushRegisterDevice).toHaveBeenCalledWith('device-token-1');
-    // Holding a token IS the on-state: Android has no synchronous permission query.
+    expect(enableNativePush).toHaveBeenCalledWith('device-secret-1');
+    expect(pushUnregisterDevice).not.toHaveBeenCalled();
     expect(pushState()).toBe('granted');
   });
 
-  it('explains a declined permission rather than silently staying off', async () => {
+  it('revokes the secret when the shell declines, leaving no orphan registration', async () => {
     const { enablePush, pushState } = await import('./push');
-    getNativePushToken.mockResolvedValue({ granted: false, token: null });
+    enableNativePush.mockResolvedValue({ enabled: false, granted: false, unrestricted: false });
 
     const result = await enablePush();
     expect(result.ok).toBe(false);
     expect(result).toHaveProperty('reason');
-    expect(pushRegisterDevice).not.toHaveBeenCalled();
+    // The server would otherwise keep a row it notifies into a socket nobody opens.
+    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-secret-1');
     expect(pushState()).toBe('default');
   });
 
-  it('refuses to enable when the server has no Firebase credentials', async () => {
-    pushKey.mockResolvedValue({ publicKey: 'vapid', fcm: false });
+  it('explains an APK too old to have the push methods', async () => {
     const { enablePush } = await import('./push');
+    enableNativePush.mockResolvedValue(null);
 
     const result = await enablePush();
     expect(result.ok).toBe(false);
-    expect(getNativePushToken).not.toHaveBeenCalled();
-    expect(pushRegisterDevice).not.toHaveBeenCalled();
+    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-secret-1');
   });
 
-  it('unregisters the token server-side and natively when turned off', async () => {
+  it('revokes the shell-held secret server-side when turned off', async () => {
     const { disablePush, enablePush, pushState } = await import('./push');
-    getNativePushToken.mockResolvedValue({ granted: true, token: 'device-token-1' });
+    enableNativePush.mockResolvedValue(ON);
     await enablePush();
 
+    disableNativePush.mockResolvedValue('device-secret-1');
     await disablePush();
-    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-token-1');
-    expect(clearNativePushToken).toHaveBeenCalled();
+    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-secret-1');
     expect(pushState()).toBe('default');
   });
 
-  it('re-registers a rotated token on boot, retiring the old one', async () => {
-    const { enablePush, refreshNativePushRegistration } = await import('./push');
-    getNativePushToken.mockResolvedValue({ granted: true, token: 'device-token-1' });
+  it('re-issues a secret when the shell lost the one it had', async () => {
+    const { enablePush, resumeNativePush, pushState } = await import('./push');
+    enableNativePush.mockResolvedValue(ON);
     await enablePush();
     vi.clearAllMocks();
 
-    // FCM rotated the token while the app was closed — nothing told the app, which is
-    // why the boot re-registration exists at all.
-    getNativePushToken.mockResolvedValue({ granted: true, token: 'device-token-2' });
-    await refreshNativePushRegistration();
+    // App storage cleared: the service has nothing to connect with, and nothing told
+    // the web layer — which is why the reconcile exists at all.
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: true, unrestricted: true });
+    pushRegisterDevice.mockResolvedValue({ token: 'device-secret-2' });
+    enableNativePush.mockResolvedValue(ON);
+    await resumeNativePush();
 
-    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-token-1');
-    expect(pushRegisterDevice).toHaveBeenCalledWith('device-token-2');
+    expect(enableNativePush).toHaveBeenCalledWith('device-secret-2');
+    expect(pushState()).toBe('granted');
   });
 
-  it('does not re-register on boot when notifications are off on this device', async () => {
-    const { refreshNativePushRegistration } = await import('./push');
-    await refreshNativePushRegistration();
-    expect(getNativePushToken).not.toHaveBeenCalled();
+  it('stops claiming notifications are on when the shell refuses to run the service', async () => {
+    const { enablePush, resumeNativePush, pushState } = await import('./push');
+    enableNativePush.mockResolvedValue(ON);
+    await enablePush();
+    vi.clearAllMocks();
+
+    // Permission revoked in Android settings while the app was closed.
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: false, unrestricted: true });
+    pushRegisterDevice.mockResolvedValue({ token: 'device-secret-2' });
+    enableNativePush.mockResolvedValue({ enabled: false, granted: false, unrestricted: true });
+    await resumeNativePush();
+
+    expect(pushUnregisterDevice).toHaveBeenCalledWith('device-secret-2');
+    expect(pushState()).toBe('default');
+  });
+
+  it('adopts a running service the web layer had forgotten about', async () => {
+    const { resumeNativePush, pushState } = await import('./push');
+    nativePushStatus.mockResolvedValue(ON);
+
+    await resumeNativePush();
     expect(pushRegisterDevice).not.toHaveBeenCalled();
+    expect(pushState()).toBe('granted');
+  });
+
+  it('does nothing on boot when notifications are off on this device', async () => {
+    const { resumeNativePush } = await import('./push');
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: false, unrestricted: false });
+
+    await resumeNativePush();
+    expect(pushRegisterDevice).not.toHaveBeenCalled();
+    expect(enableNativePush).not.toHaveBeenCalled();
   });
 });

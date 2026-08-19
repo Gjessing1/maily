@@ -17,7 +17,7 @@ import { enqueueEnrichPass, shutdownWorker } from './worker/host.js';
 import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
-import { initFcm } from './push/fcm.js';
+import { stopStreamHub } from './push/stream.js';
 import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
@@ -50,6 +50,9 @@ function installShutdown(engines: AccountEngine[], io: IoServer): void {
     shuttingDown = true;
     log.info(`received ${signal}, shutting down…`);
     io.close();
+    // Devices reconnect on a closed stream immediately; left open they would sit on a
+    // dead socket until their own read timeout, missing mail across a redeploy.
+    stopStreamHub();
     await Promise.allSettled([...engines.map((e) => e.stop()), shutdownWorker()]);
     sqlite.close();
     process.exit(0);
@@ -69,7 +72,6 @@ async function main(): Promise<void> {
   const app = await buildServer();
   const io = attachSockets(app);
   initWebPush();
-  initFcm();
   wirePushNotifications();
   await app.listen({ host: '0.0.0.0', port: env.port });
   log.info(`HTTP + Socket.io listening on :${env.port}`);

@@ -171,26 +171,35 @@ test('the INSERT trigger falls back to the snippet when body_text is NULL', () =
 });
 
 /**
- * `device_tokens` (migration 0027) is the Android APK's push registration — the only
- * channel that can wake it, since System WebView exposes no Push API. Registration is an
- * upsert on the token, so the unique index is what stops a device that re-registers on
- * every app boot from accumulating a row per launch (and being notified N times).
+ * `push_devices` (migration 0028) is the Android APK's push registration — the only
+ * channel that can wake it, since System WebView exposes no Push API. The row holds a
+ * *hash* of the bearer secret the APK's foreground service presents on the push stream,
+ * and re-presenting the same secret is an upsert, so the unique index is what stops a
+ * device that re-registers on every app boot from accumulating a row per launch.
+ *
+ * The 0027 `device_tokens` table it replaces must be gone: it held Google-minted FCM
+ * tokens, worthless to a transport that never contacts Google.
  */
-test('device_tokens keys on the token so re-registration upserts', () => {
+test('push_devices keys on the token hash so re-registration upserts', () => {
+  const gone = sqlite
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'device_tokens'`)
+    .all();
+  assert.deepEqual(gone, [], 'the FCM device_tokens table is dropped by 0028');
+
   const insert = sqlite.prepare(
-    `INSERT INTO device_tokens (id, token, platform, last_seen_at) VALUES (?, ?, 'android', ?)
-     ON CONFLICT(token) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+    `INSERT INTO push_devices (id, token_hash, platform, last_seen_at) VALUES (?, ?, 'android', ?)
+     ON CONFLICT(token_hash) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
   );
-  insert.run(randomUUID(), 'fcm-token-abc', 1000);
-  insert.run(randomUUID(), 'fcm-token-abc', 2000);
-  insert.run(randomUUID(), 'fcm-token-xyz', 3000);
+  insert.run(randomUUID(), 'hash-abc', 1000);
+  insert.run(randomUUID(), 'hash-abc', 2000);
+  insert.run(randomUUID(), 'hash-xyz', 3000);
 
   const rows = sqlite
-    .prepare(`SELECT token, last_seen_at FROM device_tokens ORDER BY token`)
-    .all() as { token: string; last_seen_at: number }[];
+    .prepare(`SELECT token_hash, last_seen_at FROM push_devices ORDER BY token_hash`)
+    .all() as { token_hash: string; last_seen_at: number }[];
   assert.deepEqual(
-    rows.map((r) => r.token),
-    ['fcm-token-abc', 'fcm-token-xyz'],
+    rows.map((r) => r.token_hash),
+    ['hash-abc', 'hash-xyz'],
   );
   // The re-registration refreshed the row rather than adding one.
   assert.equal(rows[0]!.last_seen_at, 2000);

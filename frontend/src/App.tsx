@@ -20,7 +20,7 @@ import {
   getNativeAppInfo,
   setNativeMessageOpener,
 } from './nativeAndroid';
-import { refreshNativePushRegistration } from './api/push';
+import { resumeNativePush } from './api/push';
 
 // Home is the app shell's primary view and stays eager. Everything else is loaded
 // on demand; Workbox still precaches the emitted chunks, so they remain available
@@ -171,14 +171,14 @@ export function App() {
     [navigate],
   );
 
-  // Keep the Android APK's FCM registration alive. Firebase rotates device tokens
-  // silently, and the remote-origin WebView has no working plugin listener to be told
-  // when it happens, so re-asking on each boot is the only thing that notices — a
-  // rotated-away token means notifications stop arriving with no visible symptom.
-  // A no-op everywhere except an APK that already has notifications enabled.
+  // Reconcile the Android APK's push registration with what the native shell actually
+  // holds. The two live in different stores — the shell's credential in app storage, the
+  // toggle's marker in the WebView's — and either can be cleared without the other
+  // knowing, which would leave notifications silently off. A no-op everywhere except an
+  // APK, and on the web app entirely.
   useEffect(() => {
     if (!authed) return;
-    const t = setTimeout(() => void refreshNativePushRegistration(), 5000);
+    const t = setTimeout(() => void resumeNativePush(), 5000);
     return () => clearTimeout(t);
   }, [authed]);
 

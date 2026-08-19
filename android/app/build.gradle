@@ -13,8 +13,8 @@ android {
         applicationId "io.gjessing.maily"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "0.2.2"
+        versionCode 5
+        versionName "0.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -31,6 +31,12 @@ android {
                 keyPassword releaseKeyPassword
             }
         }
+    }
+    testOptions {
+        // Local unit tests link against android.jar's stubs, every method of which throws
+        // "not mocked". android.util.Log is the only one the tested code touches, and it
+        // is pure diagnostics — a no-op is the correct behaviour off-device.
+        unitTests.returnDefaultValues = true
     }
     buildTypes {
         release {
@@ -57,16 +63,12 @@ dependencies {
     implementation "androidx.credentials:credentials:$androidxCredentialsVersion"
     implementation "androidx.credentials:credentials-play-services-auth:$androidxCredentialsVersion"
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
-    // FCM: the APK's background-notification transport. Android System WebView has no
-    // Push API, so the VAPID subscription the PWA holds is unreachable here. The library
-    // is always linked -- MailyNativePlugin compiles against it -- but stays inert until
-    // a google-services.json supplies the project resources (see the conditional plugin
-    // application below); without one, getPushToken() reports "no token" and the web app
-    // tells the user the app has no Firebase configuration.
-    implementation platform("com.google.firebase:firebase-bom:$firebaseBomVersion")
-    implementation 'com.google.firebase:firebase-messaging'
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // Local unit tests run against android.jar's stubs, where org.json throws "Stub!" on
+    // every call. The real implementation on the test classpath is what lets the SSE
+    // frame parser (MailyPushStream) be exercised off-device.
+    testImplementation "org.json:json:$orgJsonVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
@@ -74,11 +76,6 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
-}
+// No Firebase: background notifications are delivered over Maily's own push stream, held
+// open by MailyPushService. Nothing here links Google Play Services, so the APK also
+// works on de-Googled Android.

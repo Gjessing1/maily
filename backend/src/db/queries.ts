@@ -21,7 +21,7 @@ import { db } from './client.js';
 import {
   accounts,
   attachments,
-  deviceTokens,
+  pushDevices,
   folders,
   messageFolders,
   messages,
@@ -523,25 +523,45 @@ export function deletePushSubscription(endpoint: string): void {
   db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint)).run();
 }
 
+export type PushDeviceRow = typeof pushDevices.$inferSelect;
+
 /**
- * Register (or refresh) an FCM device token. The token IS the device identity, so a
- * re-registration is an upsert that just bumps `lastSeenAt` — the APK re-registers on
- * every boot because FCM rotates tokens silently.
+ * Register a device for self-hosted push. Keyed on the hash rather than the secret,
+ * which the server does not keep — re-registering the same secret (the APK re-presents
+ * the one it stored) is therefore an upsert that only bumps `lastSeenAt`.
  */
-export function saveDeviceToken(token: string, platform: string): void {
-  db.insert(deviceTokens)
-    .values({ token, platform, lastSeenAt: Date.now() })
+export function savePushDevice(tokenHash: string, platform: string): void {
+  db.insert(pushDevices)
+    .values({ tokenHash, platform, lastSeenAt: Date.now() })
     .onConflictDoUpdate({
-      target: deviceTokens.token,
+      target: pushDevices.tokenHash,
       set: { platform, lastSeenAt: Date.now() },
     })
     .run();
 }
 
-export function listDeviceTokens(): (typeof deviceTokens.$inferSelect)[] {
-  return db.select().from(deviceTokens).all();
+/** The device a presented bearer secret belongs to, or undefined when it is unknown. */
+export function pushDeviceByHash(tokenHash: string): PushDeviceRow | undefined {
+  return db.select().from(pushDevices).where(eq(pushDevices.tokenHash, tokenHash)).get();
 }
 
-export function deleteDeviceToken(token: string): void {
-  db.delete(deviceTokens).where(eq(deviceTokens.token, token)).run();
+/** Mark a device connected — liveness, separate from the catch-up cursor. */
+export function touchPushDevice(id: string): void {
+  db.update(pushDevices).set({ lastSeenAt: Date.now() }).where(eq(pushDevices.id, id)).run();
+}
+
+/**
+ * Advance the catch-up cursor past an arrival this device has now been told about, so a
+ * later reconnect does not replay it. Monotonic: a replay walks the cursor forward one
+ * message at a time, and an out-of-order write must never drag it back.
+ */
+export function advancePushDeviceCursor(id: string, at: number): void {
+  db.update(pushDevices)
+    .set({ lastEventAt: at })
+    .where(and(eq(pushDevices.id, id), lt(sql`coalesce(${pushDevices.lastEventAt}, 0)`, at)))
+    .run();
+}
+
+export function deletePushDevice(tokenHash: string): void {
+  db.delete(pushDevices).where(eq(pushDevices.tokenHash, tokenHash)).run();
 }

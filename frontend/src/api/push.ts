@@ -4,15 +4,25 @@
  *
  * - **Browser / installed PWA → Web Push (VAPID).** The permission prompt must come
  *   from a user gesture, and on iOS the PWA must be installed to the Home Screen first.
- * - **Android APK → FCM.** The APK is a WebView shell, and Android System WebView
- *   exposes no Push API at all (`PushManager` is simply absent), so there is no
- *   subscription to make. The native shell registers with Firebase and hands back a
- *   device token, which we register with the backend over this authenticated session.
+ * - **Android APK → maily's own push stream.** The APK is a WebView shell, and Android
+ *   System WebView exposes no Push API at all (`PushManager` is simply absent), so there
+ *   is no subscription to make. The native shell runs a foreground service holding an SSE
+ *   connection to the maily server instead, and posts Android notifications itself.
  *
- * Both end up in the same place: a row the server fans `mail:new` out to.
+ * Both end up in the same place: a row the server fans `mail:new` out to. Neither
+ * involves a third party — the PWA's push goes through the browser vendor's endpoint
+ * because that is what Web Push is, and the APK's goes nowhere but maily.
+ *
+ * The device secret lives on the native side only. The web layer keeps a boolean, which
+ * is all the toggle needs and is not a credential worth protecting.
  */
 import { api } from './client';
-import { clearNativePushToken, getNativePushToken, isNativeAndroid } from '../nativeAndroid';
+import {
+  disableNativePush,
+  enableNativePush,
+  isNativeAndroid,
+  nativePushStatus,
+} from '../nativeAndroid';
 
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
@@ -29,55 +39,59 @@ export type PushState = 'unsupported' | 'denied' | 'granted' | 'default';
 export type PushEnableResult = { ok: true } | { ok: false; reason?: string };
 
 /**
- * The FCM token this device last registered. Android has no synchronous permission
- * query to drive the toggle from, and re-asking Firebase is async, so the fact that we
- * hold a token IS the "notifications are on here" state. Survives reloads; cleared on
- * disable.
+ * Whether notifications are on in this APK. Android has no synchronous permission query
+ * and the authoritative answer lives across the bridge (a promise), so the toggle renders
+ * from this cached marker and `resumeNativePush` reconciles it against the shell on boot.
  */
-const DEVICE_TOKEN_KEY = 'maily.push.deviceToken';
+const NATIVE_ENABLED_KEY = 'maily.push.native';
 
-function storedDeviceToken(): string | null {
+function nativeEnabled(): boolean {
   try {
-    return localStorage.getItem(DEVICE_TOKEN_KEY);
+    return localStorage.getItem(NATIVE_ENABLED_KEY) === '1';
   } catch {
-    return null;
+    return false;
   }
 }
 
-function rememberDeviceToken(token: string | null): void {
+function rememberNativeEnabled(on: boolean): void {
   try {
-    if (token) localStorage.setItem(DEVICE_TOKEN_KEY, token);
-    else localStorage.removeItem(DEVICE_TOKEN_KEY);
+    if (on) localStorage.setItem(NATIVE_ENABLED_KEY, '1');
+    else localStorage.removeItem(NATIVE_ENABLED_KEY);
   } catch {
-    // Private mode / storage disabled — the registration still works, it just won't
-    // be remembered across reloads.
+    // Private mode / storage disabled — the service still runs, the toggle just
+    // renders from the shell's answer one tick later instead.
   }
 }
 
 export function pushState(): PushState {
-  if (isNativeAndroid()) return storedDeviceToken() ? 'granted' : 'default';
+  if (isNativeAndroid()) return nativeEnabled() ? 'granted' : 'default';
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
   return Notification.permission as PushState;
 }
 
-/** Register the APK's Firebase token with the backend. */
-async function enableNativePush(): Promise<PushEnableResult> {
-  const { fcm } = await api.pushKey();
-  if (!fcm) {
-    return { ok: false, reason: 'This server has no Firebase credentials configured.' };
+/**
+ * Mint a device credential and hand it to the shell, which stores it and starts its
+ * foreground service. A credential that fails to take hold is revoked immediately rather
+ * than left as an orphan row the server would keep trying to notify.
+ */
+async function enableNativePushHere(): Promise<PushEnableResult> {
+  const { token } = await api.pushRegisterDevice();
+  const status = await enableNativePush(token);
+  if (!status || !status.enabled) {
+    await api.pushUnregisterDevice(token).catch(() => undefined);
+    return {
+      ok: false,
+      reason: status
+        ? 'The app could not start its notification service.'
+        : 'This app version cannot register for notifications. Update the app first.',
+    };
   }
-  const result = await getNativePushToken();
-  if (!result) {
-    return { ok: false, reason: 'This app version cannot register for notifications.' };
-  }
-  if (!result.granted) {
+  if (!status.granted) {
+    await api.pushUnregisterDevice(token).catch(() => undefined);
+    await disableNativePush();
     return { ok: false, reason: 'Notification permission was declined.' };
   }
-  if (!result.token) {
-    return { ok: false, reason: 'Firebase did not return a token for this device.' };
-  }
-  await api.pushRegisterDevice(result.token);
-  rememberDeviceToken(result.token);
+  rememberNativeEnabled(true);
   return { ok: true };
 }
 
@@ -86,7 +100,7 @@ async function enableNativePush(): Promise<PushEnableResult> {
  * Safe to call when already subscribed (idempotent).
  */
 export async function enablePush(): Promise<PushEnableResult> {
-  if (isNativeAndroid()) return enableNativePush();
+  if (isNativeAndroid()) return enableNativePushHere();
   if (pushState() === 'unsupported') return { ok: false };
 
   const permission = await Notification.requestPermission();
@@ -117,10 +131,11 @@ export async function enablePush(): Promise<PushEnableResult> {
 
 export async function disablePush(): Promise<void> {
   if (isNativeAndroid()) {
-    const token = storedDeviceToken();
-    rememberDeviceToken(null);
+    rememberNativeEnabled(false);
+    // The shell hands back the secret it dropped, which is the only copy — revoke the
+    // matching row so a stale credential can never reconnect.
+    const token = await disableNativePush();
     if (token) await api.pushUnregisterDevice(token).catch(() => undefined);
-    await clearNativePushToken();
     return;
   }
   if (pushState() === 'unsupported') return;
@@ -132,24 +147,36 @@ export async function disablePush(): Promise<void> {
 }
 
 /**
- * Re-register this device's FCM token on boot. Firebase rotates tokens silently, and
- * the remote-origin WebView has no working plugin listener to be told when it happens
- * (see nativeAndroid.getNativePushToken), so asking again each time the app opens is
- * how a rotation is ever noticed. A no-op unless notifications are already on here.
+ * Reconcile the toggle with what the shell actually holds, on app open.
+ *
+ * The two can drift, and both directions are real: clearing app storage wipes the
+ * shell's credential while the web marker survives in the WebView's own storage, and
+ * reinstalling the web app's storage (or a fresh SSO session) loses the marker while the
+ * service keeps running. Nothing here is user-visible unless it has to be — a shell that
+ * lost its credential is silently re-issued one, since the user already asked for
+ * notifications and Android does not re-prompt for a permission already granted.
  */
-export async function refreshNativePushRegistration(): Promise<void> {
+export async function resumeNativePush(): Promise<void> {
   if (!isNativeAndroid()) return;
-  const previous = storedDeviceToken();
-  if (!previous) return; // Notifications are off on this device — nothing to keep alive.
-  try {
-    const result = await getNativePushToken();
-    if (!result?.granted || !result.token) return; // Permission revoked in Android settings.
-    if (result.token !== previous) {
-      await api.pushUnregisterDevice(previous).catch(() => undefined);
-    }
-    await api.pushRegisterDevice(result.token);
-    rememberDeviceToken(result.token);
-  } catch {
-    // Offline, or the server is briefly unreachable — the next boot retries.
+  const status = await nativePushStatus();
+  if (!status) return; // An APK older than the web app; nothing to reconcile against.
+
+  if (status.enabled) {
+    rememberNativeEnabled(true);
+    return;
   }
+  if (!nativeEnabled()) return; // Off here, and the shell agrees.
+
+  try {
+    const { token } = await api.pushRegisterDevice();
+    const restored = await enableNativePush(token);
+    if (restored?.enabled) return;
+    await api.pushUnregisterDevice(token).catch(() => undefined);
+  } catch {
+    // Offline, or the server is briefly unreachable — the next app open retries.
+    return;
+  }
+  // The shell refuses to run it (permission revoked in Android settings, most likely),
+  // so stop claiming it is on.
+  rememberNativeEnabled(false);
 }

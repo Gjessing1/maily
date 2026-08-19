@@ -1,14 +1,14 @@
 package io.gjessing.maily;
 
 import android.Manifest;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Window;
 import androidx.core.content.pm.PackageInfoCompat;
@@ -20,7 +20,6 @@ import com.getcapacitor.PermissionState;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
-import com.google.firebase.messaging.FirebaseMessaging;
 
 @CapacitorPlugin(
     name = "MailyNative",
@@ -38,6 +37,11 @@ public class MailyNativePlugin extends Plugin {
     public void load() {
         String serverUrl = MailyPreferences.getServerUrl(getContext());
         if (serverUrl != null) navigation = new MailyNavigation(serverUrl);
+        // Opening Maily is the reliable moment to restore the push connection: the boot
+        // receiver covers reboots and updates, but nothing covers a service the system
+        // killed under memory pressure and never restarted. A no-op unless this device
+        // holds a credential.
+        MailyPushService.startIfEnabled(getContext());
     }
 
     @Override
@@ -129,24 +133,34 @@ public class MailyNativePlugin extends Plugin {
     }
 
     /**
-     * Register this device with FCM and hand the token back to the web app, which posts
-     * it to the Maily server over its own authenticated session.
+     * Turn on background notifications: store the credential the web app minted and start
+     * the foreground service that holds Maily's push connection (MailyPushService).
      *
-     * A resolved *method call*, deliberately — not a Capacitor event. Maily is served
-     * from a remote origin, where plugin listener registration never takes hold (the
-     * same trap that once broke Android Back), so the `registration` event the standard
-     * push plugin delivers its token through would never arrive. Asking and answering in
-     * one promise depends on nothing but the bridge call that is already working.
+     * A resolved *method call*, deliberately — not a Capacitor listener. Maily is served
+     * from a remote origin, where plugin listener registration never takes hold (the same
+     * trap that once broke Android Back), so anything delivered as an event would never
+     * arrive. Asking and answering in one promise depends on nothing but the bridge call
+     * that is already working.
      *
-     * Resolves {granted, token}: granted=false when the user declined the Android 13+
-     * runtime permission, token=null when the APK carries no google-services.json (the
-     * Firebase SDK has no project to register against). Never rejects for either — those
-     * are states the web app explains, not errors.
+     * Resolves the same {@link #pushStatus} shape, so the web app can act on the outcome
+     * without a second round trip: `granted=false` when the user declined the Android 13+
+     * runtime permission, `enabled=false` when nothing was stored to run with. Never
+     * rejects for either — those are states the web app explains, not errors.
      */
     @PluginMethod
-    public void getPushToken(PluginCall call) {
+    public void enablePush(PluginCall call) {
+        String token = call.getString("token");
+        if (token == null || token.isBlank()) {
+            call.reject("A push credential is required");
+            return;
+        }
+        if (MailyPreferences.getServerUrl(getContext()) == null) {
+            call.reject("No Maily server is configured on this device");
+            return;
+        }
+        MailyPreferences.setPushToken(getContext(), token);
         if (getPermissionState(NOTIFICATIONS) == PermissionState.GRANTED) {
-            resolvePushToken(call);
+            startPush(call);
             return;
         }
         // Below Android 13 notifications need no runtime grant, so the state above is
@@ -157,72 +171,92 @@ public class MailyNativePlugin extends Plugin {
     @PermissionCallback
     private void pushPermissionCallback(PluginCall call) {
         if (getPermissionState(NOTIFICATIONS) != PermissionState.GRANTED) {
-            JSObject result = new JSObject();
-            result.put("granted", false);
-            result.put("token", (String) null);
-            call.resolve(result);
+            // Keep nothing a declined permission would leave stranded: an unusable
+            // credential here would make pushStatus claim notifications are on.
+            MailyPreferences.setPushToken(getContext(), null);
+            call.resolve(status());
             return;
         }
-        resolvePushToken(call);
+        startPush(call);
+    }
+
+    private void startPush(PluginCall call) {
+        MailyPushService.startIfEnabled(getContext());
+        call.resolve(status());
+    }
+
+    /** Turn notifications off, resolving with the credential dropped so it can be revoked. */
+    @PluginMethod
+    public void disablePush(PluginCall call) {
+        String token = MailyPreferences.getPushToken(getContext());
+        MailyPreferences.setPushToken(getContext(), null);
+        MailyPushService.stop(getContext());
+        JSObject result = new JSObject();
+        result.put("token", token);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void pushStatus(PluginCall call) {
+        call.resolve(status());
     }
 
     /**
-     * Fetch the FCM registration token. The channel is created first: Android 8+ drops a
-     * notification whose channel id was never registered, and the id here is the one the
-     * manifest hands Firebase as `default_notification_channel_id`.
+     * `enabled` is "this device holds a credential", not "the socket is up right now" —
+     * the connection drops and reconnects constantly on a phone, and reporting that as a
+     * settings state would make the toggle flicker for no reason.
      */
-    private void resolvePushToken(PluginCall call) {
-        ensureMailNotificationChannel();
-        try {
-            FirebaseMessaging.getInstance()
-                .getToken()
-                .addOnCompleteListener(task -> {
-                    JSObject result = new JSObject();
-                    result.put("granted", true);
-                    if (task.isSuccessful()) {
-                        result.put("token", task.getResult());
-                    } else {
-                        Log.w(PLUGIN_TAG, "FCM token request failed", task.getException());
-                        result.put("token", (String) null);
-                    }
-                    call.resolve(result);
-                });
-        } catch (Exception error) {
-            // No google-services.json in this build: FirebaseApp was never initialized.
-            Log.w(PLUGIN_TAG, "Firebase is not configured in this build", error);
-            JSObject result = new JSObject();
-            result.put("granted", true);
-            result.put("token", (String) null);
-            call.resolve(result);
-        }
+    private JSObject status() {
+        JSObject result = new JSObject();
+        result.put("enabled", MailyPreferences.getPushToken(getContext()) != null);
+        result.put("granted", getPermissionState(NOTIFICATIONS) == PermissionState.GRANTED);
+        result.put("unrestricted", isBatteryUnrestricted());
+        return result;
     }
 
-    /** Drop this device's FCM registration — the app-side half of turning notifications off. */
+    /**
+     * Whether Android exempts Maily from battery optimisation. Without the exemption Doze
+     * suspends the push service's socket while the phone sits idle — overnight, which is
+     * exactly the stretch where a delayed notification is most noticeable.
+     */
+    private boolean isBatteryUnrestricted() {
+        PowerManager power = getContext().getSystemService(PowerManager.class);
+        if (power == null) return true;
+        return power.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
+    /**
+     * Open Android's exemption prompt for Maily.
+     *
+     * The direct dialog needs REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, which Google Play
+     * restricts to apps whose core function needs a persistent connection. This APK is
+     * installed directly, so the restriction is a distribution policy rather than a
+     * technical limit — but the general settings screen is the fallback if the direct
+     * intent is ever refused, so the user is never left with a dead button.
+     */
     @PluginMethod
-    public void clearPushToken(PluginCall call) {
-        try {
-            FirebaseMessaging.getInstance()
-                .deleteToken()
-                .addOnCompleteListener(task -> call.resolve());
-        } catch (Exception error) {
-            // Never configured, so there is nothing to delete — the goal state is reached.
-            Log.w(PLUGIN_TAG, "Firebase is not configured in this build", error);
+    public void requestUnrestrictedBattery(PluginCall call) {
+        if (isBatteryUnrestricted()) {
             call.resolve();
+            return;
         }
-    }
-
-    private void ensureMailNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationManager manager = getContext().getSystemService(NotificationManager.class);
-        if (manager == null) return;
-        NotificationChannel channel = new NotificationChannel(
-            getContext().getString(R.string.mail_notification_channel_id),
-            getContext().getString(R.string.mail_notification_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT
-        );
-        channel.setDescription(getContext().getString(R.string.mail_notification_channel_description));
-        // Creating an existing channel is a no-op, so this is safe on every call.
-        manager.createNotificationChannel(channel);
+        Uri app = Uri.parse("package:" + getContext().getPackageName());
+        try {
+            getActivity().startActivity(
+                new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, app)
+            );
+        } catch (Exception error) {
+            Log.w(PLUGIN_TAG, "falling back to the battery optimisation settings list", error);
+            try {
+                getActivity().startActivity(
+                    new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                );
+            } catch (Exception fallbackError) {
+                call.reject("Could not open Android's battery settings", fallbackError);
+                return;
+            }
+        }
+        call.resolve();
     }
 
     @PluginMethod

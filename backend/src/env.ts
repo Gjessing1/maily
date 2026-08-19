@@ -3,7 +3,7 @@
  * VAPID keys) are read here and never sent to the frontend — see ARCHITECTURE §5.
  */
 import { dirname, resolve } from 'node:path';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -106,40 +106,6 @@ function vapidConfig(): { publicKey: string; privateKey: string; subject: string
 }
 
 /**
- * Firebase service-account credentials for FCM (the Android APK's push channel), or
- * null when not configured. Android System WebView exposes no Push API, so the APK
- * cannot ride the VAPID subscription the PWA uses — it registers an FCM device token
- * instead and the backend fans `mail:new` out to both channels.
- *
- * Accepts the service-account JSON either as a path (`FCM_SERVICE_ACCOUNT_FILE`,
- * the Docker-friendly form — mount the file, keep it out of env) or inline
- * (`FCM_SERVICE_ACCOUNT_JSON`). A malformed file disables FCM rather than crashing
- * boot: push is an enhancement, never a reason for the mail server not to start.
- */
-function fcmConfig(): { projectId: string; clientEmail: string; privateKey: string } | null {
-  const file = process.env.FCM_SERVICE_ACCOUNT_FILE;
-  const inline = process.env.FCM_SERVICE_ACCOUNT_JSON;
-  if (!file && !inline) return null;
-  try {
-    const raw = file ? readFileSync(file, 'utf8') : inline!;
-    const parsed = JSON.parse(raw) as {
-      project_id?: string;
-      client_email?: string;
-      private_key?: string;
-    };
-    if (!parsed.project_id || !parsed.client_email || !parsed.private_key) return null;
-    return {
-      projectId: parsed.project_id,
-      clientEmail: parsed.client_email,
-      // Env-inlined keys usually carry literal \n rather than real newlines.
-      privateKey: parsed.private_key.replace(/\\n/g, '\n'),
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Disable maily's own login when the site is fronted by an external auth layer
  * (reverse-proxy SSO, mTLS, VPN). With this set the JWT guard is bypassed on every
  * HTTP route and the Socket.io handshake, and the PWA skips the login screen.
@@ -227,8 +193,6 @@ export const env = {
    */
   publicUrl: optional('MAILY_PUBLIC_URL', '').replace(/\/+$/, ''),
   vapid: vapidConfig,
-  /** Firebase (FCM) service account for the Android APK's push channel, or null. */
-  fcm: fcmConfig,
   carddav: carddavConfig,
   caldav: caldavConfig,
   /** Local Ollama LLM runtime config (ROADMAP Phase 5), or null when not configured. */

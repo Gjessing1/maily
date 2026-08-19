@@ -31,20 +31,41 @@
         </provider>
 
         <!--
-          FCM presentation defaults. Firebase's own service posts the notification while
-          the app is backgrounded or killed, so these are what it looks like: a silhouette
-          small icon (the launcher icon would flatten to a square), the app accent, and a
-          named channel so Android 8+ does not file mail under "Miscellaneous".
+          Background notifications: Maily holds its own connection to its own server
+          rather than routing them through Firebase (see MailyPushService for why).
+          Android only permits an indefinitely-running connection from a foreground
+          service, and from Android 14 that service must declare a type.
+
+          `specialUse` and not `dataSync`: Android 15 caps dataSync services at six hours
+          per 24, which would silently stop notifications every evening. No other declared
+          type describes "keep a connection to the user's own mail server" —
+          `remoteMessaging` is for handing a conversation between devices. specialUse has
+          no runtime cap; it needs a justification only for Google Play review, and this
+          APK is installed directly.
         -->
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_notification" />
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_color"
-            android:resource="@color/maily_accent" />
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="@string/mail_notification_channel_id" />
+        <service
+            android:name=".MailyPushService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains a persistent connection to the user's self-hosted Maily mail server to deliver new-mail notifications, replacing a third-party push service." />
+        </service>
+
+        <!--
+          Restore the connection after a reboot or an in-place app update — neither of
+          which produces any other moment the service could restart itself. Inert unless
+          notifications were enabled on this device.
+        -->
+        <receiver
+            android:name=".MailyBootReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -52,4 +73,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ gates notifications behind a runtime grant (MailyNativePlugin asks). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The push connection: a foreground service of the type declared above. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Reconnect the moment a network returns, instead of sitting out the backoff. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Restart the connection after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+      Lets Settings open the exemption prompt directly rather than dumping the user in a
+      system list. Google Play restricts this permission to apps that genuinely need a
+      persistent connection; Maily is installed directly, so the restriction is a Play
+      distribution policy rather than a technical limit. Without the exemption, Doze
+      suspends the push connection while the phone is idle overnight.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

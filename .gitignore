@@ -19,11 +19,6 @@ backend/public/
 .env
 .env.*
 !.env.example
-# Firebase client config for the APK's FCM channel. Not a credential, but it carries the
-# project's identifiers and this repo mirrors to a public GitHub remote. Keep a copy with
-# the keystore -- an APK built without it simply has notifications disabled.
-android/app/google-services.json
-
 # --- Persistent data (host: /home/gjessing/data/maily) ---
 data/
 attachments/

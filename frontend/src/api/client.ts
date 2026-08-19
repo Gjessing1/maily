@@ -594,7 +594,10 @@ export const api = {
       }),
   },
 
-  pushKey: () => request<{ publicKey: string | null; fcm: boolean }>('/api/push/key'),
+  pushKey: () =>
+    request<{ publicKey: string | null; stream: boolean; connectedDevices: number }>(
+      '/api/push/key',
+    ),
 
   pushSubscribe: (sub: PushSubscriptionDto) =>
     request<{ ok: boolean }>('/api/push/subscribe', {
@@ -608,11 +611,15 @@ export const api = {
       body: JSON.stringify({ endpoint }),
     }),
 
-  /** Register the Android APK's FCM token (the WebView has no Push API to subscribe with). */
-  pushRegisterDevice: (token: string) =>
-    request<{ ok: boolean }>('/api/push/device', {
+  /**
+   * Mint a push credential for the Android APK (the WebView has no Push API to subscribe
+   * with). The secret is returned once and handed to the native shell, whose foreground
+   * service presents it on /api/push/stream — this session is what authorises the mint.
+   */
+  pushRegisterDevice: () =>
+    request<{ token: string }>('/api/push/device', {
       method: 'POST',
-      body: JSON.stringify({ token, platform: 'android' }),
+      body: JSON.stringify({ platform: 'android' }),
     }),
 
   pushUnregisterDevice: (token: string) =>

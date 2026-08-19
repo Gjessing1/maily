@@ -1,12 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Notification presentation for the FCM channel. Firebase's own service posts new-mail
-  notifications while the app is backgrounded or killed, reading these through the
-  `com.google.firebase.messaging.default_*` manifest meta-data.
+  Notification presentation, for both channels Maily registers.
 
-  The channel is created by MailyNativePlugin the first time notifications are enabled;
-  Android 8+ requires a channel to exist before a notification using its id is posted,
-  and an id that has never been registered is silently dropped.
+  Maily posts its own notifications now — MailyPushNotifier builds them from events read
+  off the push stream, rather than Firebase's service drawing them from a server payload.
+  So these are read by app code, not by `com.google.firebase.messaging.default_*`
+  manifest meta-data.
+
+  Both channels are created by MailyPushNotifier.ensureChannels before anything is
+  posted: Android 8+ silently drops a notification whose channel id was never registered.
+
+  Two channels rather than one so the user can silence either independently — the
+  ongoing "Connection" notice Android demands of a long-running foreground service is a
+  cost of the transport, not something anyone wants to be told about.
 -->
 <resources>
     <!-- Matches the web app's dark-theme accent token (frontend/src/index.css). -->
@@ -14,4 +20,9 @@
     <string name="mail_notification_channel_id" translatable="false">maily-mail</string>
     <string name="mail_notification_channel_name">New mail</string>
     <string name="mail_notification_channel_description">Notifications for mail arriving in your inbox.</string>
+    <string name="service_notification_channel_id" translatable="false">maily-connection</string>
+    <string name="service_notification_channel_name">Connection</string>
+    <string name="service_notification_channel_description">The quiet, ongoing notice Android requires while Maily keeps its connection open to receive mail notifications.</string>
+    <string name="push_service_connected">Watching for new mail</string>
+    <string name="push_service_connecting">Reconnecting to Maily…</string>
 </resources>

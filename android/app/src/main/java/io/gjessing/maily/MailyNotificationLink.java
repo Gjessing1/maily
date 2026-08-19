@@ -5,11 +5,11 @@ import android.text.TextUtils;
 import com.getcapacitor.Bridge;
 
 /**
- * Opens the message a tapped FCM notification refers to.
+ * Opens the message a tapped notification refers to.
  *
- * Firebase's own service posts the notification while Maily is backgrounded or killed,
- * and Android launches MainActivity with the message's `data` payload copied into the
- * intent extras. Two arrival shapes, handled differently:
+ * MailyPushNotifier builds each notification with a PendingIntent that launches
+ * MainActivity carrying the message id in an extra. Two arrival shapes, handled
+ * differently:
  *
  * - **Cold start** — the WebView has not loaded anything yet, so the deep link simply
  *   becomes the URL it starts on. Nothing to coordinate with.
@@ -21,8 +21,8 @@ import com.getcapacitor.Bridge;
  *   detour, the error page, JS not booted) falls back to a plain load.
  */
 final class MailyNotificationLink {
-    /** FCM data key carrying Maily's internal message UUID (backend push/fcm.ts). */
-    private static final String MESSAGE_ID_EXTRA = "messageId";
+    /** Intent extra carrying Maily's internal message UUID (see MailyPushNotifier). */
+    static final String MESSAGE_ID_EXTRA = "messageId";
 
     private MailyNotificationLink() {}
 

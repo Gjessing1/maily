@@ -204,22 +204,29 @@ export const pushSubscriptions = sqliteTable('push_subscriptions', {
 });
 
 /**
- * FCM device tokens — the Android APK's background-notification channel. The APK is a
- * WebView shell, and Android System WebView exposes no Push API, so it cannot hold the
- * VAPID `push_subscriptions` row the PWA does; it registers a Firebase token instead.
+ * Devices registered for self-hosted push — the Android APK's background-notification
+ * channel. The APK is a WebView shell and Android System WebView exposes no Push API,
+ * so it cannot hold the VAPID `push_subscriptions` row the PWA does. It holds a long
+ * connection to `GET /api/push/stream` from a foreground service instead, and this row
+ * is the credential that connection presents.
  *
- * The token is the identity (unique), so re-registering the same device is an upsert.
- * `lastSeenAt` is refreshed on every registration: the web layer re-registers on each
- * boot (FCM rotates tokens, and the remote-origin WebView has no working listener to
- * be told about it), which is also what proves a token is still live.
+ * Only the SHA-256 of the secret is stored: the plaintext is returned once, at
+ * registration, and never again — it is a bearer credential, and the DB is backed up.
+ *
+ * `lastEventAt` is the catch-up cursor. Unlike FCM, nothing queues for a device that is
+ * offline, so on reconnect the server replays the INBOX arrivals newer than this.
+ * `lastSeenAt` is liveness only (last successful connect), which is what lets a stale
+ * registration be recognised.
  */
-export const deviceTokens = sqliteTable('device_tokens', {
+export const pushDevices = sqliteTable('push_devices', {
   id: uuid(),
-  token: text('token').notNull().unique(),
-  /** Only 'android' today; kept so an iOS/APNs channel doesn't need a new table. */
+  /** SHA-256 (hex) of the bearer secret the device presents. Never the secret itself. */
+  tokenHash: text('token_hash').notNull().unique(),
+  /** Only 'android' today; kept so an iOS channel doesn't need a new table. */
   platform: text('platform').notNull(),
   createdAt: now(),
   lastSeenAt: integer('last_seen_at', { mode: 'number' }),
+  lastEventAt: integer('last_event_at', { mode: 'number' }),
 });
 
 /**

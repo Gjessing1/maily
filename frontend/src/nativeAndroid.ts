@@ -13,13 +13,21 @@ export interface NativeAppRelease {
 }
 
 /**
- * Result of asking the shell for an FCM registration token. `granted` is Android's
- * POST_NOTIFICATIONS answer; `token` is null when permission was refused or when the
- * APK was built without Firebase credentials (no `google-services.json`).
+ * What the shell reports about background notifications on this device.
+ *
+ * - `enabled` — the shell holds a push credential, i.e. its foreground service is meant
+ *   to be running. This, not a web-side flag, is the truth: app data can be cleared, and
+ *   an APK reinstall starts with nothing.
+ * - `granted` — Android's POST_NOTIFICATIONS answer. Revocable from system settings at
+ *   any time, without telling the app.
+ * - `unrestricted` — the app is exempt from battery optimisation. Without it Doze can
+ *   suspend the service's socket for hours, which looks exactly like "notifications
+ *   stopped working" — so it is surfaced rather than silently hoped for.
  */
-export interface NativePushToken {
+export interface NativePushStatus {
+  enabled: boolean;
   granted: boolean;
-  token: string | null;
+  unrestricted: boolean;
 }
 
 interface MailyNativePlugin {
@@ -27,8 +35,10 @@ interface MailyNativePlugin {
   configureServer(options: { serverUrl: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
   setSystemBarsColor(options: { color: string }): Promise<void>;
-  getPushToken(): Promise<NativePushToken>;
-  clearPushToken(): Promise<void>;
+  enablePush(options: { token: string }): Promise<NativePushStatus>;
+  disablePush(): Promise<{ token: string | null }>;
+  pushStatus(): Promise<NativePushStatus>;
+  requestUnrestrictedBattery(): Promise<void>;
 }
 
 /**
@@ -81,36 +91,68 @@ export async function openNativeExternal(url: string): Promise<void> {
 }
 
 /**
- * Ask the Android shell to register with FCM and hand back the device token.
+ * Hand the shell a push credential and start its notification service.
  *
- * A *method call*, deliberately — not a Capacitor listener. Maily is served from a
- * remote origin, where plugin listener registration never takes hold (the same trap
- * that broke Android Back), so the token cannot be delivered by the `registration`
- * event `@capacitor/push-notifications` normally uses. The shell resolves the token
- * synchronously-enough into a promise instead, and the web layer posts it to the
- * backend over its own authenticated session.
+ * All of these are *method calls*, deliberately — never Capacitor listeners. Maily is
+ * served from a remote origin, where plugin listener registration never takes hold (the
+ * same trap that broke Android Back), so anything delivered as an event would never
+ * arrive. Asking and answering in one promise depends on nothing but the bridge call
+ * that is already working.
  *
- * Returns null off Android, or on an APK too old to have the method.
+ * The secret is stored on the native side and nowhere else: the foreground service
+ * connects to `/api/push/stream` long after this WebView is gone, so it must own it, and
+ * one copy is one place to revoke. Returns null off Android, or on an APK too old to
+ * have the method — the web app can be newer than the installed shell.
  */
-export async function getNativePushToken(): Promise<NativePushToken | null> {
+export async function enableNativePush(token: string): Promise<NativePushStatus | null> {
   const plugin = nativePlugin();
-  if (!plugin?.getPushToken) return null;
+  if (!plugin?.enablePush) return null;
   try {
-    return await plugin.getPushToken();
+    return await plugin.enablePush({ token });
   } catch {
-    // Permission dialog dismissed, Google Play services missing, or no Firebase config.
+    // Permission dialog dismissed, or the shell could not start its service.
     return null;
   }
 }
 
-/** Drop the device's FCM registration (turning notifications off in the APK). */
-export async function clearNativePushToken(): Promise<void> {
+/**
+ * Stop the notification service and forget the credential, resolving with the secret it
+ * dropped so the caller can revoke the matching server row. Null when there was nothing
+ * stored, or on an APK that predates the method.
+ */
+export async function disableNativePush(): Promise<string | null> {
   const plugin = nativePlugin();
-  if (!plugin?.clearPushToken) return;
+  if (!plugin?.disablePush) return null;
   try {
-    await plugin.clearPushToken();
+    return (await plugin.disablePush()).token;
   } catch {
-    // An APK older than the web app; the server-side token is deleted regardless.
+    return null;
+  }
+}
+
+/** What the shell currently believes about notifications here. Null when it can't say. */
+export async function nativePushStatus(): Promise<NativePushStatus | null> {
+  const plugin = nativePlugin();
+  if (!plugin?.pushStatus) return null;
+  try {
+    return await plugin.pushStatus();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open Android's "allow background activity" prompt for Maily. Doze otherwise suspends
+ * the push service's socket while the phone is idle, which is precisely when a
+ * notification matters most.
+ */
+export async function requestUnrestrictedBattery(): Promise<void> {
+  const plugin = nativePlugin();
+  if (!plugin?.requestUnrestrictedBattery) return;
+  try {
+    await plugin.requestUnrestrictedBattery();
+  } catch {
+    // Dialog dismissed, or an APK older than the web app.
   }
 }
 
