@@ -201,9 +201,13 @@ export class AccountEngine {
         });
       }
       // Re-sight/expunge churn has no per-message id here; nudge clients to refresh.
+      // `sync:progress` only drives the progress bar — it is explicitly NOT a list
+      // invalidation (progress ticks don't change lists), so a pass that only moved
+      // or expunged mail needs `mail:folder` to unstick the cached first page too.
       if (result.updated || result.expunged) {
         const changed = result.updated + result.expunged;
         emitSignal({ type: 'sync:progress', accountId: this.id, done: changed, total: changed });
+        emitSignal({ type: 'mail:folder', accountId: this.id, folderId: inbox.id });
       }
       if (result.insertedIds.length || result.updated || result.expunged) {
         this.log.info(
@@ -254,7 +258,13 @@ export class AccountEngine {
             flagged: c.flagged,
           });
         }
+        // Non-INBOX mail (a saved draft, a Sent copy, mail filtered past IDLE) arrives
+        // here with no `mail:new` of its own — deliberately, since Web Push is INBOX-only
+        // (§9). Without a signal, though, nothing invalidates the server's prepared first
+        // page or tells a foreground client to refetch: a Drafts view that was cached
+        // while the folder was empty kept serving [] long after the draft had synced.
         if (result.insertedIds.length || result.updated || result.expunged) {
+          emitSignal({ type: 'mail:folder', accountId: this.id, folderId: folder.id });
           this.log.info(
             `${folder.path} cron (${result.mode}): +${result.insertedIds.length} ~${result.updated} -${result.expunged}`,
           );

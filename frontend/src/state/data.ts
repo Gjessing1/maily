@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { AccountDto, FolderDto, MessageDetailDto, MessageDto } from '@maily/shared';
 import { api } from '../api/client';
-import { onSocketReconnect } from '../api/socket';
+import { onSignal, onSocketReconnect } from '../api/socket';
 import { usePrefs } from './prefs';
 import {
   cache,
@@ -422,10 +422,18 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     window.addEventListener('online', refresh);
     document.addEventListener('visibilitychange', onVisible);
     const offReconnect = onSocketReconnect(refresh);
+    // A folder synced by the non-INBOX cron (Drafts, Sent, mail filtered past IDLE)
+    // emits no per-message signal, so nothing above would notice it. Refetch the head
+    // rather than pulling the ids: a cron pass can insert hundreds of rows, and the
+    // head fetch is two cached requests regardless of how many landed.
+    const offFolder = onSignal((signal) => {
+      if (signal.type === 'mail:folder') refresh();
+    });
     return () => {
       window.removeEventListener('online', refresh);
       document.removeEventListener('visibilitychange', onVisible);
       offReconnect();
+      offFolder();
     };
   }, [refresh]);
 

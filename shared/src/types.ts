@@ -600,6 +600,14 @@ export type SocketSignal =
   | { type: 'mail:restored'; accountId: string; messageId: string }
   | { type: 'mail:sent'; accountId: string; outboxId: string; messageId: string }
   | { type: 'mail:send-failed'; accountId: string; outboxId: string; error: string }
+  /**
+   * A folder's contents changed during a sync pass (messages inserted, re-sighted or
+   * expunged) with no per-message signal of its own — the non-INBOX cron path, where
+   * mail lands in Drafts/Sent/Trash/… without `mail:new`. Foreground clients refetch
+   * the view they're showing; the server's prepared first pages invalidate off it.
+   * Deliberately NOT a push trigger: background notifications stay INBOX-only (§9).
+   */
+  | { type: 'mail:folder'; accountId: string; folderId: string }
   | { type: 'sync:progress'; accountId: string; done: number; total: number };
 
 /** The kind of deferred action staged in the server-side outbox. */

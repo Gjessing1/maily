@@ -43,7 +43,10 @@ vi.mock('../api/client', () => ({
   },
 }));
 
-vi.mock('../api/socket', () => ({ onSocketReconnect: () => () => undefined }));
+vi.mock('../api/socket', () => ({
+  onSocketReconnect: () => () => undefined,
+  onSignal: () => () => undefined,
+}));
 
 describe('useMessages with a cache that never answers', () => {
   it('renders the fetched page instead of spinning forever', async () => {

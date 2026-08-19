@@ -45,7 +45,10 @@ vi.mock('../api/client', () => ({
   },
 }));
 
-vi.mock('../api/socket', () => ({ onSocketReconnect: () => () => undefined }));
+vi.mock('../api/socket', () => ({
+  onSocketReconnect: () => () => undefined,
+  onSignal: () => () => undefined,
+}));
 
 describe('useMessages across a remount', () => {
   beforeEach(async () => {

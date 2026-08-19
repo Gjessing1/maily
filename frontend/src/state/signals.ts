@@ -63,6 +63,11 @@ export function useSignals(): { progress: SyncProgress | null } {
         case 'mail:sent':
           // The queued send committed server-side; the Sent copy syncs via its folder cron.
           break;
+        case 'mail:folder':
+          // A non-INBOX folder changed during a sync pass. No per-message id to cache —
+          // the mounted list refetches its own head off this signal (state/data.ts), and
+          // the server's prepared first page invalidates on it server-side.
+          break;
         case 'mail:send-failed':
           // The send exhausted its retries — let the user know it never went out.
           showNotice(`Send failed: ${signal.error}`);
