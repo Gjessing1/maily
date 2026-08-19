@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification presentation for the FCM channel. Firebase's own service posts new-mail
+  notifications while the app is backgrounded or killed, reading these through the
+  `com.google.firebase.messaging.default_*` manifest meta-data.
+
+  The channel is created by MailyNativePlugin the first time notifications are enabled;
+  Android 8+ requires a channel to exist before a notification using its id is posted,
+  and an id that has never been registered is silently dropped.
+-->
+<resources>
+    <!-- Matches the web app's dark-theme accent token (frontend/src/index.css). -->
+    <color name="maily_accent">#6d6bff</color>
+    <string name="mail_notification_channel_id" translatable="false">maily-mail</string>
+    <string name="mail_notification_channel_name">New mail</string>
+    <string name="mail_notification_channel_description">Notifications for mail arriving in your inbox.</string>
+</resources>

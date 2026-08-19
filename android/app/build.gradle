@@ -57,6 +57,14 @@ dependencies {
     implementation "androidx.credentials:credentials:$androidxCredentialsVersion"
     implementation "androidx.credentials:credentials-play-services-auth:$androidxCredentialsVersion"
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    // FCM: the APK's background-notification transport. Android System WebView has no
+    // Push API, so the VAPID subscription the PWA holds is unreachable here. The library
+    // is always linked -- MailyNativePlugin compiles against it -- but stays inert until
+    // a google-services.json supplies the project resources (see the conditional plugin
+    // application below); without one, getPushToken() reports "no token" and the web app
+    // tells the user the app has no Firebase configuration.
+    implementation platform("com.google.firebase:firebase-bom:$firebaseBomVersion")
+    implementation 'com.google.firebase:firebase-messaging'
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

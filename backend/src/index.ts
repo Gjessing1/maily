@@ -17,6 +17,7 @@ import { enqueueEnrichPass, shutdownWorker } from './worker/host.js';
 import { buildServer } from './http/server.js';
 import { attachSockets } from './sockets/index.js';
 import { initWebPush, wirePushNotifications } from './push/webpush.js';
+import { initFcm } from './push/fcm.js';
 import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
   const app = await buildServer();
   const io = attachSockets(app);
   initWebPush();
+  initFcm();
   wirePushNotifications();
   await app.listen({ host: '0.0.0.0', port: env.port });
   log.info(`HTTP + Socket.io listening on :${env.port}`);

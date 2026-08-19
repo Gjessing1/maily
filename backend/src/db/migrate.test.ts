@@ -169,3 +169,29 @@ test('the INSERT trigger falls back to the snippet when body_text is NULL', () =
     'coalesce(body_text, snippet, "") picks the snippet',
   );
 });
+
+/**
+ * `device_tokens` (migration 0027) is the Android APK's push registration — the only
+ * channel that can wake it, since System WebView exposes no Push API. Registration is an
+ * upsert on the token, so the unique index is what stops a device that re-registers on
+ * every app boot from accumulating a row per launch (and being notified N times).
+ */
+test('device_tokens keys on the token so re-registration upserts', () => {
+  const insert = sqlite.prepare(
+    `INSERT INTO device_tokens (id, token, platform, last_seen_at) VALUES (?, ?, 'android', ?)
+     ON CONFLICT(token) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+  );
+  insert.run(randomUUID(), 'fcm-token-abc', 1000);
+  insert.run(randomUUID(), 'fcm-token-abc', 2000);
+  insert.run(randomUUID(), 'fcm-token-xyz', 3000);
+
+  const rows = sqlite
+    .prepare(`SELECT token, last_seen_at FROM device_tokens ORDER BY token`)
+    .all() as { token: string; last_seen_at: number }[];
+  assert.deepEqual(
+    rows.map((r) => r.token),
+    ['fcm-token-abc', 'fcm-token-xyz'],
+  );
+  // The re-registration refreshed the row rather than adding one.
+  assert.equal(rows[0]!.last_seen_at, 2000);
+});

@@ -594,7 +594,7 @@ export const api = {
       }),
   },
 
-  pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
+  pushKey: () => request<{ publicKey: string | null; fcm: boolean }>('/api/push/key'),
 
   pushSubscribe: (sub: PushSubscriptionDto) =>
     request<{ ok: boolean }>('/api/push/subscribe', {
@@ -606,6 +606,19 @@ export const api = {
     request<{ ok: boolean }>('/api/push/unsubscribe', {
       method: 'POST',
       body: JSON.stringify({ endpoint }),
+    }),
+
+  /** Register the Android APK's FCM token (the WebView has no Push API to subscribe with). */
+  pushRegisterDevice: (token: string) =>
+    request<{ ok: boolean }>('/api/push/device', {
+      method: 'POST',
+      body: JSON.stringify({ token, platform: 'android' }),
+    }),
+
+  pushUnregisterDevice: (token: string) =>
+    request<{ ok: boolean }>('/api/push/device/unregister', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
     }),
 };
 

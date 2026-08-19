@@ -204,6 +204,25 @@ export const pushSubscriptions = sqliteTable('push_subscriptions', {
 });
 
 /**
+ * FCM device tokens — the Android APK's background-notification channel. The APK is a
+ * WebView shell, and Android System WebView exposes no Push API, so it cannot hold the
+ * VAPID `push_subscriptions` row the PWA does; it registers a Firebase token instead.
+ *
+ * The token is the identity (unique), so re-registering the same device is an upsert.
+ * `lastSeenAt` is refreshed on every registration: the web layer re-registers on each
+ * boot (FCM rotates tokens, and the remote-origin WebView has no working listener to
+ * be told about it), which is also what proves a token is still live.
+ */
+export const deviceTokens = sqliteTable('device_tokens', {
+  id: uuid(),
+  token: text('token').notNull().unique(),
+  /** Only 'android' today; kept so an iOS/APNs channel doesn't need a new table. */
+  platform: text('platform').notNull(),
+  createdAt: now(),
+  lastSeenAt: integer('last_seen_at', { mode: 'number' }),
+});
+
+/**
  * Contacts cached from the Radicale CardDAV addressbook (ROADMAP §3.7.D). One row
  * per (card, email) so an address autocompletes directly; `vcardUid` ties the rows
  * of a multi-email card together. The whole table is a rebuildable cache of the

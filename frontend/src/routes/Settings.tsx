@@ -944,24 +944,34 @@ function ContactsSection() {
   );
 }
 
-/** Web Push opt-in, plus the iOS install prerequisite (ARCHITECTURE §10). */
+/**
+ * Background-notification opt-in. One toggle, two transports underneath: Web Push on
+ * the browser/PWA, FCM in the Android APK (whose WebView has no Push API — see
+ * api/push.ts). The iOS install prerequisite only applies to the Web Push path.
+ */
 function NotificationsSection() {
   const [state, setState] = useState(pushState());
   const [busy, setBusy] = useState(false);
+  // Why an enable attempt didn't take (permission declined, server not configured…).
+  // Cleared on the next attempt, so it never outlives the situation it describes.
+  const [failure, setFailure] = useState<string | null>(null);
   // Show the manual "Add to Home Screen" guidance on iOS Safari (not yet installed):
   // Apple blocks programmatic install prompts and Web Push needs the installed PWA.
-  const showIosInstall = isIos() && !isStandalone();
+  // The Android APK registers natively, so it never needs this.
+  const showIosInstall = isIos() && !isStandalone() && !isNativeAndroid();
 
   async function toggleNotifications() {
     setBusy(true);
+    setFailure(null);
     try {
       if (state === 'granted') {
         await disablePush();
         // Permission itself can't be revoked programmatically; reflect unsubscribe.
         setState(pushState());
       } else {
-        const ok = await enablePush();
-        setState(ok ? 'granted' : pushState());
+        const result = await enablePush();
+        setState(result.ok ? 'granted' : pushState());
+        if (!result.ok && result.reason) setFailure(result.reason);
       }
     } finally {
       setBusy(false);
@@ -970,7 +980,10 @@ function NotificationsSection() {
 
   return (
     <Group
-      note={state === 'denied' ? 'Notifications are blocked in your browser settings.' : undefined}
+      note={
+        failure ??
+        (state === 'denied' ? 'Notifications are blocked in your browser settings.' : undefined)
+      }
     >
       {showIosInstall && (
         <div className="px-4 py-3">

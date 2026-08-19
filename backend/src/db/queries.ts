@@ -21,6 +21,7 @@ import { db } from './client.js';
 import {
   accounts,
   attachments,
+  deviceTokens,
   folders,
   messageFolders,
   messages,
@@ -520,4 +521,27 @@ export function listPushSubscriptions(): (typeof pushSubscriptions.$inferSelect)
 
 export function deletePushSubscription(endpoint: string): void {
   db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint)).run();
+}
+
+/**
+ * Register (or refresh) an FCM device token. The token IS the device identity, so a
+ * re-registration is an upsert that just bumps `lastSeenAt` — the APK re-registers on
+ * every boot because FCM rotates tokens silently.
+ */
+export function saveDeviceToken(token: string, platform: string): void {
+  db.insert(deviceTokens)
+    .values({ token, platform, lastSeenAt: Date.now() })
+    .onConflictDoUpdate({
+      target: deviceTokens.token,
+      set: { platform, lastSeenAt: Date.now() },
+    })
+    .run();
+}
+
+export function listDeviceTokens(): (typeof deviceTokens.$inferSelect)[] {
+  return db.select().from(deviceTokens).all();
+}
+
+export function deleteDeviceToken(token: string): void {
+  db.delete(deviceTokens).where(eq(deviceTokens.token, token)).run();
 }

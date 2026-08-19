@@ -12,11 +12,23 @@ export interface NativeAppRelease {
   sha256: string;
 }
 
+/**
+ * Result of asking the shell for an FCM registration token. `granted` is Android's
+ * POST_NOTIFICATIONS answer; `token` is null when permission was refused or when the
+ * APK was built without Firebase credentials (no `google-services.json`).
+ */
+export interface NativePushToken {
+  granted: boolean;
+  token: string | null;
+}
+
 interface MailyNativePlugin {
   getInfo(): Promise<NativeAppInfo>;
   configureServer(options: { serverUrl: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
   setSystemBarsColor(options: { color: string }): Promise<void>;
+  getPushToken(): Promise<NativePushToken>;
+  clearPushToken(): Promise<void>;
 }
 
 /**
@@ -66,6 +78,40 @@ export async function openNativeExternal(url: string): Promise<void> {
     return;
   }
   await plugin.openExternal({ url });
+}
+
+/**
+ * Ask the Android shell to register with FCM and hand back the device token.
+ *
+ * A *method call*, deliberately — not a Capacitor listener. Maily is served from a
+ * remote origin, where plugin listener registration never takes hold (the same trap
+ * that broke Android Back), so the token cannot be delivered by the `registration`
+ * event `@capacitor/push-notifications` normally uses. The shell resolves the token
+ * synchronously-enough into a promise instead, and the web layer posts it to the
+ * backend over its own authenticated session.
+ *
+ * Returns null off Android, or on an APK too old to have the method.
+ */
+export async function getNativePushToken(): Promise<NativePushToken | null> {
+  const plugin = nativePlugin();
+  if (!plugin?.getPushToken) return null;
+  try {
+    return await plugin.getPushToken();
+  } catch {
+    // Permission dialog dismissed, Google Play services missing, or no Firebase config.
+    return null;
+  }
+}
+
+/** Drop the device's FCM registration (turning notifications off in the APK). */
+export async function clearNativePushToken(): Promise<void> {
+  const plugin = nativePlugin();
+  if (!plugin?.clearPushToken) return;
+  try {
+    await plugin.clearPushToken();
+  } catch {
+    // An APK older than the web app; the server-side token is deleted regardless.
+  }
 }
 
 /** The app background the bars sit against, as the `#rrggbb` the native side parses. */
@@ -124,6 +170,29 @@ export function setNativeBackHandler(handler: () => boolean): () => void {
   host.mailyBack = handler;
   return () => {
     if (host.mailyBack === handler) delete host.mailyBack;
+  };
+}
+
+/**
+ * Let the Android shell route a tapped new-mail notification into the running app.
+ *
+ * Same remote-origin-safe channel as Back: the shell evaluates
+ * `window.mailyOpenMessage(id)` in the WebView rather than delivering an event through
+ * a Capacitor listener, which would never have registered on this origin. `handler`
+ * answers **synchronously** — true when it took the navigation, so the shell leaves the
+ * document alone; anything else and the shell falls back to loading `/m/:id`, throwing
+ * away app state. A page that installs nothing (the SSO detour, the error page) gets
+ * that fallback, which is the right outcome there.
+ *
+ * Returns the uninstall. Harmless on the web, where nothing calls the global.
+ */
+export function setNativeMessageOpener(handler: (messageId: string) => boolean): () => void {
+  const host = globalThis as typeof globalThis & {
+    mailyOpenMessage?: (messageId: string) => boolean;
+  };
+  host.mailyOpenMessage = handler;
+  return () => {
+    if (host.mailyOpenMessage === handler) delete host.mailyOpenMessage;
   };
 }
 

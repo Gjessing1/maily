@@ -1,5 +1,6 @@
 package io.gjessing.maily;
 
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.text.InputType;
@@ -43,6 +44,29 @@ public class MainActivity extends BridgeActivity {
         // callback Back finishes the activity from anywhere in the app. The web app
         // decides first — see MailyBackNavigation.
         getOnBackPressedDispatcher().addCallback(this, new MailyBackNavigation(this));
+
+        // Launched by tapping a new-mail notification: the WebView has loaded nothing
+        // yet, so the deep link is simply the URL it starts on.
+        String messageId = MailyNotificationLink.messageIdFrom(getIntent());
+        if (messageId != null && serverUrl != null && bridge != null) {
+            String url = MailyNotificationLink.urlFor(serverUrl, messageId);
+            if (url != null) bridge.getWebView().post(() -> bridge.getWebView().loadUrl(url));
+        }
+    }
+
+    /**
+     * A notification tapped while Maily is already running. `launchMode="singleTask"`
+     * routes it here instead of recreating the activity, so the running app is asked to
+     * navigate rather than being reloaded — a reload would discard its state and, behind
+     * SSO, re-run the whole handshake.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String messageId = MailyNotificationLink.messageIdFrom(intent);
+        if (messageId == null) return;
+        MailyNotificationLink.openInRunningApp(bridge, MailyPreferences.getServerUrl(this), messageId);
     }
 
     /**

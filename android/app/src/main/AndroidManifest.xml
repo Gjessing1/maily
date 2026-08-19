@@ -29,9 +29,27 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          FCM presentation defaults. Firebase's own service posts the notification while
+          the app is backgrounded or killed, so these are what it looks like: a silhouette
+          small icon (the launcher icon would flatten to a square), the app accent, and a
+          named channel so Android 8+ does not file mail under "Miscellaneous".
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/maily_accent" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/mail_notification_channel_id" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+ gates notifications behind a runtime grant (MailyNativePlugin asks). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

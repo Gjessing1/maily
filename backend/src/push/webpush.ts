@@ -9,6 +9,7 @@ import { createLogger } from '../logger.js';
 import { deletePushSubscription, getMessage, listPushSubscriptions } from '../db/queries.js';
 import { onSignal } from '../events.js';
 import { contactNameFor } from '../contacts/store.js';
+import { broadcastFcm } from './fcm.js';
 
 const log = createLogger('push');
 let enabled = false;
@@ -55,18 +56,27 @@ async function broadcast(payload: PushPayload): Promise<void> {
   );
 }
 
-/** Subscribe to the event bus and fire background notifications (ARCHITECTURE §3). */
+/**
+ * Subscribe to the event bus and fire background notifications (ARCHITECTURE §3).
+ *
+ * Two transports, one trigger. The installed PWA holds a VAPID subscription; the Android
+ * APK cannot (System WebView exposes no Push API) and holds an FCM device token instead.
+ * Both are fed from `mail:new` — which the sync engine emits for INBOX arrivals only, so
+ * neither channel ever notifies about a Sent copy, a saved draft, or a backfill sweep (§9).
+ */
 export function wirePushNotifications(): void {
   onSignal((signal) => {
     if (signal.type === 'mail:new') {
       const m = getMessage(signal.messageId);
       if (!m) return;
-      void broadcast({
+      const payload = {
         // Radicale-first sender name (ROADMAP §3.7.D), matching the DTO precedence.
         title: contactNameFor(m.fromAddress) ?? m.fromName ?? m.fromAddress ?? 'New mail',
         body: m.subject ?? '(no subject)',
         messageId: m.id,
-      });
+      };
+      void broadcast(payload);
+      void broadcastFcm(payload);
       return;
     }
   });

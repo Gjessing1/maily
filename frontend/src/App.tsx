@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
-import { Link, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { onSocketReconnect } from './api/socket';
 import { useAuth } from './state/auth';
 import { useAndroidBackButton } from './state/androidBack';
@@ -14,7 +14,13 @@ import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
 import { Home } from './routes/Home';
-import { applyNativeSystemBars, findNativeAppUpdate, getNativeAppInfo } from './nativeAndroid';
+import {
+  applyNativeSystemBars,
+  findNativeAppUpdate,
+  getNativeAppInfo,
+  setNativeMessageOpener,
+} from './nativeAndroid';
+import { refreshNativePushRegistration } from './api/push';
 
 // Home is the app shell's primary view and stays eager. Everything else is loaded
 // on demand; Workbox still precaches the emitted chunks, so they remain available
@@ -148,6 +154,31 @@ export function App() {
   useEffect(() => {
     if (!authed) return;
     const t = setTimeout(prefetchCleanupDashboard, 4000);
+    return () => clearTimeout(t);
+  }, [authed]);
+
+  // Route a tapped new-mail notification into the running app. The Android shell asks
+  // the page (window.mailyOpenMessage) before it considers reloading the WebView, so
+  // taking the navigation here is what preserves app state — and, behind SSO, spares
+  // the user a fresh handshake. Kept above the routes so it works from any screen.
+  const navigate = useNavigate();
+  useEffect(
+    () =>
+      setNativeMessageOpener((messageId) => {
+        navigate(`/m/${messageId}`);
+        return true;
+      }),
+    [navigate],
+  );
+
+  // Keep the Android APK's FCM registration alive. Firebase rotates device tokens
+  // silently, and the remote-origin WebView has no working plugin listener to be told
+  // when it happens, so re-asking on each boot is the only thing that notices — a
+  // rotated-away token means notifications stop arriving with no visible symptom.
+  // A no-op everywhere except an APK that already has notifications enabled.
+  useEffect(() => {
+    if (!authed) return;
+    const t = setTimeout(() => void refreshNativePushRegistration(), 5000);
     return () => clearTimeout(t);
   }, [authed]);
 
