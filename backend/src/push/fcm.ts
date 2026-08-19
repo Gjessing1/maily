@@ -133,14 +133,18 @@ export async function broadcastFcm(payload: FcmPayload): Promise<void> {
               // the app is backgrounded or killed — no custom Service needed on Android.
               notification: { title: payload.title, body: payload.body },
               // `data` rides along to the tap handler, which deep-links to /m/:uuid.
+              // With no `click_action` set, FCM opens the launcher activity and copies
+              // these keys into its intent extras — which is exactly what MainActivity
+              // reads (MailyNotificationLink). Naming an action here would need a
+              // matching intent-filter, and a tap that resolves nothing does nothing.
               data: { messageId: payload.messageId },
               android: {
                 priority: 'HIGH',
                 notification: {
-                  // Collapse into one thread the way a mail app should, and open the
-                  // launcher activity on tap (MainActivity reads the extras).
-                  tag: 'maily-mail',
-                  click_action: 'android.intent.action.MAIN',
+                  // One notification per message, matching the service worker's per-message
+                  // `tag` on the Web Push path — a shared tag would make each new mail
+                  // replace the last one in the shade.
+                  tag: payload.messageId,
                 },
               },
             },
