@@ -529,13 +529,18 @@ export type PushDeviceRow = typeof pushDevices.$inferSelect;
  * Register a device for self-hosted push. Keyed on the hash rather than the secret,
  * which the server does not keep — re-registering the same secret (the APK re-presents
  * the one it stored) is therefore an upsert that only bumps `lastSeenAt`.
+ *
+ * A new row starts with its catch-up cursor at *now*, not at zero. Turning notifications
+ * on is not a request to be told about the mail already sitting in the inbox — without
+ * this, the first connect would replay up to a day of it into the shade at once.
  */
 export function savePushDevice(tokenHash: string, platform: string): void {
+  const now = Date.now();
   db.insert(pushDevices)
-    .values({ tokenHash, platform, lastSeenAt: Date.now() })
+    .values({ tokenHash, platform, lastSeenAt: now, lastEventAt: now })
     .onConflictDoUpdate({
       target: pushDevices.tokenHash,
-      set: { platform, lastSeenAt: Date.now() },
+      set: { platform, lastSeenAt: now },
     })
     .run();
 }

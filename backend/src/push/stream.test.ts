@@ -134,21 +134,42 @@ test('a broadcast reaches connected devices and advances their cursor', () => {
   stream.attachDeviceStream(device, connection.req, connection.reply);
   assert.equal(stream.connectedDeviceCount(), 1);
 
+  // Newer than the cursor registration seeded, i.e. mail that arrived after this device
+  // was set up — the only kind a live broadcast ever carries.
+  const receivedAt = Date.now() + 1000;
   stream.broadcastStream({
     title: 'Sender',
     body: 'Subject',
     messageId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-    receivedAt: 5000,
+    receivedAt,
   });
 
   assert.deepEqual(
     events(connection.frames()).map((e) => e.messageId),
     ['aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'],
   );
-  assert.equal(queries.pushDeviceByHash(devices.hashDeviceToken(token))?.lastEventAt, 5000);
+  assert.equal(queries.pushDeviceByHash(devices.hashDeviceToken(token))?.lastEventAt, receivedAt);
 
   connection.close();
   assert.equal(stream.connectedDeviceCount(), 0, 'a closed socket is dropped from the hub');
+});
+
+test('a device that just registered is not flooded with mail it already has', () => {
+  seedInboxMessage(Date.now() - 120_000);
+  const token = devices.issueDeviceToken('android');
+  const connection = fakeConnection();
+
+  stream.attachDeviceStream(
+    devices.deviceForAuthHeader(`Bearer ${token}`)!,
+    connection.req,
+    connection.reply,
+  );
+  assert.deepEqual(
+    events(connection.frames()),
+    [],
+    'turning notifications on is not a request to be told about the existing inbox',
+  );
+  connection.close();
 });
 
 test('reconnecting replays the arrivals missed while offline, exactly once', () => {
@@ -156,6 +177,11 @@ test('reconnecting replays the arrivals missed while offline, exactly once', () 
   const hash = devices.hashDeviceToken(token);
   const receivedAt = Date.now() - 60_000;
   const messageId = seedInboxMessage(receivedAt);
+  // Wind the cursor back behind that arrival, but ahead of the older message the previous
+  // test seeded: this device has connected before, and was away when *this* mail landed.
+  sqlite
+    .prepare(`UPDATE push_devices SET last_event_at = ? WHERE token_hash = ?`)
+    .run(receivedAt - 30_000, hash);
 
   const first = fakeConnection();
   stream.attachDeviceStream(
@@ -185,12 +211,13 @@ test('the catch-up cursor never runs backwards', () => {
   const token = devices.issueDeviceToken('android');
   const hash = devices.hashDeviceToken(token);
   const device = devices.deviceForAuthHeader(`Bearer ${token}`)!;
+  const later = Date.now() + 9000;
 
-  queries.advancePushDeviceCursor(device.id, 9000);
-  queries.advancePushDeviceCursor(device.id, 4000);
+  queries.advancePushDeviceCursor(device.id, later);
+  queries.advancePushDeviceCursor(device.id, later - 5000);
   assert.equal(
     queries.pushDeviceByHash(hash)?.lastEventAt,
-    9000,
+    later,
     'an out-of-order write cannot drag the cursor back and re-open a replay window',
   );
 });
