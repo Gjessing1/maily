@@ -6,11 +6,13 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { ContactCardDto } from '@maily/shared';
+import type { ContactCardDto, ContactDuplicateGroupDto } from '@maily/shared';
 import { api } from '../api/client';
+import { invalidateContactLookup } from '../state/contactLookup';
 import { setPref, usePrefs } from '../state/prefs';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
+import { MergeContactsDialog } from '../components/MergeContactsDialog';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
@@ -49,6 +51,11 @@ export function ContactDetail() {
       favorite ? favorites.filter((f) => f !== uid) : [...favorites, uid],
     );
 
+  // The duplicate cluster this card belongs to, if any (§A2). A flag, not a wizard:
+  // it names the other cards and offers a merge, and does nothing at all otherwise.
+  const [duplicate, setDuplicate] = useState<ContactDuplicateGroupDto | null>(null);
+  const [merging, setMerging] = useState(false);
+
   const load = useCallback(() => {
     api
       .contactCard(uid)
@@ -57,6 +64,12 @@ export function ContactDetail() {
         setCard(null);
         setError((e as Error).message);
       });
+    api
+      .contactDuplicates()
+      .then((groups) =>
+        setDuplicate(groups.find((g) => g.cards.some((c) => c.uid === uid)) ?? null),
+      )
+      .catch(() => setDuplicate(null)); // advisory — a failed check just shows no flag
   }, [uid]);
 
   useEffect(load, [load]);
@@ -133,6 +146,28 @@ export function ContactDetail() {
                 )}
               </div>
             </section>
+
+            {duplicate && (
+              <div className="mx-4 mb-2 flex items-center gap-3 rounded-lg bg-surface px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1 text-muted">
+                  Also filed as{' '}
+                  {duplicate.cards
+                    .filter((c) => c.uid !== uid)
+                    .map(
+                      (c) =>
+                        `${c.name || c.emails[0] || 'a card'} in ${c.addressbookName ?? 'another book'}`,
+                    )
+                    .join(', ')}
+                  .
+                </span>
+                <button
+                  onClick={() => setMerging(true)}
+                  className="shrink-0 font-medium text-accent active:opacity-70"
+                >
+                  Merge…
+                </button>
+              </div>
+            )}
 
             <div className="px-2 pb-10">
               {card.emails.map((e) => (
@@ -216,12 +251,27 @@ export function ContactDetail() {
         )}
       </main>
 
+      {merging && duplicate && (
+        <MergeContactsDialog
+          group={duplicate}
+          onClose={() => setMerging(false)}
+          onMerged={(survivor) => {
+            setMerging(false);
+            // The card we were viewing may be one of the deleted ones — land on the survivor.
+            if (survivor !== uid)
+              navigate(`/contacts/${encodeURIComponent(survivor)}`, { replace: true });
+            else load();
+          }}
+        />
+      )}
+
       {editing && card && (
         <ContactEditor
           card={card}
           onClose={() => setEditing(false)}
           onSaved={(savedUid) => {
             setEditing(false);
+            invalidateContactLookup();
             if (savedUid === null) {
               // Deleted — drop the star too, or the UID lingers in prefs forever.
               if (favorite)

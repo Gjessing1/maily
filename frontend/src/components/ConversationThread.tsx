@@ -18,7 +18,7 @@ import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { fullDate, senderName, shortDate } from '../ui/format';
-import { joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
+import { AddSenderPrompt, joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
 import { AttachmentChip } from './AttachmentChip';
 import { ImageAttachment, isImageAttachment } from './ImageAttachment';
@@ -169,6 +169,9 @@ function ConversationMessage({
               <MessageHeaderDetails detail={detail} />
             </div>
           )}
+          {/* Only on the message the user opened — an offer on every collapsed card in a
+              long thread would be the backlog §A2 exists to avoid. */}
+          <AddSenderPrompt name={message.fromName} address={message.fromAddress} />
         </div>
       )}
 

@@ -7,9 +7,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { EmailAddress, MessageDetailDto } from '@maily/shared';
-import { api } from '../api/client';
+import { invalidateContactLookup, lookupContact, useContactLookup } from '../state/contactLookup';
+import { setPref, usePrefs } from '../state/prefs';
 import { ContactEditor } from './ContactEditor';
 import { avatarHue, fullDate, initials } from '../ui/format';
+import { isPromptableSender } from '../ui/senderPrompt';
+import { CloseIcon } from '../ui/icons';
 
 /** `Name <addr>` when we have a display name, else the bare address. */
 export const fmtAddr = (a: EmailAddress): string =>
@@ -68,16 +71,13 @@ export function SenderAvatar({
     e.stopPropagation();
     if (!address) return;
     try {
-      const cards = await api.contactCards();
-      const existing = cards.find((c) =>
-        c.emails.some((em) => em.toLowerCase() === address.toLowerCase()),
-      );
+      const [existing] = await lookupContact(address);
       if (existing) {
         navigate(`/contacts/${encodeURIComponent(existing.uid)}`);
         return;
       }
     } catch {
-      // Couldn't load the book — fall through to the create form.
+      // Couldn't reach the book — fall through to the create form.
     }
     setAddSender({ name, email: address });
   }
@@ -101,10 +101,74 @@ export function SenderAvatar({
           onClose={() => setAddSender(null)}
           onSaved={(uid) => {
             setAddSender(null);
+            invalidateContactLookup();
             if (uid) navigate(`/contacts/${encodeURIComponent(uid)}`);
           }}
         />
       )}
     </>
+  );
+}
+
+/**
+ * One-click "file this sender" (ROADMAP §A2), shown inline under the header when the
+ * sender has no card. Deliberately *not* a suggestion queue: it appears on the message
+ * the user already opened, adds the contact in one tap, and a dismissal is remembered
+ * for that address forever — so an unknown sender is an offer, never an item of work.
+ *
+ * Silent unless it is certain there is something to offer: no prompt while the lookup
+ * is unanswered (offline included), none for machine addresses, none once dismissed.
+ */
+export function AddSenderPrompt({
+  name,
+  address,
+}: {
+  name: string | null;
+  address: string | null;
+}) {
+  const navigate = useNavigate();
+  const dismissed = usePrefs().dismissedContactPrompts;
+  const [editing, setEditing] = useState(false);
+  const promptable = isPromptableSender(address);
+  // Ask only for an address worth offering — a machine sender never reaches the server.
+  const cards = useContactLookup(promptable ? address : null);
+
+  const key = address?.trim().toLowerCase() ?? '';
+  if (!promptable || !cards || cards.length > 0 || dismissed.includes(key)) return null;
+
+  return (
+    <div className="mt-3 flex items-center gap-3 rounded-lg bg-surface px-3 py-2 text-xs">
+      <span className="min-w-0 flex-1 truncate text-muted">Not in your contacts</span>
+      <button
+        onClick={() => setEditing(true)}
+        className="shrink-0 font-medium text-accent active:opacity-70"
+      >
+        Add contact
+      </button>
+      <button
+        onClick={() => setPref('dismissedContactPrompts', [...dismissed, key])}
+        className="-mr-1 shrink-0 rounded-full p-1 text-faint active:bg-surface-2"
+        aria-label="Don’t ask about this sender again"
+        title="Don’t ask about this sender again"
+      >
+        <CloseIcon className="size-3.5" />
+      </button>
+
+      {editing && (
+        <ContactEditor
+          card={null}
+          initialEmail={address ?? ''}
+          initialName={name ?? undefined}
+          onClose={() => setEditing(false)}
+          onSaved={(uid) => {
+            setEditing(false);
+            // The prompt's own answer is memoised — drop it so the card it just created
+            // is what the next render sees.
+            invalidateContactLookup();
+            if (uid) navigate(`/contacts/${encodeURIComponent(uid)}`);
+          }}
+        />
+      )}
+    </div>
   );
 }

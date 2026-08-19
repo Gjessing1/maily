@@ -3,8 +3,14 @@
  * the source of truth — ROADMAP §3.7.D). Writes round-trip through `contacts/carddav`.
  */
 import type { FastifyInstance } from 'fastify';
-import type { ContactAddressDto, ContactCardInput, TypedValueDto } from '@maily/shared';
+import type {
+  ContactAddressDto,
+  ContactCardDto,
+  ContactCardInput,
+  TypedValueDto,
+} from '@maily/shared';
 import {
+  findCardsByEmail,
   getCardByKey,
   getCardDetail,
   listCards,
@@ -27,6 +33,8 @@ import {
   type EditableCard,
 } from '../../contacts/vcard.js';
 import { getAddressbookState, setAddressbookSettings } from '../../contacts/addressbooks.js';
+import { findDuplicateGroups } from '../../contacts/duplicates.js';
+import { mergeCards } from '../../contacts/merge.js';
 
 /** Sanitise a labelled-value list (phones/urls): trim, drop empties, cap the label. */
 function cleanTyped(items: TypedValueDto[] | undefined): TypedValueDto[] {
@@ -155,6 +163,74 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         const status = err instanceof CardDavError ? err.status : 502;
         return reply.code(status).send({ error: (err as Error).message });
       }
+    },
+  );
+
+  // Does this address already have a card? Drives the reader's unknown-sender prompt
+  // (§A2) — a per-message question, so it answers from the cache without parsing the
+  // whole address book. More than one card means the address is filed twice.
+  app.get<{ Querystring: { email?: string } }>('/api/contacts/lookup', async (req) => {
+    const email = (req.query.email ?? '').trim();
+    return { email: email.toLowerCase(), cards: email ? findCardsByEmail(email) : [] };
+  });
+
+  // Cards that look like the same person, across every book (§A2). Read-only and
+  // advisory: the UI flags them, the user decides. Static path, so Fastify routes it
+  // ahead of `/cards/:key`.
+  app.get('/api/contacts/cards/duplicates', async () => findDuplicateGroups(listCards()));
+
+  // Merge cards: the union of every field is written to `primary`, then the others are
+  // deleted. Explicitly requested and confirmed client-side — nothing merges on its own.
+  app.post<{ Body: { primary?: string; others?: string[] } }>(
+    '/api/contacts/cards/merge',
+    async (req, reply) => {
+      const primaryKey = String(req.body?.primary ?? '').trim();
+      const otherKeys = (Array.isArray(req.body?.others) ? req.body.others : [])
+        .map((k) => String(k).trim())
+        .filter(Boolean);
+      if (!primaryKey || otherKeys.length === 0)
+        return reply.code(400).send({ error: 'primary and at least one other card required' });
+
+      const primaryRec = getCardByKey(primaryKey);
+      const primary = getCardDetail(primaryKey);
+      if (!primaryRec?.href || !primary) return reply.code(404).send({ error: 'card not found' });
+
+      // Resolve the others by resource, so a key that happens to point back at the
+      // survivor (or repeats) can't delete the card we just wrote.
+      const others: { key: string; href: string; card: ContactCardDto }[] = [];
+      const seenHrefs = new Set([primaryRec.href]);
+      for (const key of otherKeys) {
+        const rec = getCardByKey(key);
+        const card = getCardDetail(key);
+        if (!rec?.href || !card) return reply.code(404).send({ error: `card not found: ${key}` });
+        if (seenHrefs.has(rec.href)) continue;
+        seenHrefs.add(rec.href);
+        others.push({ key, href: rec.href, card });
+      }
+      if (others.length === 0)
+        return reply.code(400).send({ error: 'nothing to merge into that card' });
+
+      const merged = mergeCards([primary, ...others.map((o) => o.card)]);
+      const undeleted: string[] = [];
+      try {
+        // Write the survivor FIRST: if this fails nothing has been deleted, and if a
+        // delete fails afterwards the data is already safe on the surviving card.
+        await updateCard(primaryRec.uid, primaryRec.href, primaryRec.etag, primaryRec.raw, merged);
+      } catch (err) {
+        const status = err instanceof CardDavError ? err.status : 502;
+        return reply.code(status).send({ error: (err as Error).message });
+      }
+      for (const other of others) {
+        try {
+          await deleteCard(other.href);
+        } catch {
+          undeleted.push(other.key);
+        }
+      }
+      // Re-read by the key the client sent, so the response carries the same card key it
+      // already holds; the href is only a fallback for a key that pointed at a UID.
+      const card = getCardDetail(primaryKey) ?? getCardDetail(primaryRec.href);
+      return { card, merged: others.length - undeleted.length, undeleted };
     },
   );
 

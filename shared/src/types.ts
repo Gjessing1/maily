@@ -183,6 +183,8 @@ export interface ContactCardDto {
   emails: string[];
   /** Href of the address book this card lives in (null for pre-sync/legacy rows). */
   addressbook: string | null;
+  /** That book's display name, so a card can say where it lives without a second fetch. */
+  addressbookName: string | null;
   /** Rich fields (contacts Phase 2), parsed from the card's raw vCard. */
   nickname: string | null;
   /** Company / organisation (first ORG component). */
@@ -225,6 +227,41 @@ export interface ContactCardInput {
    * (other unmodelled properties are always preserved server-side regardless).
    */
   photo?: string | null;
+}
+
+/**
+ * A cluster of cards that look like the same person (ROADMAP §A2). Purely descriptive —
+ * the UI flags it and offers a merge; nothing is merged or queued automatically.
+ */
+export interface ContactDuplicateGroupDto {
+  /** Stable id for the cluster (its member keys, sorted and joined) — a React key. */
+  id: string;
+  /** Addresses carried by more than one card in the cluster (lowercased). */
+  sharedEmails: string[];
+  /** Display name shared by every card in the cluster, or null when only addresses match. */
+  sharedName: string | null;
+  /** The clustered cards, fullest first, so the UI can default that one as the survivor. */
+  cards: ContactCardDto[];
+}
+
+/** Merge request (ROADMAP §A2): fold `others` into `primary`, then delete them. */
+export interface ContactMergeInput {
+  /** Key of the card that survives and receives the union of every field. */
+  primary: string;
+  /** Keys of the cards folded in and deleted afterwards. */
+  others: string[];
+}
+
+/** Outcome of a merge: the surviving card, and how many cards were folded into it. */
+export interface ContactMergeResult {
+  card: ContactCardDto;
+  /** Cards successfully folded in and deleted. */
+  merged: number;
+  /**
+   * Cards folded into the survivor whose own deletion failed — their data is safe in the
+   * survivor, but the stale card is still on the server and will resurface as a duplicate.
+   */
+  undeleted: string[];
 }
 
 /** Outcome of a vCard import: how many cards were created vs. skipped. */

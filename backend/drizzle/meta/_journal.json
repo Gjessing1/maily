@@ -183,6 +183,13 @@
       "when": 1784736000000,
       "tag": "0025_messages_fts_au_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1784900000000,
+      "tag": "0026_contacts_card_email_uq",
+      "breakpoints": true
     }
   ]
 }

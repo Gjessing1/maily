@@ -246,7 +246,13 @@ export const contacts = sqliteTable(
     createdAt: now(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
   },
-  (t) => [uniqueIndex('contacts_email_uq').on(t.email), index('contacts_name_idx').on(t.name)],
+  (t) => [
+    // Keyed per CARD+address, not per address: two cards may legitimately carry the same
+    // address (the ordinary cross-address-book duplicate), and collapsing them here made
+    // the second card invisible to duplicate detection. Autocomplete dedupes on read.
+    uniqueIndex('contacts_card_email_uq').on(t.href, t.email),
+    index('contacts_name_idx').on(t.name),
+  ],
 );
 
 /**

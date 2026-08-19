@@ -129,6 +129,12 @@ export interface Prefs {
    */
   favoriteContacts: string[];
   /**
+   * Lowercased addresses whose "add as contact" prompt the user dismissed (ROADMAP §A2).
+   * The reader offers the prompt once per unknown sender; dismissing it is permanent and
+   * synced, so the offer can never accumulate into a backlog of senders to triage.
+   */
+  dismissedContactPrompts: string[];
+  /**
    * Undo-send window in seconds: how long a send is held in the server outbox (cancelable)
    * before it actually goes out. `0` disables the hold (send immediately). The backend reads
    * this same value from the synced prefs blob when queuing a send.
@@ -168,6 +174,7 @@ const DEFAULTS: Prefs = {
   cleanupProtectedKeywords: [],
   hiddenContactBooks: [],
   favoriteContacts: [],
+  dismissedContactPrompts: [],
   undoSendSeconds: 10,
 };
 

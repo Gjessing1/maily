@@ -13,11 +13,12 @@
  */
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AddressbookDto, ContactCardDto } from '@maily/shared';
+import type { AddressbookDto, ContactCardDto, ContactDuplicateGroupDto } from '@maily/shared';
 import { api, downloadContactsVcf } from '../api/client';
 import { setPref, usePrefs } from '../state/prefs';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
+import { MergeContactsDialog } from '../components/MergeContactsDialog';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
@@ -91,12 +92,22 @@ export function Contacts() {
   // True while an import/export round-trip is in flight (disables the buttons).
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Cards that look like the same person (§A2). Advisory only: the band below the header
+  // says how many there are and nothing else happens until the user opens it.
+  const [duplicates, setDuplicates] = useState<ContactDuplicateGroupDto[]>([]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  // The cluster currently under merge review, or null.
+  const [merging, setMerging] = useState<ContactDuplicateGroupDto | null>(null);
 
   const load = useCallback(() => {
     api
       .contactCards()
       .then(setCards)
       .catch((e) => setError((e as Error).message));
+    api
+      .contactDuplicates()
+      .then(setDuplicates)
+      .catch(() => setDuplicates([])); // advisory — a failed check just shows no flag
   }, []);
 
   useEffect(load, [load]);
@@ -278,6 +289,54 @@ export function Contacts() {
         </div>
       )}
 
+      {duplicates.length > 0 && (
+        <div className="border-b border-border px-3 py-2">
+          <div className={column}>
+            <button
+              onClick={() => setShowDuplicates((v) => !v)}
+              aria-expanded={showDuplicates}
+              className="flex w-full items-center gap-2 rounded-lg bg-surface px-3 py-2 text-left text-sm active:bg-surface-2"
+            >
+              <span className="min-w-0 flex-1 truncate text-muted">
+                {duplicates.length} possible duplicate{duplicates.length === 1 ? '' : 's'}
+              </span>
+              <ChevronDownIcon
+                className={`size-4 shrink-0 text-faint transition-transform ${showDuplicates ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {showDuplicates && (
+              <ul className="mt-2 space-y-2">
+                {duplicates.map((g) => (
+                  <li
+                    key={g.id}
+                    className="flex items-center gap-3 rounded-lg border border-border px-3 py-2"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px]">
+                        {g.sharedName || g.cards[0]?.name || g.sharedEmails[0] || 'Unnamed contact'}
+                      </span>
+                      <span className="block truncate text-xs text-faint">
+                        {g.cards.length} cards
+                        {g.sharedEmails.length > 0
+                          ? ` · share ${g.sharedEmails.join(', ')}`
+                          : ' · same name'}
+                      </span>
+                    </span>
+                    <button
+                      onClick={() => setMerging(g)}
+                      className="shrink-0 text-sm font-medium text-accent active:opacity-70"
+                    >
+                      Merge…
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="border-b border-border px-3 py-2">
         <div className={`${column} flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2`}>
           <SearchIcon className="size-4 shrink-0 text-faint" />
@@ -376,6 +435,17 @@ export function Contacts() {
           </>
         )}
       </main>
+
+      {merging && (
+        <MergeContactsDialog
+          group={merging}
+          onClose={() => setMerging(null)}
+          onMerged={() => {
+            setMerging(null);
+            load();
+          }}
+        />
+      )}
 
       {creating && (
         <ContactEditor

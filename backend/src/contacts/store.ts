@@ -49,25 +49,22 @@ export function reloadContactCache(): void {
 }
 
 /**
- * Replace the entire contacts cache with a freshly-synced set. Deduped by email
- * (the unique key); the last card wins on collision. Runs in one transaction so a
+ * Replace the entire contacts cache with a freshly-synced set. Deduped per
+ * card+address (the unique key), so a repeated address *within* one card collapses
+ * while two cards sharing an address both survive. Runs in one transaction so a
  * reader never sees a half-rebuilt table.
  */
 export function replaceContacts(parsed: ParsedContact[]): number {
-  // Dedup addressed rows by email (so one address shared across books collapses to a
-  // single row — the active book wins, as it's synced last). Email-less cards have no
-  // email to collapse on, so they're keyed by their card identity (UID, else href);
-  // the two key spaces are prefixed so they never collide.
+  // Key every row by its card identity + address. Two different cards carrying the same
+  // address is the ordinary shape of a duplicate (§A2) — collapsing them here made the
+  // second card invisible, so the address is deduped on READ (`searchContacts`) instead.
+  // Email-less cards key on card identity alone.
   const byKey = new Map<string, ParsedContact>();
   for (const c of parsed) {
     const email = c.email?.trim().toLowerCase() || null;
-    if (email) {
-      byKey.set(`e:${email}`, { ...c, email });
-    } else {
-      const cardKey = c.vcardUid ?? c.href ?? null;
-      if (!cardKey) continue; // un-addressable email-less card — nothing to key it by
-      byKey.set(`c:${cardKey}`, { ...c, email: null });
-    }
+    const cardKey = c.href ?? c.vcardUid ?? null;
+    if (!cardKey) continue; // un-addressable card — nothing to key it by
+    byKey.set(`${cardKey}\u0000${email ?? ''}`, { ...c, email });
   }
 
   const rows = [...byKey.values()];
@@ -102,6 +99,8 @@ export interface CardRecord {
   emails: string[];
   /** Href of the book the card lives in — so the editor can show/preselect it. */
   addressbook: string | null;
+  /** That book's display name, for labelling without a live PROPFIND. */
+  addressbookName: string | null;
   /** Raw vCard text, for a round-trip edit that preserves unmodelled properties. */
   raw: string | null;
 }
@@ -110,7 +109,12 @@ export interface CardRecord {
 function toCardDto(
   uid: string,
   raw: string | null,
-  fallback: { name: string | null; emails: string[]; addressbook: string | null },
+  fallback: {
+    name: string | null;
+    emails: string[];
+    addressbook: string | null;
+    addressbookName?: string | null;
+  },
 ): ContactCardDto {
   // Prefer the raw vCard (original case, all rich fields); fall back to the grouped
   // row data for legacy cards synced before raw_vcard existed.
@@ -120,6 +124,7 @@ function toCardDto(
     name: d?.name ?? fallback.name,
     emails: d && d.emails.length ? d.emails : fallback.emails,
     addressbook: fallback.addressbook,
+    addressbookName: fallback.addressbookName ?? null,
     nickname: d?.nickname ?? null,
     org: d?.org ?? null,
     title: d?.title ?? null,
@@ -147,33 +152,56 @@ export function listCards(): ContactCardDto[] {
       vcardUid: contacts.vcardUid,
       href: contacts.href,
       addressbookHref: contacts.addressbookHref,
+      addressbookName: contacts.addressbookName,
       rawVcard: contacts.rawVcard,
     })
     .from(contacts)
     .all();
 
+  // Group by the card's RESOURCE (href), not its UID: copying a card into a second
+  // address book keeps its UID, and grouping on that fused the two into one card with
+  // both books' addresses. Falls back to the UID for legacy rows with no href.
   const byCard = new Map<
     string,
-    { name: string | null; emails: string[]; addressbook: string | null; raw: string | null }
+    {
+      uid: string | null;
+      name: string | null;
+      emails: string[];
+      addressbook: string | null;
+      addressbookName: string | null;
+      raw: string | null;
+    }
   >();
   for (const r of rows) {
-    const key = r.vcardUid ?? r.href;
+    const key = r.href ?? r.vcardUid;
     if (!key) continue; // un-addressable (pre-sync) row — skip
     const card = byCard.get(key) ?? {
+      uid: r.vcardUid,
       name: r.name,
       emails: [],
       addressbook: r.addressbookHref,
+      addressbookName: r.addressbookName,
       raw: null,
     };
+    if (!card.uid && r.vcardUid) card.uid = r.vcardUid;
     if (!card.name && r.name) card.name = r.name;
     if (!card.addressbook && r.addressbookHref) card.addressbook = r.addressbookHref;
+    if (!card.addressbookName && r.addressbookName) card.addressbookName = r.addressbookName;
     if (!card.raw && r.rawVcard) card.raw = r.rawVcard;
     if (r.email) card.emails.push(r.email);
     byCard.set(key, card);
   }
 
+  // The DTO key stays the vCard UID while it identifies exactly one card — that's what
+  // deep links and the starred-contacts pref already hold. Only a UID shared by several
+  // cards falls back to the href, so a collision can't give two rows the same key.
+  const uidUses = new Map<string, number>();
+  for (const c of byCard.values()) {
+    if (c.uid) uidUses.set(c.uid, (uidUses.get(c.uid) ?? 0) + 1);
+  }
+
   return [...byCard.entries()]
-    .map(([uid, c]) => toCardDto(uid, c.raw, c))
+    .map(([href, c]) => toCardDto(c.uid && uidUses.get(c.uid) === 1 ? c.uid : href, c.raw, c))
     .sort((a, b) => (a.name ?? a.emails[0] ?? '').localeCompare(b.name ?? b.emails[0] ?? ''));
 }
 
@@ -195,12 +223,17 @@ export function listRawCards(addressbook?: string | null): string {
     .from(contacts)
     .all();
 
-  const byCard = new Map<string, { name: string | null; emails: string[]; raw: string | null }>();
+  const byCard = new Map<
+    string,
+    { uid: string | null; name: string | null; emails: string[]; raw: string | null }
+  >();
   for (const r of rows) {
     if (addressbook && r.addressbookHref !== addressbook) continue;
-    const key = r.vcardUid ?? r.href;
+    // Per-resource, like `listCards` — two books holding the same UID are two cards.
+    const key = r.href ?? r.vcardUid;
     if (!key) continue; // un-addressable (pre-sync) row — skip
-    const card = byCard.get(key) ?? { name: r.name, emails: [], raw: null };
+    const card = byCard.get(key) ?? { uid: r.vcardUid, name: r.name, emails: [], raw: null };
+    if (!card.uid && r.vcardUid) card.uid = r.vcardUid;
     if (!card.name && r.name) card.name = r.name;
     if (!card.raw && r.rawVcard) card.raw = r.rawVcard;
     if (r.email) card.emails.push(r.email);
@@ -210,7 +243,7 @@ export function listRawCards(addressbook?: string | null): string {
   const docs = [...byCard.entries()].map(([key, c]) =>
     c.raw
       ? c.raw.trim()
-      : buildVCard(key, {
+      : buildVCard(c.uid ?? key, {
           name: c.name,
           nickname: null,
           org: null,
@@ -231,11 +264,27 @@ export function listRawCards(addressbook?: string | null): string {
 export function getCardDetail(key: string): ContactCardDto | null {
   const rec = getCardByKey(key);
   if (!rec) return null;
-  return toCardDto(rec.uid, rec.raw, {
+  return toCardDto(key, rec.raw, {
     name: rec.name,
     emails: rec.emails,
     addressbook: rec.addressbook,
+    addressbookName: rec.addressbookName,
   });
+}
+
+/**
+ * Every cached card carrying `email` (§A2). Normally zero or one, but two cards may
+ * legitimately share an address — a duplicate across address books — and the reader's
+ * unknown-sender prompt has to know the difference between "not filed" and "filed twice".
+ * Only the matching cards are parsed, so this stays cheap enough to run per message.
+ */
+export function findCardsByEmail(email: string): ContactCardDto[] {
+  const needle = email.trim().toLowerCase();
+  if (!needle) return [];
+  // Filtered from `listCards` rather than queried directly, so a card is keyed here
+  // exactly as the Contacts list keys it — the reader navigates to `/contacts/<uid>` and
+  // starring compares that same key, and a second keying rule would silently break both.
+  return listCards().filter((c) => c.emails.some((e) => e.trim().toLowerCase() === needle));
 }
 
 /**
@@ -243,7 +292,7 @@ export function getCardDetail(key: string): ContactCardDto | null {
  * etag, and raw vCard for a write-back. Returns null when no such card is cached.
  */
 export function getCardByKey(key: string): CardRecord | null {
-  const rows = db
+  let rows = db
     .select({
       email: contacts.email,
       name: contacts.name,
@@ -251,12 +300,18 @@ export function getCardByKey(key: string): CardRecord | null {
       href: contacts.href,
       etag: contacts.etag,
       addressbookHref: contacts.addressbookHref,
+      addressbookName: contacts.addressbookName,
       rawVcard: contacts.rawVcard,
     })
     .from(contacts)
-    .where(sql`${contacts.vcardUid} = ${key} OR ${contacts.href} = ${key}`)
+    .where(sql`${contacts.href} = ${key} OR ${contacts.vcardUid} = ${key}`)
     .all();
   if (rows.length === 0) return null;
+  // A key may match by UID, and a UID can legitimately repeat across address books
+  // (the same card copied into a second book). Confine the result to ONE card — its
+  // href — so a write never merges two cards' addresses into a franken-vCard.
+  const href = rows.find((r) => r.href)?.href ?? null;
+  if (href) rows = rows.filter((r) => r.href === href);
   const first = rows[0]!;
   return {
     uid: first.vcardUid ?? key,
@@ -265,6 +320,7 @@ export function getCardByKey(key: string): CardRecord | null {
     name: rows.find((r) => r.name)?.name ?? null,
     emails: rows.map((r) => r.email).filter((e): e is string => !!e),
     addressbook: rows.find((r) => r.addressbookHref)?.addressbookHref ?? null,
+    addressbookName: rows.find((r) => r.addressbookName)?.addressbookName ?? null,
     raw: rows.find((r) => r.rawVcard)?.rawVcard ?? null,
   };
 }
@@ -284,19 +340,30 @@ export function searchContacts(q: string, limit: number): ContactDto[] {
   if (!term) return [];
   const like = `%${escapeLike(term)}%`;
   const active = new Set(effectiveActive());
-  return db
-    .select({
-      name: contacts.name,
-      email: contacts.email,
-      addressbookHref: contacts.addressbookHref,
-    })
-    .from(contacts)
-    .where(
-      sql`(${contacts.email} LIKE ${like} ESCAPE '\\' OR ${contacts.name} LIKE ${like} ESCAPE '\\')`,
-    )
-    .orderBy(contacts.name)
-    .all()
-    .filter((r) => !!r.email && (!r.addressbookHref || active.has(r.addressbookHref)))
-    .slice(0, limit)
-    .map(({ name, email }) => ({ name, email: email! }));
+  const seen = new Set<string>();
+  return (
+    db
+      .select({
+        name: contacts.name,
+        email: contacts.email,
+        addressbookHref: contacts.addressbookHref,
+      })
+      .from(contacts)
+      .where(
+        sql`(${contacts.email} LIKE ${like} ESCAPE '\\' OR ${contacts.name} LIKE ${like} ESCAPE '\\')`,
+      )
+      .orderBy(contacts.name)
+      .all()
+      .filter((r) => !!r.email && (!r.addressbookHref || active.has(r.addressbookHref)))
+      // One suggestion per address: the cache now keeps a row per card+address, so an
+      // address on two cards (a duplicate, §A2) would otherwise autocomplete twice.
+      .filter((r) => {
+        const key = r.email!.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit)
+      .map(({ name, email }) => ({ name, email: email! }))
+  );
 }

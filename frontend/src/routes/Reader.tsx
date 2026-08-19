@@ -17,6 +17,7 @@ import { AddToCalendar } from '../components/AddToCalendar';
 import {
   fmtAddr,
   joinAddrs,
+  AddSenderPrompt,
   MessageHeaderDetails,
   SenderAvatar,
 } from '../components/MessageHeader';
@@ -518,6 +519,8 @@ export function ReaderView({
                   <MessageHeaderDetails detail={detail} />
                 </div>
               )}
+
+              <AddSenderPrompt name={detail.fromName} address={detail.fromAddress} />
             </div>
 
             <div className="border-t border-border">

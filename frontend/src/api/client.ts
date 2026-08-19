@@ -21,7 +21,10 @@ import type {
   ContactCardDto,
   ContactCardInput,
   ContactDto,
+  ContactDuplicateGroupDto,
   ContactImportResult,
+  ContactMergeInput,
+  ContactMergeResult,
   DetachPreviewDto,
   DetachRequest,
   DetachStatusDto,
@@ -447,6 +450,22 @@ export const api = {
 
   /** Whole-card management (CardDAV write-back) for the Contacts manager. */
   contactCards: () => request<ContactCardDto[]>('/api/contacts/cards'),
+
+  /** Cards already filing this address — drives the reader's unknown-sender prompt (§A2). */
+  contactLookup: (email: string) =>
+    request<{ email: string; cards: ContactCardDto[] }>(
+      `/api/contacts/lookup?email=${encodeURIComponent(email)}`,
+    ),
+
+  /** Cards that look like the same person, across every address book (§A2, advisory). */
+  contactDuplicates: () => request<ContactDuplicateGroupDto[]>('/api/contacts/cards/duplicates'),
+
+  /** Fold `others` into `primary` and delete them — always user-confirmed (§A2). */
+  mergeContactCards: (primary: string, others: string[]) =>
+    request<ContactMergeResult>('/api/contacts/cards/merge', {
+      method: 'POST',
+      body: JSON.stringify({ primary, others } satisfies ContactMergeInput),
+    }),
 
   /** One card's rich detail by key (UID, or href for UID-less cards). */
   contactCard: (key: string) =>
