@@ -1,20 +1,18 @@
 /**
  * The Android APK cannot use Web Push: System WebView exposes no `PushManager`, so the
  * subscription flow the PWA uses reports "unsupported" and the notifications toggle
- * would be permanently unavailable. On native the same toggle drives maily's own push
- * stream instead — the server mints a device secret, the shell stores it and runs a
- * foreground service that holds the connection.
+ * would be permanently unavailable. On native the same toggle drives maily's own
+ * background check instead — the server mints a device secret, and the shell stores it
+ * and presents it every time it asks what has arrived.
  *
  * What is pinned here is the credential's lifecycle, because every failure mode is
- * invisible: a secret minted for a shell that never started it leaves a server row being
- * notified into nothing, and a shell that lost its secret leaves the toggle claiming
- * notifications are on when nothing is listening.
+ * invisible: a secret minted for a shell that never armed its check leaves an orphan
+ * server row, and a shell that lost its secret leaves the toggle claiming notifications
+ * are on when nothing is asking.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pushKey = vi.fn(() =>
-  Promise.resolve({ publicKey: 'vapid', stream: true, connectedDevices: 0 }),
-);
+const pushKey = vi.fn(() => Promise.resolve({ publicKey: 'vapid' }));
 const pushRegisterDevice = vi.fn(() => Promise.resolve({ token: 'device-secret-1' }));
 const pushUnregisterDevice = vi.fn(() => Promise.resolve({ ok: true }));
 
@@ -34,7 +32,7 @@ vi.mock('../nativeAndroid', () => ({
   nativePushStatus,
 }));
 
-const ON = { enabled: true, granted: true, unrestricted: true };
+const ON = { enabled: true, granted: true };
 
 describe('background notifications in the Android APK', () => {
   beforeEach(() => {
@@ -59,7 +57,7 @@ describe('background notifications in the Android APK', () => {
 
   it('revokes the secret when the shell declines, leaving no orphan registration', async () => {
     const { enablePush, pushState } = await import('./push');
-    enableNativePush.mockResolvedValue({ enabled: false, granted: false, unrestricted: false });
+    enableNativePush.mockResolvedValue({ enabled: false, granted: false });
 
     const result = await enablePush();
     expect(result.ok).toBe(false);
@@ -97,7 +95,7 @@ describe('background notifications in the Android APK', () => {
 
     // App storage cleared: the service has nothing to connect with, and nothing told
     // the web layer — which is why the reconcile exists at all.
-    nativePushStatus.mockResolvedValue({ enabled: false, granted: true, unrestricted: true });
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: true });
     pushRegisterDevice.mockResolvedValue({ token: 'device-secret-2' });
     enableNativePush.mockResolvedValue(ON);
     await resumeNativePush();
@@ -113,9 +111,9 @@ describe('background notifications in the Android APK', () => {
     vi.clearAllMocks();
 
     // Permission revoked in Android settings while the app was closed.
-    nativePushStatus.mockResolvedValue({ enabled: false, granted: false, unrestricted: true });
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: false });
     pushRegisterDevice.mockResolvedValue({ token: 'device-secret-2' });
-    enableNativePush.mockResolvedValue({ enabled: false, granted: false, unrestricted: true });
+    enableNativePush.mockResolvedValue({ enabled: false, granted: false });
     await resumeNativePush();
 
     expect(pushUnregisterDevice).toHaveBeenCalledWith('device-secret-2');
@@ -133,7 +131,7 @@ describe('background notifications in the Android APK', () => {
 
   it('does nothing on boot when notifications are off on this device', async () => {
     const { resumeNativePush } = await import('./push');
-    nativePushStatus.mockResolvedValue({ enabled: false, granted: false, unrestricted: false });
+    nativePushStatus.mockResolvedValue({ enabled: false, granted: false });
 
     await resumeNativePush();
     expect(pushRegisterDevice).not.toHaveBeenCalled();

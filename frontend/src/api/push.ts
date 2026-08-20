@@ -4,14 +4,14 @@
  *
  * - **Browser / installed PWA → Web Push (VAPID).** The permission prompt must come
  *   from a user gesture, and on iOS the PWA must be installed to the Home Screen first.
- * - **Android APK → maily's own push stream.** The APK is a WebView shell, and Android
- *   System WebView exposes no Push API at all (`PushManager` is simply absent), so there
- *   is no subscription to make. The native shell runs a foreground service holding an SSE
- *   connection to the maily server instead, and posts Android notifications itself.
+ * - **Android APK → a background check the app runs itself.** The APK is a WebView
+ *   shell, and Android System WebView exposes no Push API at all (`PushManager` is simply
+ *   absent), so there is no subscription to make. The native shell wakes on its own alarm
+ *   every few minutes, asks maily what has arrived since it last looked, and posts the
+ *   Android notifications itself.
  *
- * Both end up in the same place: a row the server fans `mail:new` out to. Neither
- * involves a third party — the PWA's push goes through the browser vendor's endpoint
- * because that is what Web Push is, and the APK's goes nowhere but maily.
+ * Neither involves a third party — the PWA's push goes through the browser vendor's
+ * endpoint because that is what Web Push is, and the APK's goes nowhere but maily.
  *
  * The device secret lives on the native side only. The web layer keeps a boolean, which
  * is all the toggle needs and is not a credential worth protecting.
@@ -70,9 +70,9 @@ export function pushState(): PushState {
 }
 
 /**
- * Mint a device credential and hand it to the shell, which stores it and starts its
- * foreground service. A credential that fails to take hold is revoked immediately rather
- * than left as an orphan row the server would keep trying to notify.
+ * Mint a device credential and hand it to the shell, which stores it and arms its
+ * background check. A credential that fails to take hold is revoked immediately rather
+ * than left as an orphan row the server would keep answering for.
  */
 async function enableNativePushHere(): Promise<PushEnableResult> {
   const { token } = await api.pushRegisterDevice();
@@ -82,7 +82,7 @@ async function enableNativePushHere(): Promise<PushEnableResult> {
     return {
       ok: false,
       reason: status
-        ? 'The app could not start its notification service.'
+        ? 'The app could not turn on background notifications.'
         : 'This app version cannot register for notifications. Update the app first.',
     };
   }
@@ -152,7 +152,7 @@ export async function disablePush(): Promise<void> {
  * The two can drift, and both directions are real: clearing app storage wipes the
  * shell's credential while the web marker survives in the WebView's own storage, and
  * reinstalling the web app's storage (or a fresh SSO session) loses the marker while the
- * service keeps running. Nothing here is user-visible unless it has to be — a shell that
+ * shell keeps checking. Nothing here is user-visible unless it has to be — a shell that
  * lost its credential is silently re-issued one, since the user already asked for
  * notifications and Android does not re-prompt for a permission already granted.
  */

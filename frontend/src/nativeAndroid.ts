@@ -15,19 +15,15 @@ export interface NativeAppRelease {
 /**
  * What the shell reports about background notifications on this device.
  *
- * - `enabled` — the shell holds a push credential, i.e. its foreground service is meant
- *   to be running. This, not a web-side flag, is the truth: app data can be cleared, and
- *   an APK reinstall starts with nothing.
+ * - `enabled` — the shell holds a push credential, i.e. it is asking Maily for new mail
+ *   on its own schedule. This, not a web-side flag, is the truth: app data can be
+ *   cleared, and an APK reinstall starts with nothing.
  * - `granted` — Android's POST_NOTIFICATIONS answer. Revocable from system settings at
  *   any time, without telling the app.
- * - `unrestricted` — the app is exempt from battery optimisation. Without it Doze can
- *   suspend the service's socket for hours, which looks exactly like "notifications
- *   stopped working" — so it is surfaced rather than silently hoped for.
  */
 export interface NativePushStatus {
   enabled: boolean;
   granted: boolean;
-  unrestricted: boolean;
 }
 
 interface MailyNativePlugin {
@@ -38,7 +34,6 @@ interface MailyNativePlugin {
   enablePush(options: { token: string }): Promise<NativePushStatus>;
   disablePush(): Promise<{ token: string | null }>;
   pushStatus(): Promise<NativePushStatus>;
-  requestUnrestrictedBattery(): Promise<void>;
 }
 
 /**
@@ -99,10 +94,10 @@ export async function openNativeExternal(url: string): Promise<void> {
  * arrive. Asking and answering in one promise depends on nothing but the bridge call
  * that is already working.
  *
- * The secret is stored on the native side and nowhere else: the foreground service
- * connects to `/api/push/stream` long after this WebView is gone, so it must own it, and
- * one copy is one place to revoke. Returns null off Android, or on an APK too old to
- * have the method — the web app can be newer than the installed shell.
+ * The secret is stored on the native side and nowhere else: the shell asks
+ * `/api/push/pending` long after this WebView is gone, so it must own it, and one copy is
+ * one place to revoke. Returns null off Android, or on an APK too old to have the method
+ * — the web app can be newer than the installed shell.
  */
 export async function enableNativePush(token: string): Promise<NativePushStatus | null> {
   const plugin = nativePlugin();
@@ -110,7 +105,7 @@ export async function enableNativePush(token: string): Promise<NativePushStatus 
   try {
     return await plugin.enablePush({ token });
   } catch {
-    // Permission dialog dismissed, or the shell could not start its service.
+    // Permission dialog dismissed, or the shell could not arm its background check.
     return null;
   }
 }
@@ -138,21 +133,6 @@ export async function nativePushStatus(): Promise<NativePushStatus | null> {
     return await plugin.pushStatus();
   } catch {
     return null;
-  }
-}
-
-/**
- * Open Android's "allow background activity" prompt for Maily. Doze otherwise suspends
- * the push service's socket while the phone is idle, which is precisely when a
- * notification matters most.
- */
-export async function requestUnrestrictedBattery(): Promise<void> {
-  const plugin = nativePlugin();
-  if (!plugin?.requestUnrestrictedBattery) return;
-  try {
-    await plugin.requestUnrestrictedBattery();
-  } catch {
-    // Dialog dismissed, or an APK older than the web app.
   }
 }
 

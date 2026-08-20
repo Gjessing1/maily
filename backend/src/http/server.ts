@@ -10,7 +10,7 @@ import { env } from '../env.js';
 import { authRoutes } from '../routes/auth.js';
 import { apiRoutes } from '../routes/api.js';
 import { appReleaseRoutes } from '../routes/appRelease.js';
-import { pushStreamRoutes } from '../routes/pushStream.js';
+import { pushDeviceRoutes } from '../routes/pushDevice.js';
 import { staticSite } from './static.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
@@ -27,9 +27,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Public so the first APK can be installed before Maily has an app session.
   // An upstream TinyAuth deployment may still apply its own access policy.
   await app.register(appReleaseRoutes);
-  // Outside apiRoutes: the APK's foreground service authenticates with its own device
+  // Outside apiRoutes: the APK's background poll authenticates with its own device
   // secret, not the app session, and must be checked even under MAILY_DISABLE_AUTH.
-  await app.register(pushStreamRoutes);
+  await app.register(pushDeviceRoutes);
   await app.register(apiRoutes);
   // Last, and on the root context (not encapsulated) so reply.sendFile and the
   // SPA not-found handler apply app-wide: serves the built PWA in production

@@ -9,7 +9,6 @@ import { createLogger } from '../logger.js';
 import { deletePushSubscription, getMessage, listPushSubscriptions } from '../db/queries.js';
 import { onSignal } from '../events.js';
 import { notificationFor, type MailNotification } from './payload.js';
-import { broadcastStream } from './stream.js';
 
 const log = createLogger('push');
 let enabled = false;
@@ -66,7 +65,6 @@ export function wirePushNotifications(): void {
       if (!m) return;
       const payload = notificationFor(m);
       void broadcast(payload);
-      broadcastStream(payload);
       return;
     }
   });

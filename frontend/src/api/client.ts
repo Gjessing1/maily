@@ -594,10 +594,7 @@ export const api = {
       }),
   },
 
-  pushKey: () =>
-    request<{ publicKey: string | null; stream: boolean; connectedDevices: number }>(
-      '/api/push/key',
-    ),
+  pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
 
   pushSubscribe: (sub: PushSubscriptionDto) =>
     request<{ ok: boolean }>('/api/push/subscribe', {

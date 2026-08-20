@@ -31,34 +31,16 @@
         </provider>
 
         <!--
-          Background notifications: Maily holds its own connection to its own server
-          rather than routing them through Firebase (see MailyPushService for why).
-          Android only permits an indefinitely-running connection from a foreground
-          service, and from Android 14 that service must declare a type.
+          Background notifications. Maily asks its own server what has arrived, on an
+          alarm it re-arms after every check (MailyPushAlarm) — no foreground service, and
+          therefore none of the permanent "app is running" notice Android demands of one.
 
-          `specialUse` and not `dataSync`: Android 15 caps dataSync services at six hours
-          per 24, which would silently stop notifications every evening. No other declared
-          type describes "keep a connection to the user's own mail server" —
-          `remoteMessaging` is for handing a conversation between devices. specialUse has
-          no runtime cap; it needs a justification only for Google Play review, and this
-          APK is installed directly.
-        -->
-        <service
-            android:name=".MailyPushService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains a persistent connection to the user's self-hosted Maily mail server to deliver new-mail notifications, replacing a third-party push service." />
-        </service>
-
-        <!--
-          Restore the connection after a reboot or an in-place app update — neither of
-          which produces any other moment the service could restart itself. Inert unless
-          notifications were enabled on this device.
+          BOOT_COMPLETED and MY_PACKAGE_REPLACED both clear the armed alarm: a reboot
+          cancels every alarm on the device, and an in-place update is not followed by a
+          boot broadcast. Inert unless notifications were enabled on this device.
         -->
         <receiver
-            android:name=".MailyBootReceiver"
+            android:name=".MailyPushReceiver"
             android:exported="false"
             android:enabled="true">
             <intent-filter>
@@ -73,19 +55,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ gates notifications behind a runtime grant (MailyNativePlugin asks). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- The push connection: a foreground service of the type declared above. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- Reconnect the moment a network returns, instead of sitting out the backoff. -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Restart the connection after a reboot. -->
+    <!-- Re-arm the mail check after a reboot, which cancels every alarm the app had set. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
-      Lets Settings open the exemption prompt directly rather than dumping the user in a
-      system list. Google Play restricts this permission to apps that genuinely need a
-      persistent connection; Maily is installed directly, so the restriction is a Play
-      distribution policy rather than a technical limit. Without the exemption, Doze
-      suspends the push connection while the phone is idle overnight.
+      Deliberately absent: FOREGROUND_SERVICE(_SPECIAL_USE), because nothing runs
+      indefinitely any more, and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, because the poll
+      uses setAndAllowWhileIdle and therefore fires through Doze without an exemption.
+      No exact-alarm permission either: mail has no appointed time, so the inexact alarm
+      is the honest declaration as well as the cheaper one.
     -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

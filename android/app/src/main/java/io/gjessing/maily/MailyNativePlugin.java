@@ -7,8 +7,6 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
-import android.os.PowerManager;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.Window;
 import androidx.core.content.pm.PackageInfoCompat;
@@ -37,11 +35,11 @@ public class MailyNativePlugin extends Plugin {
     public void load() {
         String serverUrl = MailyPreferences.getServerUrl(getContext());
         if (serverUrl != null) navigation = new MailyNavigation(serverUrl);
-        // Opening Maily is the reliable moment to restore the push connection: the boot
-        // receiver covers reboots and updates, but nothing covers a service the system
-        // killed under memory pressure and never restarted. A no-op unless this device
-        // holds a credential.
-        MailyPushService.startIfEnabled(getContext());
+        // Opening Maily is the reliable moment to re-arm the mail check: the receiver
+        // covers reboots and updates, but nothing covers an alarm the system dropped —
+        // force-stopping the app cancels every alarm it had set, and only launching it
+        // again can restore them. A no-op unless this device holds a credential.
+        MailyPushAlarm.enable(getContext());
     }
 
     @Override
@@ -133,8 +131,8 @@ public class MailyNativePlugin extends Plugin {
     }
 
     /**
-     * Turn on background notifications: store the credential the web app minted and start
-     * the foreground service that holds Maily's push connection (MailyPushService).
+     * Turn on background notifications: store the credential the web app minted and arm
+     * the alarm that asks Maily for new mail (MailyPushAlarm).
      *
      * A resolved *method call*, deliberately — not a Capacitor listener. Maily is served
      * from a remote origin, where plugin listener registration never takes hold (the same
@@ -181,7 +179,8 @@ public class MailyNativePlugin extends Plugin {
     }
 
     private void startPush(PluginCall call) {
-        MailyPushService.startIfEnabled(getContext());
+        MailyPushNotifier.ensureChannels(getContext());
+        MailyPushAlarm.enable(getContext());
         call.resolve(status());
     }
 
@@ -190,7 +189,7 @@ public class MailyNativePlugin extends Plugin {
     public void disablePush(PluginCall call) {
         String token = MailyPreferences.getPushToken(getContext());
         MailyPreferences.setPushToken(getContext(), null);
-        MailyPushService.stop(getContext());
+        MailyPushAlarm.disable(getContext());
         JSObject result = new JSObject();
         result.put("token", token);
         call.resolve(result);
@@ -202,61 +201,15 @@ public class MailyNativePlugin extends Plugin {
     }
 
     /**
-     * `enabled` is "this device holds a credential", not "the socket is up right now" —
-     * the connection drops and reconnects constantly on a phone, and reporting that as a
-     * settings state would make the toggle flicker for no reason.
+     * `enabled` is "this device holds a credential and is asking" — there is no live
+     * connection whose state could be reported, and a between-polls moment is not an off
+     * state.
      */
     private JSObject status() {
         JSObject result = new JSObject();
         result.put("enabled", MailyPreferences.getPushToken(getContext()) != null);
         result.put("granted", getPermissionState(NOTIFICATIONS) == PermissionState.GRANTED);
-        result.put("unrestricted", isBatteryUnrestricted());
         return result;
-    }
-
-    /**
-     * Whether Android exempts Maily from battery optimisation. Without the exemption Doze
-     * suspends the push service's socket while the phone sits idle — overnight, which is
-     * exactly the stretch where a delayed notification is most noticeable.
-     */
-    private boolean isBatteryUnrestricted() {
-        PowerManager power = getContext().getSystemService(PowerManager.class);
-        if (power == null) return true;
-        return power.isIgnoringBatteryOptimizations(getContext().getPackageName());
-    }
-
-    /**
-     * Open Android's exemption prompt for Maily.
-     *
-     * The direct dialog needs REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, which Google Play
-     * restricts to apps whose core function needs a persistent connection. This APK is
-     * installed directly, so the restriction is a distribution policy rather than a
-     * technical limit — but the general settings screen is the fallback if the direct
-     * intent is ever refused, so the user is never left with a dead button.
-     */
-    @PluginMethod
-    public void requestUnrestrictedBattery(PluginCall call) {
-        if (isBatteryUnrestricted()) {
-            call.resolve();
-            return;
-        }
-        Uri app = Uri.parse("package:" + getContext().getPackageName());
-        try {
-            getActivity().startActivity(
-                new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, app)
-            );
-        } catch (Exception error) {
-            Log.w(PLUGIN_TAG, "falling back to the battery optimisation settings list", error);
-            try {
-                getActivity().startActivity(
-                    new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                );
-            } catch (Exception fallbackError) {
-                call.reject("Could not open Android's battery settings", fallbackError);
-                return;
-            }
-        }
-        call.resolve();
     }
 
     @PluginMethod

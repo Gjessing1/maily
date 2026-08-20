@@ -13,8 +13,8 @@ android {
         applicationId "io.gjessing.maily"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 6
-        versionName "0.3.1"
+        versionCode 7
+        versionName "0.4.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -76,6 +76,6 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-// No Firebase: background notifications are delivered over Maily's own push stream, held
-// open by MailyPushService. Nothing here links Google Play Services, so the APK also
-// works on de-Googled Android.
+// No Firebase, and no push library at all: background notifications come from Maily's own
+// server, asked on an alarm (MailyPushAlarm). Nothing here links Google Play Services, so
+// the APK also works on de-Googled Android.

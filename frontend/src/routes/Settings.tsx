@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   AccountDto,
@@ -28,9 +28,7 @@ import {
   getNativeAppInfo,
   isNativeAndroid,
   nativeDownloadUrl,
-  nativePushStatus,
   openNativeExternal,
-  requestUnrestrictedBattery,
   type NativeAppRelease,
 } from '../nativeAndroid';
 
@@ -948,14 +946,14 @@ function ContactsSection() {
 
 /**
  * Background-notification opt-in. One toggle, two transports underneath: Web Push on
- * the browser/PWA, maily's own push stream in the Android APK (whose WebView has no
- * Push API — see api/push.ts). The iOS install prerequisite only applies to the Web
- * Push path.
+ * the browser/PWA, and in the Android APK a background check the app runs itself (whose
+ * WebView has no Push API — see api/push.ts). The iOS install prerequisite only applies
+ * to the Web Push path.
  *
- * The Android path has one prerequisite of its own, and it is the difference between
- * working and appearing to work: the app must be exempt from battery optimisation, or
- * Doze suspends its connection while the phone is idle overnight — exactly when the
- * notification mattered. Surfaced as a prompt rather than left to be discovered.
+ * The APK's transport is worth one line of explanation to the user, because it is the
+ * one thing about it that is visible: mail is checked every few minutes rather than the
+ * instant it arrives. Saying so beats leaving a delay to be discovered and read as
+ * "notifications are broken".
  */
 function NotificationsSection() {
   const [state, setState] = useState(pushState());
@@ -963,23 +961,10 @@ function NotificationsSection() {
   // Why an enable attempt didn't take (permission declined, server not configured…).
   // Cleared on the next attempt, so it never outlives the situation it describes.
   const [failure, setFailure] = useState<string | null>(null);
-  // Android only: true once the app is exempt from battery optimisation. Null while
-  // unknown (still asking, or not an APK at all), which renders nothing.
-  const [unrestricted, setUnrestricted] = useState<boolean | null>(null);
   // Show the manual "Add to Home Screen" guidance on iOS Safari (not yet installed):
   // Apple blocks programmatic install prompts and Web Push needs the installed PWA.
   // The Android APK registers natively, so it never needs this.
   const showIosInstall = isIos() && !isStandalone() && !isNativeAndroid();
-
-  const refreshBatteryState = useCallback(async () => {
-    if (!isNativeAndroid()) return;
-    const status = await nativePushStatus();
-    setUnrestricted(status?.unrestricted ?? null);
-  }, []);
-
-  useEffect(() => {
-    void refreshBatteryState();
-  }, [refreshBatteryState]);
 
   async function toggleNotifications() {
     setBusy(true);
@@ -994,17 +979,9 @@ function NotificationsSection() {
         setState(result.ok ? 'granted' : pushState());
         if (!result.ok && result.reason) setFailure(result.reason);
       }
-      await refreshBatteryState();
     } finally {
       setBusy(false);
     }
-  }
-
-  async function allowBackgroundActivity() {
-    await requestUnrestrictedBattery();
-    // The system dialog resolves before the user answers it, so re-read rather than
-    // assume — a dismissed prompt must leave the nudge standing.
-    await refreshBatteryState();
   }
 
   return (
@@ -1041,17 +1018,12 @@ function NotificationsSection() {
           </span>
         </button>
       )}
-      {state === 'granted' && unrestricted === false && (
-        <button
-          onClick={allowBackgroundActivity}
-          className="w-full border-t border-line px-4 py-3 text-left active:bg-surface-2"
-        >
-          <span className="text-[15px]">Allow background activity</span>
-          <span className="mt-1 block text-xs text-faint">
-            Android’s battery saver can pause maily’s connection while the phone is idle, delaying
-            mail until you next open the app. Allowing background activity keeps it connected.
-          </span>
-        </button>
+      {state === 'granted' && isNativeAndroid() && (
+        <p className="border-t border-line px-4 py-3 text-xs text-faint">
+          Maily checks for new mail every few minutes in the background — more often while the
+          screen is on. Nothing runs in between, so the app doesn’t need a permanent notification in
+          your shade.
+        </p>
       )}
     </Group>
   );
