@@ -19,14 +19,15 @@ import org.json.JSONObject;
  * GET needs no dependency, and the same reasoning kept the backend's notification sender
  * off vendor SDKs.
  *
- * The request runs inside a broadcast receiver's `goAsync` window, so both timeouts are
- * deliberately short: a server that is unreachable must fail fast and leave the retry to
- * the next alarm rather than hold the process awake waiting for it.
+ * The request runs inside a broadcast receiver's `goAsync` window, under a wake lock, so
+ * both timeouts are deliberately short: a server that is unreachable must fail fast and
+ * leave the retry to the next alarm rather than hold the phone awake waiting for it. Even
+ * both timeouts back to back stay well inside the minute a background broadcast is given.
  */
 final class MailyPushPoll {
     private static final String TAG = "MailyPush";
-    private static final int CONNECT_TIMEOUT_MS = 15_000;
-    private static final int READ_TIMEOUT_MS = 15_000;
+    private static final int CONNECT_TIMEOUT_MS = 10_000;
+    private static final int READ_TIMEOUT_MS = 10_000;
 
     /** What the poll saw, which decides whether the device keeps its credential. */
     enum Status {

@@ -58,6 +58,12 @@
     <!-- Re-arm the mail check after a reboot, which cancels every alarm the app had set. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
+      Hold the CPU awake for the few seconds the check takes. AlarmManager's own wake lock
+      lasts only as long as onReceive, and the work continues past it (MailyPushReceiver),
+      so an idle phone would otherwise suspend mid-request.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
       Deliberately absent: FOREGROUND_SERVICE(_SPECIAL_USE), because nothing runs
       indefinitely any more, and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, because the poll
       uses setAndAllowWhileIdle and therefore fires through Doze without an exemption.

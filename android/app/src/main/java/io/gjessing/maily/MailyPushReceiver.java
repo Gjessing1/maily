@@ -3,6 +3,7 @@ package io.gjessing.maily;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.PowerManager;
 import android.util.Log;
 
 /**
@@ -19,6 +20,12 @@ import android.util.Log;
  */
 public class MailyPushReceiver extends BroadcastReceiver {
     private static final String TAG = "MailyPush";
+    private static final String WAKE_LOCK_TAG = "maily:push-poll";
+    /**
+     * Past the poll's own timeouts with room to spare, and far short of the minute a
+     * background broadcast is allowed — a bug must never be able to pin the CPU on.
+     */
+    private static final long WAKE_LOCK_TIMEOUT_MS = 45_000L;
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -76,12 +83,25 @@ public class MailyPushReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Keep the process alive past onReceive for the network call inside. Android gives a
-     * broadcast receiver roughly ten seconds this way, which is what the poll's own
-     * timeouts are sized against.
+     * Keep the process — and the CPU — alive past onReceive for the network call inside.
+     *
+     * Both halves are needed and they are not the same thing. `goAsync` is what stops the
+     * system tearing the receiver down the moment onReceive returns. The wake lock is what
+     * stops the *device* going back to sleep at that same moment: AlarmManager holds a
+     * wake lock only for the duration of onReceive, so without one of our own an idle
+     * phone can suspend with the request half-sent, and the check silently accomplishes
+     * nothing until the next wake — the exact failure this design replaced a foreground
+     * service to avoid.
      */
     private void inBackground(Context context, Runnable work) {
         PendingResult result = goAsync();
+        PowerManager power = context.getSystemService(PowerManager.class);
+        PowerManager.WakeLock wakeLock =
+            power == null ? null : power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG);
+        // Timed: the lock is released below in the ordinary case, and the timeout is the
+        // backstop for a thread that never gets there.
+        if (wakeLock != null) wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS);
+
         new Thread(() -> {
             try {
                 work.run();
@@ -90,6 +110,13 @@ public class MailyPushReceiver extends BroadcastReceiver {
                 MailyPushAlarm.armNext(context);
             } finally {
                 result.finish();
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    try {
+                        wakeLock.release();
+                    } catch (RuntimeException ignored) {
+                        // Released by its own timeout between the check and here.
+                    }
+                }
             }
         }).start();
     }
