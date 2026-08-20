@@ -13,6 +13,13 @@
   Two channels rather than one so the user can silence either independently — the
   ongoing "Connection" notice Android demands of a long-running foreground service is a
   cost of the transport, not something anyone wants to be told about.
+
+  The connection channel's id carries a suffix because a channel is immutable once
+  created: Android accepts a re-registration's name and description but discards any
+  change to importance, sound, vibration or badging, so quietening an already installed
+  channel is only possible by registering a new id and deleting the old one. Bump the
+  suffix, and add the retired id to the legacy list below, whenever one of those
+  properties changes again.
 -->
 <resources>
     <!-- Matches the web app's dark-theme accent token (frontend/src/index.css). -->
@@ -20,9 +27,15 @@
     <string name="mail_notification_channel_id" translatable="false">maily-mail</string>
     <string name="mail_notification_channel_name">New mail</string>
     <string name="mail_notification_channel_description">Notifications for mail arriving in your inbox.</string>
-    <string name="service_notification_channel_id" translatable="false">maily-connection</string>
+    <string name="service_notification_channel_id" translatable="false">maily-connection-silent</string>
     <string name="service_notification_channel_name">Connection</string>
     <string name="service_notification_channel_description">The quiet, ongoing notice Android requires while Maily keeps its connection open to receive mail notifications.</string>
+    <!-- Superseded connection-channel ids, deleted on startup so no dead entry is left in
+         the system notification settings. Order is irrelevant; add the retired id here
+         whenever the one above is replaced. -->
+    <string-array name="service_notification_channel_legacy_ids" translatable="false">
+        <item>maily-connection</item>
+    </string-array>
     <string name="push_service_connected">Watching for new mail</string>
     <string name="push_service_connecting">Reconnecting to Maily…</string>
 </resources>

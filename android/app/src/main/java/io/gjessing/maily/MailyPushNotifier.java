@@ -24,9 +24,24 @@ import androidx.core.content.ContextCompat;
  *
  * - **Mail** — the actual notifications, default importance, one per message.
  * - **Connection** — the foreground service's own persistent notice. Android requires a
- *   visible notification for a service that runs indefinitely; MIN importance is the
- *   quietest form it is allowed to take, which collapses it into the shade's silent
- *   section with no sound, no peek and no status-bar icon.
+ *   visible notification for a service that runs indefinitely, so it cannot be dropped,
+ *   only pushed as far out of the way as the platform still permits: silent, badge-less,
+ *   secret on the lock screen, and collapsed to a single line under the shade's "Silent"
+ *   heading.
+ *
+ * Two limits are worth knowing before trying to hide the connection notice further, both
+ * confirmed against API 36 rather than assumed:
+ *
+ * - **MIN does not survive.** The channel asks for IMPORTANCE_MIN and the platform keeps
+ *   that as the channel's original importance, but the moment a foreground service posts
+ *   on it the channel is flagged as showing a user-visible task and its effective
+ *   importance is raised to LOW. LOW still means silent and no peek, but it does put the
+ *   small icon in the status bar. No app-side setting overrides this; the user-facing
+ *   escape hatch is the system's own "hide silent notification icons" toggle, which does
+ *   drop the icon while leaving the service running.
+ * - **The lock screen is a per-notification call, not a channel one.** Android resets an
+ *   app-created channel's lockscreen visibility to VISIBILITY_NO_OVERRIDE, so only
+ *   NotificationCompat.Builder#setVisibility has any effect — see serviceNotification.
  */
 final class MailyPushNotifier {
     /** Fixed id: the ongoing service notice is a singleton, replaced rather than stacked. */
@@ -60,6 +75,13 @@ final class MailyPushNotifier {
         mail.setDescription(context.getString(R.string.mail_notification_channel_description));
         manager.createNotificationChannel(mail);
 
+        // Nobody asked to be told that a socket is open, so every knob this channel still
+        // owns is turned down. MIN is the floor the platform accepts (it raises the
+        // *effective* importance to LOW for a foreground service — see the class notes),
+        // no badge keeps it off the launcher icon, and clearing sound, vibration and
+        // lights makes the silence a property of the channel rather than of each post:
+        // if a future Android raises the foreground-service floor again, as it already
+        // did once, this channel has nothing left to play.
         NotificationChannel service = new NotificationChannel(
             serviceChannelId(context),
             context.getString(R.string.service_notification_channel_name),
@@ -67,7 +89,21 @@ final class MailyPushNotifier {
         );
         service.setDescription(context.getString(R.string.service_notification_channel_description));
         service.setShowBadge(false);
+        service.setSound(null, null);
+        service.enableVibration(false);
+        service.setVibrationPattern(null);
+        service.enableLights(false);
         manager.createNotificationChannel(service);
+
+        // A channel is frozen at creation — re-registering an existing id only refreshes
+        // its name and description, and everything above is silently discarded. Devices
+        // that installed an earlier build would therefore keep the old channel, sound URI
+        // and all, which is why the id above is versioned; deleting the superseded ids is
+        // what stops a dead duplicate from sitting in the system notification settings.
+        for (String legacyId : context.getResources()
+                .getStringArray(R.array.service_notification_channel_legacy_ids)) {
+            manager.deleteNotificationChannel(legacyId);
+        }
     }
 
     /**
@@ -81,10 +117,19 @@ final class MailyPushNotifier {
             .setContentTitle(context.getString(
                 connected ? R.string.push_service_connected : R.string.push_service_connecting
             ))
+            // PRIORITY_MIN is what pre-Oreo devices read instead of the channel, and what
+            // ranks the notice last within the channel on newer ones.
             .setPriority(NotificationCompat.PRIORITY_MIN)
+            // The one knob that actually keeps this off a secure lock screen: the channel's
+            // own lockscreen visibility is reset by the platform for app-created channels,
+            // so it has to be set per post. New mail deliberately does not do this — only
+            // the notice about the transport is hidden, never the mail itself.
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setOngoing(true)
             .setShowWhen(false)
             .setSilent(true)
+            // Nothing here is worth mirroring to a watch or a paired device.
+            .setLocalOnly(true)
             .setContentIntent(launchIntent(context, null))
             .build();
     }
