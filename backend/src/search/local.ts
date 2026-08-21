@@ -48,6 +48,37 @@ function irPredicates(ir: QueryIR): SQL[] {
     const v = likeContains(ir.to);
     preds.push(sql`(m.to_addresses LIKE ${v} ESCAPE '\\' OR m.cc_addresses LIKE ${v} ESCAPE '\\')`);
   }
+  if (ir.contact?.length) {
+    const addresses = sql.join(
+      ir.contact.map((address) => sql`${address}`),
+      sql`, `,
+    );
+    const inbound = sql`lower(m.from_address) IN (${addresses})`;
+    const recipient = sql`(
+      EXISTS (
+        SELECT 1 FROM json_each(
+          CASE WHEN json_valid(m.to_addresses) THEN m.to_addresses ELSE '[]' END
+        ) recipient
+        WHERE lower(json_extract(recipient.value, '$.address')) IN (${addresses})
+      ) OR EXISTS (
+        SELECT 1 FROM json_each(
+          CASE WHEN json_valid(m.cc_addresses) THEN m.cc_addresses ELSE '[]' END
+        ) recipient
+        WHERE lower(json_extract(recipient.value, '$.address')) IN (${addresses})
+      )
+    )`;
+    const sentByUser = sql`(
+      EXISTS (
+        SELECT 1 FROM accounts own
+        WHERE own.id = m.account_id AND lower(own.email) = lower(m.from_address)
+      ) OR EXISTS (
+        SELECT 1 FROM message_folders mf
+        JOIN folders f ON f.id = mf.folder_id
+        WHERE mf.message_id = m.id AND f.role = 'sent'
+      )
+    )`;
+    preds.push(sql`(${inbound} OR (${recipient} AND ${sentByUser}))`);
+  }
   if (ir.subject !== undefined) {
     preds.push(sql`m.subject LIKE ${likeContains(ir.subject)} ESCAPE '\\'`);
   }

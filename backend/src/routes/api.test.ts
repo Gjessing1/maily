@@ -373,3 +373,77 @@ test('GET /api/search?threaded=1 expands a matching message to its conversation'
     [parent, child],
   );
 });
+
+test('GET contact intelligence aggregates direct mail, threads, timeline and attachments', async () => {
+  const accountId = seedAccount();
+  const inbox = seedFolder(accountId, 'inbox');
+  const sentFolder = seedFolder(accountId, 'sent');
+  const contactUid = randomUUID();
+  rawDb
+    .insert(schema.contacts)
+    .values({
+      email: 'person@example.com',
+      name: 'Person Example',
+      vcardUid: contactUid,
+      href: `/contacts/${contactUid}.vcf`,
+    })
+    .run();
+
+  const received = seedMessage(accountId, inbox, 'inbox', {
+    providerThreadId: 'shared-thread',
+    subject: 'Incoming document',
+    fromAddress: 'PERSON@example.com',
+    receivedAt: new Date('2025-01-02T10:00:00Z'),
+  });
+  const sent = seedMessage(accountId, sentFolder, 'sent', {
+    providerThreadId: 'shared-thread',
+    subject: 'Re: Incoming document',
+    fromAddress: `${accountId}@example.com`,
+    to: [{ name: 'Person Example', address: 'person@example.com' }],
+    sentAt: new Date('2025-01-03T11:00:00Z'),
+    receivedAt: new Date('2025-01-03T11:00:00Z'),
+  });
+  // The contact happened to be copied, but the message was neither from the contact
+  // nor sent by this account, so it is not a direct communication.
+  seedMessage(accountId, inbox, 'inbox', {
+    subject: 'Unrelated group traffic',
+    fromAddress: 'someone-else@example.com',
+    to: [{ name: 'Person Example', address: 'person@example.com' }],
+  });
+  rawDb
+    .insert(schema.attachments)
+    .values({
+      messageId: received,
+      filename: 'contract.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1234,
+      isInline: false,
+    })
+    .run();
+  rawDb
+    .insert(schema.attachments)
+    .values({ messageId: received, filename: 'logo.png', isInline: true })
+    .run();
+
+  const res = await get(`/api/contacts/cards/${contactUid}/intelligence`);
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.messageCount, 2);
+  assert.equal(body.conversationCount, 1);
+  assert.equal(body.firstCommunicationAt, '2025-01-02T10:00:00.000Z');
+  assert.equal(body.lastReceivedAt, '2025-01-02T10:00:00.000Z');
+  assert.equal(body.lastSentAt, '2025-01-03T11:00:00.000Z');
+  assert.deepEqual(
+    body.timeline.map((entry: { messageId: string; direction: string }) => [
+      entry.messageId,
+      entry.direction,
+    ]),
+    [
+      [sent, 'sent'],
+      [received, 'received'],
+    ],
+  );
+  assert.equal(body.timeline[1].attachmentCount, 1, 'inline images are not activity files');
+  assert.equal(body.recentAttachments.length, 1);
+  assert.equal(body.recentAttachments[0].attachment.filename, 'contract.pdf');
+});

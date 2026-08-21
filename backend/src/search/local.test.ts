@@ -55,6 +55,10 @@ function seedMessage(
   opts: {
     subject: string;
     bodyText?: string;
+    fromAddress?: string;
+    toAddresses?: string | null;
+    ccAddresses?: string | null;
+    receivedAt?: Date;
     seen?: boolean;
     flagged?: boolean;
     answered?: boolean;
@@ -65,10 +69,12 @@ function seedMessage(
     .values({
       id,
       accountId,
-      fromAddress: 'sender@x.example',
+      fromAddress: opts.fromAddress ?? 'sender@x.example',
+      toAddresses: opts.toAddresses ?? null,
+      ccAddresses: opts.ccAddresses ?? null,
       subject: opts.subject,
       bodyText: opts.bodyText ?? 'hello body',
-      receivedAt: new Date(),
+      receivedAt: opts.receivedAt ?? new Date(),
       seen: opts.seen ?? false,
       flagged: opts.flagged ?? false,
       answered: opts.answered ?? false,
@@ -76,6 +82,36 @@ function seedMessage(
     .run();
   return id;
 }
+
+test('contact: finds direct received and sent mail but excludes unrelated CC traffic', () => {
+  const acct = seedAccount();
+  const ownAddress = db
+    .select({ email: schema.accounts.email })
+    .from(schema.accounts)
+    .where(eq(schema.accounts.id, acct))
+    .get()!.email;
+  const received = seedMessage(acct, {
+    subject: 'received from contact',
+    fromAddress: 'Person@Example.com',
+    receivedAt: new Date('2025-01-01T00:00:00Z'),
+  });
+  const sent = seedMessage(acct, {
+    subject: 'sent to contact',
+    fromAddress: ownAddress,
+    toAddresses: JSON.stringify([{ name: null, address: 'person@example.com' }]),
+    receivedAt: new Date('2025-01-02T00:00:00Z'),
+  });
+  seedMessage(acct, {
+    subject: 'third party copied contact',
+    fromAddress: 'other@example.com',
+    ccAddresses: JSON.stringify([{ name: null, address: 'person@example.com' }]),
+  });
+
+  assert.deepEqual(
+    L.searchLocal('contact:person@example.com', 10).map((m) => m.id),
+    [sent, received],
+  );
+});
 
 test('is:unread / is:read split by seen state', () => {
   const acct = seedAccount();

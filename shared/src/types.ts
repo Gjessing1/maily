@@ -202,6 +202,42 @@ export interface ContactCardDto {
   photo: string | null;
 }
 
+/** Read-only mail-derived activity for one CardDAV contact (ROADMAP A3). */
+export interface ContactEmailIntelligenceDto {
+  /** Every distinct live message directly exchanged with one of the card's addresses. */
+  messageCount: number;
+  /** Distinct provider/account-scoped threads; unthreaded messages each count once. */
+  conversationCount: number;
+  firstCommunicationAt: string | null;
+  lastReceivedAt: string | null;
+  lastSentAt: string | null;
+  /** Newest-first communication history, deliberately bounded for a fast detail view. */
+  timeline: ContactCommunicationDto[];
+  /** Newest non-inline files exchanged with the contact, lazily downloadable as usual. */
+  recentAttachments: ContactAttachmentActivityDto[];
+}
+
+/** One message in a contact's newest-first communication timeline. */
+export interface ContactCommunicationDto {
+  messageId: string;
+  accountId: string;
+  threadId: string | null;
+  subject: string | null;
+  snippet: string | null;
+  occurredAt: string | null;
+  direction: 'received' | 'sent';
+  attachmentCount: number;
+}
+
+/** Attachment metadata plus the message context needed by the contact detail screen. */
+export interface ContactAttachmentActivityDto {
+  messageId: string;
+  subject: string | null;
+  occurredAt: string | null;
+  direction: 'received' | 'sent';
+  attachment: AttachmentDto;
+}
+
 /**
  * Create/update payload for a contact card (UID assigned server-side on create).
  * The rich fields are optional so a minimal name+emails payload still works; omitted

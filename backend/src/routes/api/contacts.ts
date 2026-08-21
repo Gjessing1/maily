@@ -35,6 +35,7 @@ import {
 import { getAddressbookState, setAddressbookSettings } from '../../contacts/addressbooks.js';
 import { findDuplicateGroups } from '../../contacts/duplicates.js';
 import { mergeCards } from '../../contacts/merge.js';
+import { contactEmailIntelligence } from '../../contacts/intelligence.js';
 
 /** Sanitise a labelled-value list (phones/urls): trim, drop empties, cap the label. */
 function cleanTyped(items: TypedValueDto[] | undefined): TypedValueDto[] {
@@ -231,6 +232,17 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // already holds; the href is only a fallback for a key that pointed at a UID.
       const card = getCardDetail(primaryKey) ?? getCardDetail(primaryRec.href);
       return { card, merged: others.length - undeleted.length, undeleted };
+    },
+  );
+
+  // Passive, read-only message activity for a card (A3). This is derived entirely
+  // from the local mail cache and never writes intelligence back to CardDAV.
+  app.get<{ Params: { key: string } }>(
+    '/api/contacts/cards/:key/intelligence',
+    async (req, reply) => {
+      const card = getCardDetail(req.params.key);
+      if (!card) return reply.code(404).send({ error: 'card not found' });
+      return contactEmailIntelligence(card.emails);
     },
   );
 

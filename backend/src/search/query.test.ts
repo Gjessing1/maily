@@ -24,6 +24,12 @@ test('field operators: from/to/subject, quoted values', () => {
   assert.deepEqual(ir.terms, []);
 });
 
+test('contact: parses exact, deduped correspondence addresses', () => {
+  const ir = parseQuery('contact:"Alice@Example.com, work@example.com,alice@example.com"');
+  assert.deepEqual(ir.contact, ['alice@example.com', 'work@example.com']);
+  assert.equal(isEmptyQuery(ir), false);
+});
+
 test('date bounds: absolute and relative', () => {
   const ir = parseQuery('since:2026-01-01 before:7d', NOW);
   assert.equal(ir.sinceMs, Date.UTC(2026, 0, 1));

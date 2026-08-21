@@ -8,6 +8,7 @@
  *
  * Supported operators:
  *   from:  to:  subject:/subj:   — substring match on the respective field(s)
+ *   contact:                     — exact direct correspondence with comma-separated addresses
  *   since:/after:  before:/until: — date bounds (YYYY-MM-DD or relative 7d/2w/3m/1y)
  *   has:attachment                — only messages with a non-inline attachment
  *   larger:/smaller:  (or size:>/<) — attachment-size bounds (e.g. 500k, 2M)
@@ -23,6 +24,8 @@ export interface QueryIR {
   terms: string[];
   from?: string;
   to?: string;
+  /** Exact addresses directly received from or sent to (comma-separated in query text). */
+  contact?: string[];
   subject?: string;
   /** Inclusive lower bound on receivedAt (epoch ms). */
   sinceMs?: number;
@@ -120,6 +123,14 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
       case 'to':
         if (value) ir.to = value;
         break;
+      case 'contact': {
+        const addresses = value
+          .split(',')
+          .map((address) => address.trim().toLowerCase())
+          .filter(Boolean);
+        if (addresses.length > 0) ir.contact = [...new Set(addresses)];
+        break;
+      }
       case 'subject':
       case 'subj':
         if (value) ir.subject = value;
@@ -205,6 +216,7 @@ export function isEmptyQuery(ir: QueryIR): boolean {
     ir.terms.length === 0 &&
     ir.from === undefined &&
     ir.to === undefined &&
+    ir.contact === undefined &&
     ir.subject === undefined &&
     ir.sinceMs === undefined &&
     ir.beforeMs === undefined &&

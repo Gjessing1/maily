@@ -6,13 +6,18 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { ContactCardDto, ContactDuplicateGroupDto } from '@maily/shared';
+import type {
+  ContactCardDto,
+  ContactDuplicateGroupDto,
+  ContactEmailIntelligenceDto,
+} from '@maily/shared';
 import { api } from '../api/client';
 import { invalidateContactLookup } from '../state/contactLookup';
 import { setPref, usePrefs } from '../state/prefs';
-import { avatarHue, initials } from '../ui/format';
+import { avatarHue, fullDate, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { MergeContactsDialog } from '../components/MergeContactsDialog';
+import { AttachmentChip } from '../components/AttachmentChip';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
@@ -20,7 +25,10 @@ import {
   CopyIcon,
   LinkIcon,
   MailIcon,
+  PaperclipIcon,
   PencilIcon,
+  SearchIcon,
+  SendIcon,
   StarIcon,
 } from '../ui/icons';
 
@@ -40,6 +48,9 @@ export function ContactDetail() {
   const [card, setCard] = useState<ContactCardDto | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [intelligence, setIntelligence] = useState<ContactEmailIntelligenceDto | null | undefined>(
+    undefined,
+  );
 
   // Starring is a maily-local view choice (a prefs list of UIDs), not a vCard edit —
   // it never writes back to Radicale. See `favoriteContacts` in state/prefs.
@@ -57,6 +68,8 @@ export function ContactDetail() {
   const [merging, setMerging] = useState(false);
 
   const load = useCallback(() => {
+    setError(null);
+    setIntelligence(undefined);
     api
       .contactCard(uid)
       .then(setCard)
@@ -70,6 +83,11 @@ export function ContactDetail() {
         setDuplicate(groups.find((g) => g.cards.some((c) => c.uid === uid)) ?? null),
       )
       .catch(() => setDuplicate(null)); // advisory — a failed check just shows no flag
+    api
+      .contactEmailIntelligence(uid)
+      .then(setIntelligence)
+      // Mail activity is a derived convenience; a failure must not hide the contact.
+      .catch(() => setIntelligence(null));
   }, [uid]);
 
   useEffect(load, [load]);
@@ -246,6 +264,17 @@ export function ContactDetail() {
                   ))}
                 </div>
               )}
+
+              <EmailIntelligence
+                value={intelligence}
+                emails={card.emails}
+                onCompose={() => card.emails[0] && compose(card.emails[0])}
+                onOpenAll={() => {
+                  const query = `contact:${card.emails.join(',')}`;
+                  navigate(`/search?q=${encodeURIComponent(query)}`);
+                }}
+                onOpenMessage={(messageId) => navigate(`/m/${messageId}`)}
+              />
             </div>
           </>
         )}
@@ -285,6 +314,166 @@ export function ContactDetail() {
         />
       )}
     </div>
+  );
+}
+
+/** Passive mail-derived activity. It never writes anything back to the contact. */
+function EmailIntelligence({
+  value,
+  emails,
+  onCompose,
+  onOpenAll,
+  onOpenMessage,
+}: {
+  value: ContactEmailIntelligenceDto | null | undefined;
+  emails: string[];
+  onCompose: () => void;
+  onOpenAll: () => void;
+  onOpenMessage: (messageId: string) => void;
+}) {
+  if (emails.length === 0) return null;
+
+  return (
+    <section className="mt-6 border-t border-border px-2 pt-5" aria-labelledby="email-activity">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 id="email-activity" className="font-semibold text-fg">
+            Email activity
+          </h3>
+          <p className="text-xs text-faint">Derived from your local mail history</p>
+        </div>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={onCompose}
+            className="rounded-full p-2 text-accent active:bg-surface-2"
+            aria-label="Compose email to contact"
+          >
+            <SendIcon className="size-5" />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenAll}
+            className="rounded-full p-2 text-accent active:bg-surface-2"
+            aria-label="Open all conversations with contact"
+          >
+            <SearchIcon className="size-5" />
+          </button>
+        </div>
+      </div>
+
+      {value === undefined ? (
+        <div className="flex justify-center py-8">
+          <Spinner className="size-5" />
+        </div>
+      ) : value === null ? (
+        <p className="py-5 text-sm text-faint">Email activity couldn’t be loaded.</p>
+      ) : value.messageCount === 0 ? (
+        <p className="py-5 text-sm text-faint">No shared mail in the local cache yet.</p>
+      ) : (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <ActivityStat label="Messages" value={String(value.messageCount)} />
+            <ActivityStat label="Conversations" value={String(value.conversationCount)} />
+            <ActivityStat label="First contact" value={activityDate(value.firstCommunicationAt)} />
+            <ActivityStat label="Last received" value={activityDate(value.lastReceivedAt)} />
+            <ActivityStat label="Last sent" value={activityDate(value.lastSentAt)} />
+          </div>
+
+          {value.recentAttachments.length > 0 && (
+            <div className="mt-6">
+              <h4 className="mb-2 flex items-center gap-2 text-sm font-medium text-muted">
+                <PaperclipIcon className="size-4" /> Recent attachments
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {value.recentAttachments.map((item) => (
+                  <div key={`${item.messageId}:${item.attachment.id}`} className="max-w-full">
+                    <AttachmentChip messageId={item.messageId} attachment={item.attachment} />
+                    <button
+                      type="button"
+                      onClick={() => onOpenMessage(item.messageId)}
+                      className="mt-1 block max-w-52 truncate px-1 text-left text-[11px] text-faint active:text-accent"
+                    >
+                      {item.subject || '(no subject)'} · {activityDate(item.occurredAt)}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {value.timeline.length > 0 && (
+            <div className="mt-6">
+              <h4 className="mb-2 text-sm font-medium text-muted">Communication timeline</h4>
+              <ol className="border-l border-border pl-3">
+                {value.timeline.map((item) => (
+                  <li key={item.messageId} className="relative pb-1">
+                    <span className="absolute -left-[17px] top-4 size-2 rounded-full bg-accent" />
+                    <button
+                      type="button"
+                      onClick={() => onOpenMessage(item.messageId)}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left active:bg-surface-2"
+                    >
+                      <DirectionGlyph direction={item.direction} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-sm font-medium text-fg">
+                            {item.subject || '(no subject)'}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-faint">
+                            {activityDate(item.occurredAt)}
+                          </span>
+                        </span>
+                        {item.snippet && (
+                          <span className="mt-0.5 block truncate text-xs text-faint">
+                            {item.snippet}
+                          </span>
+                        )}
+                        <span className="mt-0.5 block text-[11px] capitalize text-muted">
+                          {item.direction}
+                          {item.attachmentCount > 0
+                            ? ` · ${item.attachmentCount} attachment${item.attachmentCount === 1 ? '' : 's'}`
+                            : ''}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function ActivityStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-surface px-3 py-2.5">
+      <span className="block text-xs text-faint">{label}</span>
+      <span className="mt-0.5 block truncate text-sm font-medium text-fg" title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function activityDate(iso: string | null): string {
+  return iso ? fullDate(iso) : '—';
+}
+
+function DirectionGlyph({ direction }: { direction: 'received' | 'sent' }) {
+  const outgoing = direction === 'sent';
+  return (
+    <span
+      className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full ${outgoing ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-muted'}`}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4">
+        <path d={outgoing ? 'M5 19 19 5M9 5h10v10' : 'M19 5 5 19M15 19H5V9'} />
+      </svg>
+    </span>
   );
 }
 

@@ -22,6 +22,7 @@ import type {
   ContactCardInput,
   ContactDto,
   ContactDuplicateGroupDto,
+  ContactEmailIntelligenceDto,
   ContactImportResult,
   ContactMergeInput,
   ContactMergeResult,
@@ -470,6 +471,12 @@ export const api = {
   /** One card's rich detail by key (UID, or href for UID-less cards). */
   contactCard: (key: string) =>
     request<ContactCardDto>(`/api/contacts/cards/${encodeURIComponent(key)}`),
+
+  /** Read-only message activity derived for all addresses on one card (A3). */
+  contactEmailIntelligence: (key: string) =>
+    request<ContactEmailIntelligenceDto>(
+      `/api/contacts/cards/${encodeURIComponent(key)}/intelligence`,
+    ),
 
   createContactCard: (input: ContactCardInput) =>
     request<ContactCardDto>('/api/contacts/cards', {
