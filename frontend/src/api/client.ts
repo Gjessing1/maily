@@ -634,9 +634,9 @@ export const api = {
 };
 
 /**
- * Backend URL for an attachment's bytes. The backend authenticates via the JWT
- * header, so this URL can't be used directly in <img>/<a> (no header there) —
- * fetch it via fetchAttachmentObjectUrl and use the resulting object URL.
+ * Backend URL for an attachment's bytes. The backend authenticates by header, so
+ * this URL can't be dropped into an <img>/<a> — fetch it with fetchAttachmentBlob,
+ * or hand it to a caller that can set the header itself (the Android shell does).
  */
 export function attachmentUrl(messageId: string, attId: string): string {
   return `${API_BASE}/api/messages/${messageId}/attachments/${attId}`;
@@ -651,11 +651,6 @@ export async function fetchAttachmentBlob(messageId: string, attId: string): Pro
   const res = await fetch(attachmentUrl(messageId, attId), { headers });
   if (!res.ok) throw new ApiError(res.status, 'attachment fetch failed');
   return res.blob();
-}
-
-/** Fetch attachment bytes as an object URL (sets the auth header via fetch). */
-export async function fetchAttachmentObjectUrl(messageId: string, attId: string): Promise<string> {
-  return URL.createObjectURL(await fetchAttachmentBlob(messageId, attId));
 }
 
 /**

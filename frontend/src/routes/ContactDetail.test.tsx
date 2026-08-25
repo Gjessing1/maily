@@ -63,7 +63,10 @@ vi.mock('../api/client', () => ({
     contactDuplicates: vi.fn(() => Promise.resolve([])),
     contactEmailIntelligence: vi.fn(() => Promise.resolve(intelligence)),
   },
-  fetchAttachmentObjectUrl: vi.fn(() => Promise.resolve('blob:test')),
+  attachmentUrl: (messageId: string, attId: string) =>
+    `/api/messages/${messageId}/attachments/${attId}`,
+  fetchAttachmentBlob: vi.fn(() => Promise.resolve(new Blob(['pdf']))),
+  getToken: () => null,
 }));
 
 vi.mock('../state/prefs', () => ({

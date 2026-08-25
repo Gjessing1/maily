@@ -26,6 +26,17 @@ export interface NativePushStatus {
   granted: boolean;
 }
 
+/** One attachment, addressed so the shell can fetch and open it itself. */
+export interface NativeFileRequest {
+  /** Absolute URL of the bytes on this maily server. */
+  url: string;
+  /** The sender's filename — what the file is saved and offered as. */
+  filename: string;
+  mimeType?: string | null;
+  /** maily's own bearer token, when in-app login is in use rather than an SSO gateway. */
+  authorization?: string | null;
+}
+
 interface MailyNativePlugin {
   getInfo(): Promise<NativeAppInfo>;
   configureServer(options: { serverUrl: string }): Promise<void>;
@@ -34,6 +45,7 @@ interface MailyNativePlugin {
   enablePush(options: { token: string }): Promise<NativePushStatus>;
   disablePush(): Promise<{ token: string | null }>;
   pushStatus(): Promise<NativePushStatus>;
+  openFile(options: NativeFileRequest): Promise<void>;
 }
 
 /**
@@ -83,6 +95,26 @@ export async function openNativeExternal(url: string): Promise<void> {
     return;
   }
   await plugin.openExternal({ url });
+}
+
+/**
+ * Ask the shell to download one attachment and open it with a real app.
+ *
+ * The shell fetches it rather than being handed the bytes: nothing in a WebView can
+ * save a `blob:`, and an attachment is routinely large enough that base64 across the
+ * bridge would stall the UI. It sends the WebView's own cookies with the request, which
+ * is what authenticates it behind the SSO gateway.
+ *
+ * Returns false when this shell cannot do it — off Android, or on an APK older than the
+ * method, since the web app is served from the server and can be newer than the
+ * installed APK. A genuine failure (no network, no app that opens the type) rejects, so
+ * the caller can say so rather than leave a tap looking ignored.
+ */
+export async function openNativeFile(request: NativeFileRequest): Promise<boolean> {
+  const plugin = nativePlugin();
+  if (!plugin?.openFile) return false;
+  await plugin.openFile(request);
+  return true;
 }
 
 /**

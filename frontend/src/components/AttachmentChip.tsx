@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AttachmentDto } from '@maily/shared';
-import { fetchAttachmentObjectUrl } from '../api/client';
+import { openAttachment } from '../ui/openAttachment';
 import { Spinner } from '../ui/Spinner';
 import { PaperclipIcon } from '../ui/icons';
 import { useOnlineStatus } from '../state/connectivity';
@@ -17,7 +17,10 @@ function humanSize(bytes: number | null): string {
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
-/** Attachment chip. Bytes are fetched lazily on tap (§4) then opened in a new tab. */
+/**
+ * Attachment chip. Bytes are fetched lazily on tap (§4) and then handed to the platform
+ * — opened by an app on Android, downloaded in a browser (see `openAttachment`).
+ */
 export function AttachmentChip({
   messageId,
   attachment,
@@ -29,13 +32,12 @@ export function AttachmentChip({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
-  async function open() {
+  async function save() {
     if (busy || !online) return;
     setBusy(true);
     setError(false);
     try {
-      const url = await fetchAttachmentObjectUrl(messageId, attachment.id);
-      window.open(url, '_blank', 'noopener');
+      await openAttachment(messageId, attachment);
     } catch {
       setError(true);
     } finally {
@@ -45,7 +47,7 @@ export function AttachmentChip({
 
   return (
     <button
-      onClick={open}
+      onClick={() => void save()}
       disabled={!online}
       className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-left transition active:bg-surface-2 disabled:opacity-60"
     >

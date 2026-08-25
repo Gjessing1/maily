@@ -212,6 +212,41 @@ public class MailyNativePlugin extends Plugin {
         return result;
     }
 
+    /**
+     * Download one attachment and open it with an app that handles the type.
+     *
+     * The web app cannot do this itself in a WebView — `window.open` opens no popup and
+     * nothing here can save a `blob:` — so the tap arrives as a bridge call instead, and
+     * the shell fetches the bytes with the WebView's own cookies (MailyAttachments).
+     *
+     * Runs off the main thread: this is a network round trip plus a write, and the call
+     * resolves only once a chooser has actually been offered, so the chip's spinner
+     * measures the real work.
+     */
+    @PluginMethod
+    public void openFile(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isBlank()) {
+            call.reject("An attachment URL is required");
+            return;
+        }
+        String filename = call.getString("filename");
+        String mimeType = call.getString("mimeType");
+        String authorization = call.getString("authorization");
+        getBridge().execute(() -> {
+            try {
+                MailyAttachments.open(getContext(), url, filename, mimeType, authorization);
+                call.resolve();
+            } catch (Exception error) {
+                Log.w(PLUGIN_TAG, "could not open an attachment", error);
+                String message = error.getMessage();
+                call.reject(message == null || message.isBlank()
+                    ? "Could not open this attachment"
+                    : message, error);
+            }
+        });
+    }
+
     @PluginMethod
     public void openExternal(PluginCall call) {
         String raw = call.getString("url");

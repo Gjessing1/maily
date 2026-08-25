@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentBlob } from '../api/client';
+import { isNativeAndroid } from '../nativeAndroid';
+import { openAttachment, saveBlob } from '../ui/openAttachment';
 import { Spinner } from '../ui/Spinner';
 import { DownloadIcon, ShareIcon } from '../ui/icons';
 import { useOnlineStatus } from '../state/connectivity';
@@ -31,7 +33,8 @@ const AUTOLOAD_MAX_BYTES = 10 * 1024 * 1024;
  * a thumbnail (tap to open full-size), Share (native share sheet → SMS, mail, Photos,
  * … via the Web Share API where supported) and Download. Bytes are fetched lazily — on
  * mount for reasonably-sized images, otherwise on a "Show preview" tap — then reused for
- * the image, the share File and the download (one fetch, no re-download per action).
+ * the image, the share File and the download (one fetch, no re-download per action). The
+ * Android shell is the exception: it fetches the file itself (see `openAttachment`).
  */
 export function ImageAttachment({
   messageId,
@@ -74,14 +77,16 @@ export function ImageAttachment({
     // so the auto-load + object-URL cleanup runs once for this attachment's lifetime.
   }, []);
 
-  function download() {
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  // Routed through openAttachment so the Android shell gets its native path: a WebView
+  // can save no `blob:`, which left the button below dead in the APK. Enabled before the
+  // preview has loaded too — openAttachment fetches the bytes when we hold none.
+  async function download() {
+    if (!online) return;
+    try {
+      await openAttachment(messageId, attachment, blob);
+    } catch {
+      setError(true);
+    }
   }
 
   // The Web Share API (mobile, installed PWA) opens the OS share sheet; if file sharing
@@ -99,13 +104,25 @@ export function ImageAttachment({
     } catch {
       // User cancelled, or the platform rejected the share — fall through to download.
     }
-    download();
+    saveBlob(blob, filename);
   }
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
       {url ? (
-        <a href={url} target="_blank" rel="noopener" className="block bg-surface-2">
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener"
+          onClick={(event) => {
+            // The APK's WebView opens no popup window (see openAttachment), so the tap
+            // would do nothing there; let Android open the image with a real app.
+            if (!isNativeAndroid()) return;
+            event.preventDefault();
+            void download();
+          }}
+          className="block bg-surface-2"
+        >
           <img
             src={url}
             alt={filename}
@@ -149,8 +166,8 @@ export function ImageAttachment({
         )}
         <button
           type="button"
-          onClick={download}
-          disabled={!url}
+          onClick={() => void download()}
+          disabled={!online}
           aria-label="Download"
           title="Download"
           className="shrink-0 rounded-full p-2 text-muted active:bg-surface-2 active:text-accent disabled:opacity-40"
