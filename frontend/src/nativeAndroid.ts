@@ -250,6 +250,29 @@ export function setNativeMessageOpener(handler: (messageId: string) => boolean):
   };
 }
 
+/**
+ * Let the Android shell report the device's light/dark mode to the theme store.
+ *
+ * Same remote-origin-safe channel as Back and notification opens: the shell evaluates
+ * `window.mailySystemTheme('dark' | 'light')` in the WebView. It has to, because the
+ * activity is deliberately not recreated when the device flips (MailyTheme.java) and a
+ * WebView is then free to leave an already-loaded page on the mode it launched in —
+ * which is what left the APK on yesterday's theme until it was force-closed.
+ *
+ * Returns the uninstall. Harmless on the web, where nothing calls the global.
+ */
+export function setNativeSystemThemeHandler(
+  handler: (theme: 'dark' | 'light') => void,
+): () => void {
+  const host = globalThis as typeof globalThis & {
+    mailySystemTheme?: (theme: 'dark' | 'light') => void;
+  };
+  host.mailySystemTheme = handler;
+  return () => {
+    if (host.mailySystemTheme === handler) delete host.mailySystemTheme;
+  };
+}
+
 /** Return a newer APK published by this Maily server, or null. */
 export async function findNativeAppUpdate(
   installed: NativeAppInfo | null,

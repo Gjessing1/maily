@@ -2,6 +2,7 @@ package io.gjessing.maily;
 
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
@@ -67,6 +68,29 @@ public class MainActivity extends BridgeActivity {
         String messageId = MailyNotificationLink.messageIdFrom(intent);
         if (messageId == null) return;
         MailyNotificationLink.openInRunningApp(bridge, MailyPreferences.getServerUrl(this), messageId);
+    }
+
+    /**
+     * The device flipped light/dark. This activity handles the change itself rather than
+     * being recreated for it, so whether the page ever hears about it is left to the
+     * WebView — it is told outright instead (see MailyTheme).
+     */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        MailyTheme.tell(bridge, newConfig.uiMode);
+    }
+
+    /**
+     * A flip that happened while Maily was in the background — Android's scheduled dark
+     * theme, most often — reaches a stopped activity on its own schedule, so re-state the
+     * mode on the way back to the foreground. Idempotent: a page already in that theme
+     * does nothing with it, and one that has not booted ignores it.
+     */
+    @Override
+    public void onResume() {
+        super.onResume();
+        MailyTheme.tell(bridge, getResources().getConfiguration().uiMode);
     }
 
     /**
