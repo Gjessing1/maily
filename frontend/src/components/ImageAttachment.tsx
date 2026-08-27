@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentBlob } from '../api/client';
 import { isNativeAndroid } from '../nativeAndroid';
-import { openAttachment, saveBlob } from '../ui/openAttachment';
+import { openAttachment, saveAttachment, saveBlob } from '../ui/openAttachment';
 import { Spinner } from '../ui/Spinner';
 import { DownloadIcon, ShareIcon } from '../ui/icons';
 import { useOnlineStatus } from '../state/connectivity';
@@ -77,17 +77,20 @@ export function ImageAttachment({
     // so the auto-load + object-URL cleanup runs once for this attachment's lifetime.
   }, []);
 
-  // Routed through openAttachment so the Android shell gets its native path: a WebView
-  // can save no `blob:`, which left the button below dead in the APK. Enabled before the
-  // preview has loaded too — openAttachment fetches the bytes when we hold none.
-  async function download() {
+  // Routed through the platform helpers so the Android shell gets its native path: a
+  // WebView can save no `blob:`, which left the button below dead in the APK. Both are
+  // enabled before the preview has loaded — they fetch the bytes when we hold none.
+  async function run(action: typeof openAttachment): Promise<void> {
     if (!online) return;
     try {
-      await openAttachment(messageId, attachment, blob);
+      await action(messageId, attachment, blob);
     } catch {
       setError(true);
     }
   }
+
+  /** The Download button: to disk, never to a tab — the thumbnail is already the view. */
+  const download = () => run(saveAttachment);
 
   // The Web Share API (mobile, installed PWA) opens the OS share sheet; if file sharing
   // isn't available we fall back to a plain download so the action always does something.
@@ -119,7 +122,7 @@ export function ImageAttachment({
             // would do nothing there; let Android open the image with a real app.
             if (!isNativeAndroid()) return;
             event.preventDefault();
-            void download();
+            void run(openAttachment);
           }}
           className="block bg-surface-2"
         >

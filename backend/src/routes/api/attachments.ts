@@ -15,6 +15,41 @@ import { getAttachment } from '../../db/queries.js';
 import { ensureAttachmentOnDisk } from '../../storage/attachments.js';
 import { deleteUpload } from '../../storage/uploads.js';
 
+/**
+ * Types a browser would execute rather than merely display, if it rendered them: the
+ * HTML and XML families, the latter because an XML document can carry an XSLT stylesheet
+ * and SVG can carry `<script>` outright. `application/xml` counts alongside `text/xml` —
+ * they name the same thing, and the pair is why this matches by family rather than by
+ * an exhaustive list.
+ */
+function rendersAsScript(mimeType: string): boolean {
+  const type = mimeType.toLowerCase().split(';')[0]?.trim() ?? '';
+  return (
+    type === 'text/html' ||
+    type === 'text/xml' ||
+    type === 'application/xml' ||
+    type.endsWith('+xml')
+  );
+}
+
+/**
+ * The `Content-Disposition` for one served attachment.
+ *
+ * `inline` so a browser can render the file in a tab of its own — the desktop "open"
+ * path (frontend `ui/openAttachment.ts`) navigates straight here rather than downloading
+ * megabytes into a blob. Scriptable types are the exception: this is a stranger's file
+ * served from maily's own origin, so an HTML or SVG attachment rendered here would run
+ * *as* maily. Those download instead, and `nosniff` stops a browser promoting anything
+ * else into them.
+ *
+ * The sender named the file, so the name is quoted with its own quotes stripped rather
+ * than trusted into the header.
+ */
+export function contentDisposition(mimeType: string, filename: string | null): string {
+  const disposition = rendersAsScript(mimeType) ? 'attachment' : 'inline';
+  return filename ? `${disposition}; filename="${filename.replace(/"/g, '')}"` : disposition;
+}
+
 /** Cap on a single composer attachment upload (streamed straight to disk). */
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -37,10 +72,10 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
       const path = await ensureAttachmentOnDisk(att);
       if (!path) return reply.code(409).send({ error: 'attachment bytes unavailable' });
 
-      reply.header('Content-Type', att.mimeType ?? 'application/octet-stream');
-      if (att.filename) {
-        reply.header('Content-Disposition', `inline; filename="${att.filename.replace(/"/g, '')}"`);
-      }
+      const mimeType = att.mimeType ?? 'application/octet-stream';
+      reply.header('Content-Type', mimeType);
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Content-Disposition', contentDisposition(mimeType, att.filename));
       return reply.send(createReadStream(path));
     },
   );

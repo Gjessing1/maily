@@ -4,18 +4,24 @@
  * all, and in a browser the `blob:` document inherits the app shell's `object-src 'none'`
  * so Chrome's PDF viewer is blocked and the tab comes up blank.
  *
- * What is pinned here is that neither shell can regress to a silent no-op: the APK gets
- * a native call, everything else gets a real download carrying the sender's filename.
+ * What is pinned here is that no shell can regress to a silent no-op: the APK gets a
+ * native call, a desktop browser gets the server URL in a tab, and everything else gets
+ * a real download carrying the sender's filename. Plus the two limits on that tab — it
+ * is maily's own origin, so a stranger's markup must never be rendered in it, and a
+ * top-level navigation carries no `Authorization` header.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchAttachmentBlob = vi.fn(async () => new Blob(['%PDF-1.6'], { type: 'application/pdf' }));
 
+/** maily's own login in use (the SSO-fronted deployment has none — see `signedInWith`). */
+let token: string | null = 'jwt-token';
+
 vi.mock('../api/client', () => ({
   attachmentUrl: (messageId: string, attId: string) =>
     `/api/messages/${messageId}/attachments/${attId}`,
   fetchAttachmentBlob,
-  getToken: () => 'jwt-token',
+  getToken: () => token,
 }));
 
 const openFile = vi.fn<(request: unknown) => Promise<void>>();
@@ -30,6 +36,18 @@ vi.mock('../nativeAndroid', () => ({
     return true;
   },
 }));
+
+/** Point the platform checks at a desktop browser fronted by a gateway, or a phone. */
+function browsingFrom(kind: 'desktop' | 'phone'): void {
+  token = kind === 'desktop' ? null : 'jwt-token';
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: kind === 'desktop' && query.includes('pointer: fine'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+}
 
 const PDF = {
   id: 'att-1',
@@ -56,9 +74,13 @@ function captureDownloadClick(): () => DownloadClick | null {
 }
 
 describe('handing an attachment to the platform', () => {
+  const realMatchMedia = window.matchMedia;
+
   beforeEach(() => {
     native = false;
     hasOpenFile = true;
+    token = 'jwt-token';
+    window.matchMedia = realMatchMedia;
     vi.clearAllMocks();
     vi.restoreAllMocks();
     URL.createObjectURL = vi.fn(() => 'blob:maily/1');
@@ -130,5 +152,92 @@ describe('handing an attachment to the platform', () => {
     const { openAttachment } = await import('./openAttachment');
 
     await expect(openAttachment('msg-1', PDF)).rejects.toThrow('attachment fetch failed');
+  });
+
+  it('shows a viewable attachment in a tab on a desktop browser', async () => {
+    browsingFrom('desktop');
+    const clicked = captureDownloadClick();
+    const opened = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    const { openAttachment } = await import('./openAttachment');
+
+    await openAttachment('msg-1', PDF);
+
+    // The server URL, not a blob: it streams, it survives a reload, and it inherits no
+    // CSP. And nothing is fetched here — the browser does that itself.
+    expect(opened).toHaveBeenCalledWith('/api/messages/msg-1/attachments/att-1', '_blank');
+    expect(fetchAttachmentBlob).not.toHaveBeenCalled();
+    expect(clicked()).toBeNull();
+  });
+
+  it('downloads instead when the browser blocks the tab', async () => {
+    browsingFrom('desktop');
+    const clicked = captureDownloadClick();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const { openAttachment } = await import('./openAttachment');
+
+    await openAttachment('msg-1', PDF);
+
+    expect(clicked()?.download).toBe('247201_002657536.pdf');
+  });
+
+  it("never renders a stranger's markup as maily", async () => {
+    browsingFrom('desktop');
+    const clicked = captureDownloadClick();
+    const opened = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    const { openAttachment } = await import('./openAttachment');
+
+    for (const mimeType of ['image/svg+xml', 'text/html', 'application/xhtml+xml']) {
+      await openAttachment('msg-1', { ...(PDF as object), mimeType } as never);
+      expect(opened).not.toHaveBeenCalled();
+    }
+    expect(clicked()?.download).toBe('247201_002657536.pdf');
+  });
+
+  it('leaves phones on the download path', async () => {
+    browsingFrom('phone');
+    const clicked = captureDownloadClick();
+    const opened = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    const { openAttachment } = await import('./openAttachment');
+
+    await openAttachment('msg-1', PDF);
+
+    expect(opened).not.toHaveBeenCalled();
+    expect(clicked()?.download).toBe('247201_002657536.pdf');
+  });
+
+  it("downloads on the desktop too when maily's own login is in use", async () => {
+    browsingFrom('desktop');
+    token = 'jwt-token';
+    const clicked = captureDownloadClick();
+    const opened = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    const { openAttachment } = await import('./openAttachment');
+
+    await openAttachment('msg-1', PDF);
+
+    // A top-level navigation carries no Authorization header, so the tab would 401.
+    expect(opened).not.toHaveBeenCalled();
+    expect(clicked()?.download).toBe('247201_002657536.pdf');
+  });
+
+  it('keeps the Download action a download, even where a tab would open', async () => {
+    browsingFrom('desktop');
+    const clicked = captureDownloadClick();
+    const opened = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    const { saveAttachment } = await import('./openAttachment');
+
+    await saveAttachment('msg-1', PDF);
+
+    expect(opened).not.toHaveBeenCalled();
+    expect(clicked()?.download).toBe('247201_002657536.pdf');
+  });
+
+  it('still hands the APK its native call from the Download action', async () => {
+    native = true;
+    const { saveAttachment } = await import('./openAttachment');
+
+    await saveAttachment('msg-1', PDF);
+
+    expect(openFile).toHaveBeenCalledTimes(1);
+    expect(fetchAttachmentBlob).not.toHaveBeenCalled();
   });
 });

@@ -18,8 +18,9 @@ function humanSize(bytes: number | null): string {
 }
 
 /**
- * Attachment chip. Bytes are fetched lazily on tap (§4) and then handed to the platform
- * — opened by an app on Android, downloaded in a browser (see `openAttachment`).
+ * Attachment chip. A tap hands the file to the platform: an app on Android, a new tab
+ * in a desktop browser, a download on a phone (see `openAttachment`). Bytes are fetched
+ * lazily, and only where the platform needs them from us (§4).
  */
 export function AttachmentChip({
   messageId,
@@ -32,7 +33,7 @@ export function AttachmentChip({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
-  async function save() {
+  async function show() {
     if (busy || !online) return;
     setBusy(true);
     setError(false);
@@ -47,7 +48,7 @@ export function AttachmentChip({
 
   return (
     <button
-      onClick={() => void save()}
+      onClick={() => void show()}
       disabled={!online}
       className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-left transition active:bg-surface-2 disabled:opacity-60"
     >
