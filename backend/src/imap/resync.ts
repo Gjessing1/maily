@@ -16,9 +16,9 @@ import { updateFolderSyncState } from './folders.js';
 import { flagsFromSet } from './parse.js';
 import {
   clearFolderUids,
-  knownUids,
   messageFlags,
   messageIdForUid,
+  reconcilableUids,
   unlinkUids,
   updateMessageFlags,
 } from './store.js';
@@ -72,13 +72,19 @@ async function resyncFlags(
   return changes;
 }
 
-/** Detect and unlink messages expunged from the folder by diffing the live UID set. */
+/**
+ * Detect and unlink messages expunged from the folder by diffing the live UID set.
+ *
+ * Diffs `reconcilableUids`, not every mapped UID: a detached (local_only) mapping is
+ * frozen and has no server copy left to go missing, so counting it here would report
+ * the same phantom expunge on every pass and never converge (see `reconcilableUids`).
+ */
 async function reconcileExpunges(ctx: SyncContext, folder: FolderRow): Promise<number> {
   const present = new Set<number>();
   for await (const msg of ctx.client.fetch('1:*', { uid: true }, { uid: true })) {
     present.add(msg.uid);
   }
-  const gone = knownUids(folder.id).filter((uid) => !present.has(uid));
+  const gone = reconcilableUids(folder.id).filter((uid) => !present.has(uid));
   unlinkUids(folder.id, gone);
   return gone.length;
 }

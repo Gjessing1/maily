@@ -446,12 +446,35 @@ export function messageIdForUid(folderId: string, uid: number): string | undefin
     .get()?.id;
 }
 
-/** All UIDs currently mapped into a folder — used for expunge reconciliation. */
+/** All UIDs currently mapped into a folder, detached (local_only) mappings included. */
 export function knownUids(folderId: string): number[] {
   return db
     .select({ uid: messageFolders.uid })
     .from(messageFolders)
     .where(eq(messageFolders.folderId, folderId))
+    .all()
+    .map((r) => r.uid)
+    .filter((u): u is number => u !== null);
+}
+
+/**
+ * The UIDs in a folder that expunge reconciliation may act on — `knownUids` minus the
+ * detached (local_only) mappings.
+ *
+ * A detached message has no live server copy, so its frozen UID is absent from every
+ * live UID set and the diff in `reconcileExpunges` flags it as expunged on EVERY pass.
+ * `unlinkUids` then correctly refuses to drop it (the mapping is deliberately frozen),
+ * so the next pass flags it again: the reconcile never converges and the reported
+ * expunge count stays permanently overstated by the number of detached messages in the
+ * folder — drowning out any real expunge. Excluding them here keeps the diff, the
+ * unlink, and the reported count consistent.
+ */
+export function reconcilableUids(folderId: string): number[] {
+  return db
+    .select({ uid: messageFolders.uid })
+    .from(messageFolders)
+    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
+    .where(and(eq(messageFolders.folderId, folderId), eq(messages.localOnly, false)))
     .all()
     .map((r) => r.uid)
     .filter((u): u is number => u !== null);

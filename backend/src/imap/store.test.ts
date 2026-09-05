@@ -394,6 +394,48 @@ test('unlinkUids leaves a detached (local_only) message mapped + untombstoned', 
   assert.deepEqual(store.knownUids(folder('inbox')), [7], 'detached mapping is preserved');
 });
 
+test('reconcilableUids excludes detached mappings so the expunge diff converges', () => {
+  const { accountId, folder } = seedAccount(['inbox']);
+  store.upsertMessage(accountId, folder('inbox'), 7, makeParsed({ gmMsgId: 'gm-live' }), 'inbox');
+  const detached = store.upsertMessage(
+    accountId,
+    folder('inbox'),
+    8,
+    makeParsed({ gmMsgId: 'gm-detached' }),
+    'inbox',
+  );
+  store.markMessageLocalOnly(detached.id);
+
+  assert.deepEqual(
+    store.knownUids(folder('inbox')).sort((x, y) => x - y),
+    [7, 8],
+    'both mappings are still mapped into the folder',
+  );
+  assert.deepEqual(
+    store.reconcilableUids(folder('inbox')),
+    [7],
+    'the frozen detached UID is not a reconcile candidate',
+  );
+
+  // The server expunged UID 7 and never knew the detached UID 8: an empty live set.
+  const present = new Set<number>();
+  const firstPass = store.reconcilableUids(folder('inbox')).filter((u) => !present.has(u));
+  assert.deepEqual(firstPass, [7], 'only the genuine expunge is reported');
+  store.unlinkUids(folder('inbox'), firstPass);
+
+  // The bug this guards: a second pass over unchanged state must find nothing.
+  assert.deepEqual(
+    store.reconcilableUids(folder('inbox')).filter((u) => !present.has(u)),
+    [],
+    'reconcile converges — no phantom expunge on the next pass',
+  );
+  assert.deepEqual(
+    store.knownUids(folder('inbox')),
+    [8],
+    'the detached mapping itself is still preserved',
+  );
+});
+
 test('clearFolderUids preserves a detached (local_only) mapping on a UIDVALIDITY rebuild', () => {
   const { accountId, folder } = seedAccount(['inbox']);
   const keep = store.upsertMessage(
