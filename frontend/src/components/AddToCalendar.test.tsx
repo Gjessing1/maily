@@ -6,7 +6,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import type { CalendarSettingsDto, EventDraftDto } from '@maily/shared';
+import type { CalendarEventInput, CalendarSettingsDto, EventDraftDto } from '@maily/shared';
 
 const calendars: CalendarSettingsDto = {
   calendars: [
@@ -26,16 +26,17 @@ const bareDraft: EventDraftDto = {
   source: 'message',
 };
 
-const addToCalendar = vi.fn(() =>
+// Typed params: the assertions below read the posted body off `mock.calls`.
+const addToCalendar = vi.fn((_messageId: string, _input: CalendarEventInput) =>
   Promise.resolve({ ok: true, calendar: 'https://dav.example.com/lars/personal/' }),
 );
-const eventDrafts = vi.fn(() => Promise.resolve([bareDraft]));
+const eventDrafts = vi.fn((_messageId: string) => Promise.resolve([bareDraft]));
 
 vi.mock('../api/client', () => ({
   api: {
     calendars: () => Promise.resolve(calendars),
     eventDrafts: (id: string) => eventDrafts(id),
-    addToCalendar: (id: string, input: unknown) => addToCalendar(id, input),
+    addToCalendar: (id: string, input: CalendarEventInput) => addToCalendar(id, input),
   },
 }));
 
