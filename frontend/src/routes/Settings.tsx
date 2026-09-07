@@ -358,6 +358,7 @@ function AddressBooks() {
 function Calendars() {
   const [state, setState] = useState<CalendarSettingsDto | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -379,15 +380,19 @@ function Calendars() {
     );
   }
 
-  // Persist the default; optimistic, reverting on failure.
+  // Persist the default; optimistic, reverting on failure. A failed write is shown
+  // rather than swallowed: silently snapping back leaves the user believing they set
+  // a default while every new event keeps landing in the fallback calendar.
   const setDefault = async (href: string) => {
     const prev = state;
     setBusy(true);
+    setError(null);
     setState({ ...state, default: href });
     try {
       setState(await api.setDefaultCalendar(href));
-    } catch {
+    } catch (e) {
       setState(prev);
+      setError((e as Error).message || 'Couldn’t save the default calendar.');
     } finally {
       setBusy(false);
     }
@@ -413,6 +418,7 @@ function Calendars() {
           </div>
         );
       })}
+      {error && <p className="px-4 pb-3 text-sm text-danger">{error}</p>}
     </>
   );
 }

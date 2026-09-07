@@ -3,7 +3,9 @@
  * event. The form is pre-filled from the message's enrichment drafts (a parsed
  * invite or a travel reservation when present, else the bare subject) and offers
  * a calendar picker over the discovered CalDAV collections (the server default
- * pre-selected). Human-in-the-loop by design: nothing is written until Add.
+ * pre-selected). Dates behave like a calendar app: an event is same-day unless the
+ * draft says otherwise, and moving the start drags the end along.
+ * Human-in-the-loop by design: nothing is written until Add.
  */
 import { useEffect, useState } from 'react';
 import type { CalendarSettingsDto, EventDraftDto } from '@maily/shared';
@@ -45,11 +47,39 @@ function splitIso(iso: string | null): { date: string; time: string; allDay: boo
   return { date: localDate(d), time: localTime(d), allDay: false };
 }
 
-/** The day after a `YYYY-MM-DD` date (iCalendar all-day DTEND is exclusive). */
-function nextDay(date: string): string {
+/** Shift a `YYYY-MM-DD` date by whole days (all-day DTEND is exclusive: ±1). */
+function shiftDays(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * A `YYYY-MM-DD` + `HH:MM` pair as minutes on a fixed timeline, so start/end
+ * arithmetic is plain subtraction. UTC on purpose: these are wall-clock form
+ * fields, and a DST jump must not silently stretch or shrink the duration.
+ */
+function toMinutes(date: string, time: string): number | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const t = /^(\d{1,2}):(\d{2})/.exec(time || '00:00');
+  if (!d || !t) return null;
+  return Date.UTC(+d[1]!, +d[2]! - 1, +d[3]!, +t[1]!, +t[2]!) / 60_000;
+}
+
+/** Inverse of `toMinutes`. */
+function fromMinutes(minutes: number): { date: string; time: string } {
+  const d = new Date(minutes * 60_000);
+  return {
+    date: d.toISOString().slice(0, 10),
+    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
+  };
+}
+
+/** Fallback end for a start the draft gave no end for: same day, an hour later. */
+const DEFAULT_DURATION_MIN = 60;
+function defaultEnd(date: string, time: string): { date: string; time: string } {
+  const from = toMinutes(date, time);
+  return from === null ? { date, time } : fromMinutes(from + DEFAULT_DURATION_MIN);
 }
 
 export function AddToCalendar({ messageId, onClose }: Props) {
@@ -71,18 +101,53 @@ export function AddToCalendar({ messageId, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
 
-  /** Seed the form from one draft suggestion. */
+  /**
+   * Seed the form from one draft suggestion. The end is never left blank: a draft
+   * without one becomes a same-day event (an hour long when timed), which is what
+   * the form would otherwise make the user type on every add.
+   */
   function applyDraft(d: EventDraftDto) {
     const start = splitIso(d.start);
-    const end = splitIso(d.end);
+    const startAt = start.time || '09:00';
+    const end = d.end ? splitIso(d.end) : null;
     setSummary(d.summary);
     setAllDay(start.allDay);
     setStartDate(start.date);
-    setStartTime(start.time || (start.allDay ? '' : '09:00'));
-    setEndDate(d.end ? end.date : '');
-    setEndTime(d.end ? end.time : '');
+    setStartTime(startAt);
+    if (end && start.allDay) {
+      // An all-day DTEND is exclusive; "Ends" here is the inclusive last day.
+      setEndDate(end.date > start.date ? shiftDays(end.date, -1) : start.date);
+      setEndTime(defaultEnd(start.date, startAt).time);
+    } else if (end && end.time) {
+      setEndDate(end.date);
+      setEndTime(end.time);
+    } else {
+      const fallback = defaultEnd(start.date, startAt);
+      setEndDate(end ? end.date : fallback.date);
+      setEndTime(fallback.time);
+    }
     setLocation(d.location ?? '');
     setDescription(d.description ?? '');
+  }
+
+  /**
+   * Move the start, dragging the end along so the duration is preserved — the
+   * calendar-app convention, and what keeps a same-day event same-day when the
+   * start moves. Manual edits to the end fields stand on their own.
+   */
+  function moveStart(date: string, time: string) {
+    setStartDate(date);
+    setStartTime(time);
+    const before = toMinutes(startDate, allDay ? '00:00' : startTime);
+    const after = toMinutes(date, allDay ? '00:00' : time);
+    const end = toMinutes(endDate, allDay ? '00:00' : endTime);
+    if (before === null || after === null || end === null) {
+      setEndDate(date);
+      return;
+    }
+    const shifted = fromMinutes(end + (after - before));
+    setEndDate(shifted.date);
+    if (!allDay) setEndTime(shifted.time);
   }
 
   useEffect(() => {
@@ -116,12 +181,18 @@ export function AddToCalendar({ messageId, onClose }: Props) {
       setError('Pick a start date.');
       return;
     }
+    const startMin = toMinutes(startDate, allDay ? '00:00' : startTime);
+    const endMin = toMinutes(endDate || startDate, allDay ? '00:00' : endTime);
+    if (startMin !== null && endMin !== null && endMin < startMin) {
+      setError('The end can’t be before the start.');
+      return;
+    }
     // All-day "Ends" is the inclusive last day in the form; iCalendar DTEND is
     // exclusive, so shift it one day (and drop a same-day end entirely).
     const start = allDay ? startDate : `${startDate}T${startTime || '00:00'}`;
     let end: string | null = null;
     if (allDay) {
-      if (endDate && endDate > startDate) end = nextDay(endDate);
+      if (endDate && endDate > startDate) end = shiftDays(endDate, 1);
     } else if (endTime) {
       end = `${endDate || startDate}T${endTime}`;
     }
@@ -236,7 +307,7 @@ export function AddToCalendar({ messageId, onClose }: Props) {
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => moveStart(e.target.value, startTime)}
                     className={inputCls}
                   />
                 </Field>
@@ -245,7 +316,7 @@ export function AddToCalendar({ messageId, onClose }: Props) {
                     <input
                       type="time"
                       value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
+                      onChange={(e) => moveStart(startDate, e.target.value)}
                       className={inputCls}
                     />
                   </Field>
@@ -257,6 +328,7 @@ export function AddToCalendar({ messageId, onClose }: Props) {
                   <input
                     type="date"
                     value={endDate}
+                    min={startDate || undefined}
                     onChange={(e) => setEndDate(e.target.value)}
                     className={inputCls}
                   />

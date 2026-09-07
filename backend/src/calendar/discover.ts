@@ -8,9 +8,10 @@
  * keeping only collections whose `resourcetype` includes `calendar` and which
  * accept VEVENTs (Radicale task lists advertise a VTODO-only component set —
  * useless as an event target, so they're skipped). Any failure (network,
- * non-CalDAV server, `CALDAV_URL` pointing straight at one collection) degrades
- * to a single calendar equal to the configured URL, preserving the original
- * single-collection behaviour.
+ * non-CalDAV server, `CALDAV_URL` pointing straight at one collection) returns
+ * `null` — the caller degrades to a single calendar equal to the configured URL,
+ * preserving the original single-collection behaviour, and retries later rather
+ * than caching a wrong answer for the life of the process.
  */
 import { createLogger } from '../logger.js';
 import type { Calendar } from './calendars.js';
@@ -157,22 +158,21 @@ export function parseCalendars(xml: string, base: string): Calendar[] {
   return out;
 }
 
-/** List the calendar collections under the home-set. */
-async function listCalendars(cfg: DiscoverConfig, homeUrl: string): Promise<Calendar[]> {
+/** List the calendar collections under the home-set (null when the PROPFIND failed). */
+async function listCalendars(cfg: DiscoverConfig, homeUrl: string): Promise<Calendar[] | null> {
   const xml = await propfind(cfg, homeUrl, COLLECTIONS_BODY, '1');
-  if (!xml) return [];
+  if (!xml) return null;
   return parseCalendars(xml, homeUrl);
 }
 
 /**
- * Discover all event calendars for the configured account. Never throws — on any
- * failure it returns a single calendar equal to the configured URL (the original
- * single-collection behaviour).
+ * Discover all event calendars for the configured account. Never throws — it
+ * returns `null` when discovery didn't produce a usable calendar set, leaving the
+ * fallback (and whether to keep it) to the caller.
  */
-export async function discoverCalendars(cfg: DiscoverConfig): Promise<Calendar[]> {
-  const fallback: Calendar[] = [{ href: cfg.url, displayName: 'Calendar' }];
+export async function discoverCalendars(cfg: DiscoverConfig): Promise<Calendar[] | null> {
   const home = await findHomeSet(cfg);
-  if (!home) return fallback;
+  if (!home) return null;
   const calendars = await listCalendars(cfg, home);
-  return calendars.length > 0 ? calendars : fallback;
+  return calendars && calendars.length > 0 ? calendars : null;
 }
