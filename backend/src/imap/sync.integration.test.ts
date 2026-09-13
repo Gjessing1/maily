@@ -28,6 +28,7 @@ import type { FolderRole } from '@maily/shared';
 import type { Capabilities } from './connection.js';
 import type { FolderRow } from './folders.js';
 import type * as SyncNS from './sync.js';
+import type * as ResyncNS from './resync.js';
 import type * as FoldersNS from './folders.js';
 import type * as SchemaNS from '../db/schema.js';
 import type * as DbClientNS from '../db/client.js';
@@ -36,6 +37,7 @@ const tmpRoot = mkdtempSync(join(tmpdir(), 'maily-sync-int-'));
 process.env.MAILY_DATA_DIR = tmpRoot;
 
 let sync: typeof SyncNS;
+let resync: typeof ResyncNS;
 let folders: typeof FoldersNS;
 let schema: typeof SchemaNS;
 let rawDb: (typeof DbClientNS)['db'];
@@ -50,6 +52,7 @@ before(async () => {
   schema = await import('../db/schema.js');
   folders = await import('./folders.js');
   sync = await import('./sync.js');
+  resync = await import('./resync.js');
   env = (await import('../env.js')).env;
   recordDownloadedBytes = (await import('./budget.js')).recordDownloadedBytes;
 });
@@ -193,12 +196,19 @@ class FakeImap {
   private byUid = new Map<number, Fixture>();
   /** Records every download call so tests can assert the live/bulk byte sources. */
   downloads: { uid: number; part: string | undefined }[] = [];
-  mailbox: { uidNext: number; path: string } | null = null;
+  mailbox: { uidNext: number; uidValidity: number; path: string } | null = null;
+  /** Runs as a range (`n:*`) fetch starts — lets a test deliver mail mid-pass. */
+  onRangeFetch: ((range: string) => void) | null = null;
 
   constructor(fixtures: Fixture[]) {
     for (const f of fixtures) this.byUid.set(f.uid, f);
     const maxUid = Math.max(0, ...fixtures.map((f) => f.uid));
-    this.mailbox = { uidNext: maxUid + 1, path: 'INBOX' };
+    this.mailbox = { uidNext: maxUid + 1, uidValidity: 1, path: 'INBOX' };
+  }
+
+  /** Deliver a message without refreshing `mailbox.uidNext` (no re-SELECT, as on IDLE). */
+  deliver(f: Fixture): void {
+    this.byUid.set(f.uid, f);
   }
 
   // Header bytes imapflow would return for the `headers: ['references']` projection.
@@ -207,10 +217,22 @@ class FakeImap {
     return Buffer.from(refs ? `${refs}\r\n` : '');
   }
 
-  async *fetch(uids: number[], _query: unknown, _opts: unknown): AsyncGenerator<unknown> {
+  /** IMAP `n:*`: every UID ≥ n, or just the highest UID when none is (`*` is always in range). */
+  private expandRange(range: string): number[] {
+    this.onRangeFetch?.(range);
+    const from = Number(range.split(':')[0]);
+    const all = [...this.byUid.keys()].sort((a, b) => a - b);
+    const hits = all.filter((uid) => uid >= from);
+    return hits.length ? hits : all.slice(-1);
+  }
+
+  async *fetch(range: number[] | string, _query: unknown, _opts: unknown): AsyncGenerator<unknown> {
+    const uids = typeof range === 'string' ? this.expandRange(range) : range;
     for (const uid of uids) {
       const f = this.byUid.get(uid);
       if (!f) continue;
+      // imapflow bumps its cached UIDNEXT whenever a FETCH returns a UID at or above it.
+      if (this.mailbox && uid >= this.mailbox.uidNext) this.mailbox.uidNext = uid + 1;
       yield {
         uid: f.uid,
         envelope: f.envelope,
@@ -474,4 +496,44 @@ test('an exhausted budget stops the sweep immediately with budgetExhausted', asy
   assert.equal(result.archived, 0);
   assert.equal(result.inserted, 0);
   assert.equal(result.done, false, 'sweep did not complete — it stopped on the budget');
+});
+
+// ---------------------------------------------------------------------------
+// Incremental resync cursor (the persistent IDLE connection never re-SELECTs)
+// ---------------------------------------------------------------------------
+
+test('incremental resync fetches new mail even when the cached UIDNEXT is stale', async () => {
+  const { accountId, folderId, reload } = seedInbox();
+  const client = new FakeImap([altFixture(601, '<stale-1@example.com>', 'Already here')]);
+  folders.updateFolderSyncState(folderId, { uidValidity: 1, lastUid: 602 });
+
+  // Delivered after the SELECT: the cached `mailbox.uidNext` still says 602.
+  client.deliver(altFixture(602, '<stale-2@example.com>', 'Delivered later'));
+  const result = await resync.resyncFolder(ctxFor(client, accountId), reload());
+
+  assert.equal(result.mode, 'incremental');
+  assert.equal(result.insertedIds.length, 1, 'fetched despite the stale UIDNEXT');
+  assert.equal(reload().lastUid, 603);
+});
+
+test('mail delivered during the expunge scan is not skipped by the stored cursor', async () => {
+  const { accountId, folderId, reload } = seedInbox();
+  const client = new FakeImap([altFixture(701, '<race-1@example.com>', 'Already here')]);
+  folders.updateFolderSyncState(folderId, { uidValidity: 1, lastUid: 702 });
+  const ctx = ctxFor(client, accountId);
+
+  // Deliver UID 702 as the expunge scan's `1:*` FETCH starts — after this pass already
+  // looked for new mail — so the scan bumps the cached UIDNEXT past a UID never fetched.
+  client.onRangeFetch = (range) => {
+    if (range !== '1:*') return;
+    client.onRangeFetch = null;
+    client.deliver(altFixture(702, '<race-2@example.com>', 'Mid-pass delivery'));
+  };
+  const first = await resync.resyncFolder(ctx, reload());
+  assert.equal(first.insertedIds.length, 0, 'this pass had already looked for new mail');
+  assert.equal(reload().lastUid, 702, 'cursor did not advance past the unfetched UID');
+
+  const second = await resync.resyncFolder(ctx, reload());
+  assert.equal(second.insertedIds.length, 1, 'picked up on the next pass');
+  assert.equal(reload().lastUid, 703);
 });

@@ -44,7 +44,19 @@ export function createClient(config: AccountConfig): ImapFlow {
     logger: false,
     clientInfo: { name: 'maily', vendor: 'maily' },
   };
-  return new ImapFlow(options);
+  const client = new ImapFlow(options);
+  // imapflow decrements its cached `mailbox.exists` on EXPUNGE but not on QRESYNC's
+  // VANISHED (still true in 2.0.2), and swallows any EXISTS equal to that cached count.
+  // With QRESYNC enabled (mailbox.org) every expunge arrives as VANISHED, so "one
+  // message deleted, then one delivered" produced an EXISTS matching the stale count
+  // and no `exists` event: the new mail sat unsynced until some later INBOX change.
+  // Mirror the decrement. VANISHED (EARLIER) reports expunges the session had already
+  // accounted for (RFC 7162 §3.6), so it must not move the count.
+  client.on('expunge', (event) => {
+    if (!event.vanished || event.earlier || !client.mailbox) return;
+    if (client.mailbox.exists > 0) client.mailbox.exists -= 1;
+  });
+  return client;
 }
 
 /**

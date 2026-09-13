@@ -37,6 +37,7 @@ export class AccountEngine {
   private stopped = false;
   private reconnecting = false;
   private idleBusy = false;
+  private idlePending = false;
   private cronBusy = false;
   private connected = false;
   private lastSyncAt: number | null = null;
@@ -160,7 +161,11 @@ export class AccountEngine {
     // Live INBOX updates: imapflow auto-IDLEs on the open mailbox; we react to events.
     client.on('exists', () => void this.onInboxEvent());
     client.on('flags', () => void this.onInboxEvent());
-    client.on('expunge', () => void this.onInboxEvent());
+    // VANISHED (EARLIER) is the server answering our own CHANGEDSINCE fetch, not a live
+    // change; reacting to it would queue a replay of the very pass that produced it.
+    client.on('expunge', (event) => {
+      if (!event.earlier) void this.onInboxEvent();
+    });
 
     // Kick the non-INBOX folders once on connect rather than waiting a full cron cycle.
     void this.runFolderCron();
@@ -173,10 +178,19 @@ export class AccountEngine {
     }
   }
 
-  /** Coalesced INBOX reconcile triggered by live IDLE events. */
+  /**
+   * Coalesced INBOX reconcile triggered by live IDLE events. An event that lands while a
+   * pass is running is remembered and replayed once that pass ends — dropping it left
+   * mail delivered after the running pass's fetch unsynced until some later INBOX change.
+   */
   private async onInboxEvent(): Promise<void> {
-    if (this.idleBusy || this.stopped || !this.client || !this.inboxId) return;
+    if (this.stopped || !this.client || !this.inboxId) return;
+    if (this.idleBusy) {
+      this.idlePending = true;
+      return;
+    }
     this.idleBusy = true;
+    this.idlePending = false;
     try {
       const inbox = getFolderById(this.inboxId);
       if (!inbox) return;
@@ -218,6 +232,7 @@ export class AccountEngine {
       this.log.warn('INBOX live reconcile failed:', (err as Error).message);
     } finally {
       this.idleBusy = false;
+      if (this.idlePending) void this.onInboxEvent();
     }
   }
 
@@ -280,6 +295,10 @@ export class AccountEngine {
         client.close();
       }
       this.cronBusy = false;
+      // Backstop for the persistent connection (never trust live IDLE alone): a missed
+      // push would otherwise leave INBOX mail unsynced until the next unrelated INBOX
+      // change or reconnect. This bounds that to one cron interval.
+      if (this.connected) void this.onInboxEvent();
     }
   }
 

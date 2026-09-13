@@ -55,7 +55,7 @@ export const folders = sqliteTable(
     uidValidity: integer('uid_validity'),
     /** Highest MODSEQ seen (CONDSTORE/QRESYNC) — resync flags via `changedSince`. Null if unsupported. */
     highestModseq: integer('highest_modseq'),
-    /** UIDNEXT at last sync — new messages are fetched from `lastUid:*` on resync. */
+    /** One past the highest UID synced — new messages are fetched from `lastUid:*` on resync. */
     lastUid: integer('last_uid'),
     /**
      * Low-watermark of the resumable full-source sweep (ROADMAP §3.7.E): the lowest

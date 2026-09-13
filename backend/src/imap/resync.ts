@@ -132,24 +132,27 @@ export async function resyncFolder(ctx: SyncContext, folder: FolderRow): Promise
       flagChanges = await resyncFlags(ctx, folder, folder.highestModseq);
     }
 
+    // Pull UIDs at/after the last seen boundary; dedup makes any overlap harmless. Always
+    // ask the server rather than gating on `mb.uidNext`: on the persistent IDLE connection
+    // imapflow never re-SELECTs, so that value is only as fresh as whichever FETCH last
+    // happened to bump it (without CONDSTORE, never).
     const fromUid = folder.lastUid ?? 1;
-    let counts: { insertedIds: string[]; updated: number } = { insertedIds: [], updated: 0 };
-    if (mb.uidNext > fromUid) {
-      // Pull UIDs at/after the last seen boundary; dedup makes any overlap harmless.
-      const newUids: number[] = [];
-      for await (const msg of ctx.client.fetch(`${fromUid}:*`, { uid: true }, { uid: true })) {
-        if (msg.uid >= fromUid) newUids.push(msg.uid);
-      }
-      // Incremental new mail is the live, low-volume path — capture full source.
-      counts = await fetchAndStore(ctx, folder, newUids, 'live');
+    const newUids: number[] = [];
+    for await (const msg of ctx.client.fetch(`${fromUid}:*`, { uid: true }, { uid: true })) {
+      if (msg.uid >= fromUid) newUids.push(msg.uid);
     }
+    // Incremental new mail is the live, low-volume path — capture full source.
+    const counts = await fetchAndStore(ctx, folder, newUids, 'live');
 
     const expunged = await reconcileExpunges(ctx, folder);
 
     updateFolderSyncState(folder.id, {
       uidValidity: currentUidValidity,
       highestModseq,
-      lastUid: mb.uidNext,
+      // Advance only past UIDs fetched above, never to `mb.uidNext`: the expunge scan's
+      // `1:*` FETCH bumps that for mail delivered mid-pass, and storing it would skip
+      // that message on every later pass.
+      lastUid: newUids.reduce((top, uid) => Math.max(top, uid + 1), fromUid),
     });
     return { ...counts, expunged, flagChanges, mode: 'incremental' };
   } finally {
