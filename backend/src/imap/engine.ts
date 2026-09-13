@@ -26,6 +26,7 @@ import { enqueueEnrichPass, enqueueSweep } from '../worker/host.js';
 const INITIAL_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const CRON_INTERVAL_MS = Number(process.env.MAILY_FOLDER_CRON_MS ?? String(15 * 60_000));
+const INBOX_BACKSTOP_MS = 30 * 60_000;
 
 export class AccountEngine {
   private readonly log: Logger;
@@ -42,6 +43,7 @@ export class AccountEngine {
   private connected = false;
   private lastSyncAt: number | null = null;
   private cronTimer: NodeJS.Timeout | null = null;
+  private inboxBackstopTimer: NodeJS.Timeout | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
   private enrichTimer: NodeJS.Timeout | null = null;
   private recipientsBackfilled = false;
@@ -73,6 +75,13 @@ export class AccountEngine {
     void this.connect();
     this.cronTimer = setInterval(() => void this.runFolderCron(), CRON_INTERVAL_MS);
     if (typeof this.cronTimer.unref === 'function') this.cronTimer.unref();
+    // Backstop for the persistent connection (never trust live IDLE alone): a missed push
+    // would otherwise leave INBOX mail unsynced until the next unrelated INBOX change or
+    // reconnect. This bounds that to one interval.
+    this.inboxBackstopTimer = setInterval(() => {
+      if (this.connected) void this.onInboxEvent();
+    }, INBOX_BACKSTOP_MS);
+    if (typeof this.inboxBackstopTimer.unref === 'function') this.inboxBackstopTimer.unref();
     // Full-source historical backfill (ROADMAP §3.7.E), throttled by its own timer and
     // the shared daily byte budget. The heavy work runs on the shared sync worker thread
     // (synchronous SQLite + `.eml` parsing must stay off the event loop); this timer only
@@ -92,6 +101,7 @@ export class AccountEngine {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.cronTimer) clearInterval(this.cronTimer);
+    if (this.inboxBackstopTimer) clearInterval(this.inboxBackstopTimer);
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.enrichTimer) clearInterval(this.enrichTimer);
     const client = this.client;
@@ -295,10 +305,6 @@ export class AccountEngine {
         client.close();
       }
       this.cronBusy = false;
-      // Backstop for the persistent connection (never trust live IDLE alone): a missed
-      // push would otherwise leave INBOX mail unsynced until the next unrelated INBOX
-      // change or reconnect. This bounds that to one cron interval.
-      if (this.connected) void this.onInboxEvent();
     }
   }
 
