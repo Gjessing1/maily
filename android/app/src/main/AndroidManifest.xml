@@ -55,6 +55,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ gates notifications behind a runtime grant (MailyNativePlugin asks). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Lets the WebView hand Credential Manager the web origin of a passkey request
+      (WebAuthn browser mode, see MainActivity). Protection level normal: granted at
+      install, nothing to ask for.
+    -->
+    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_SET_ORIGIN" />
     <!-- Re-arm the mail check after a reboot, which cancels every alarm the app had set. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--

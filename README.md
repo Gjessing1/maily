@@ -16,27 +16,11 @@ The download returns `404 Not Found` until the first signed APK has been publish
 
 ### TinyAuth, Pocket ID, and passkeys
 
-The Android WebView keeps TinyAuth and its chained Pocket ID redirects inside the app. WebAuthn is enabled through Android Credential Manager so Pocket ID passkey login can work. Bitwarden passkeys require Android 14 or later; in Bitwarden select it under **Settings → Autofill → Passkey management**, and keep Android System WebView current.
+The Android WebView keeps TinyAuth and its chained Pocket ID redirects inside the app. Passkey requests run in WebView's WebAuthn browser mode (APK 0.4.3 and later): the WebView builds the request for the Pocket ID page it is showing, so the passkey is asserted for `https://pocketid.gjessing.io` exactly as it would be in a browser. Bitwarden passkeys require Android 14 or later; in Bitwarden, open **Settings → Autofill → Passkey management** and select Bitwarden as the preferred passkey provider. Also keep Android System WebView current.
 
-Pocket ID's relying-party domain must serve `/.well-known/assetlinks.json` with Maily's package and the SHA-256 fingerprint of the release signing certificate:
+The first passkey login from the app stops with Bitwarden reporting that the browser (Maily) is not recognized. Tap **Trust**, then choose the passkey: Bitwarden adds the package and its signing certificate to its locally trusted privileged apps, and later logins go straight through. Trust belongs to the signing certificate, so an APK signed with a different key (a debug build, say) has to be trusted separately.
 
-```json
-[
-  {
-    "relation": [
-      "delegate_permission/common.handle_all_urls",
-      "delegate_permission/common.get_login_creds"
-    ],
-    "target": {
-      "namespace": "android_app",
-      "package_name": "io.gjessing.maily",
-      "sha256_cert_fingerprints": ["RELEASE_CERTIFICATE_SHA256"]
-    }
-  }
-]
-```
-
-The asset-links URL must return `200 OK` directly, without a redirect, as `application/json`. Add the debug certificate as a separate entry when testing a debug APK. Get a certificate fingerprint with `keytool -list -v -keystore /path/to/maily-release.jks -alias maily` and use the `SHA256` value.
+No `/.well-known/assetlinks.json` is involved. WebAuthn's app mode, which Digital Asset Links would authorise, asserts the passkey for the app's `android:apk-key-hash:` origin instead of the website's, and Pocket ID only accepts its own HTTPS origin — Bitwarden refuses app mode with "Passkeys not supported for this app" when the asset links are missing, and Pocket ID rejects the login when they are present.
 
 ## Android releases
 

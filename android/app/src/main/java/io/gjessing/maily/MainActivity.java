@@ -95,8 +95,21 @@ public class MainActivity extends BridgeActivity {
 
     /**
      * Android WebView keeps WebAuthn disabled until the host explicitly enables it.
-     * App mode lets a credential provider verify Maily through Digital Asset Links
-     * on the Pocket ID relying-party domain.
+     *
+     * Browser mode, not app mode. App mode hands the ceremony to Credential Manager as
+     * the app itself, so the passkey provider signs for the app's
+     * `android:apk-key-hash:` origin and vets the caller through Digital Asset Links on
+     * the relying-party domain. Pocket ID accepts only its own HTTPS origin, so that
+     * assertion can never verify there — and without asset links Bitwarden refuses it
+     * outright ("Passkeys not supported for this app"). Browser mode has WebView build
+     * the client data for the page it is showing, the origin a relying party checks in
+     * any browser, and pass that origin to Credential Manager, which is what
+     * CREDENTIAL_MANAGER_SET_ORIGIN in the manifest permits.
+     *
+     * A provider accepts a set origin only from a caller it trusts: Bitwarden offers
+     * "Trust" on the first request and remembers the package and signing certificate.
+     * MailyNavigation confines the WebView to the Maily server and its SSO chain, so the only
+     * origins the app ever speaks for are the ones it is built to load.
      */
     private void enableWebAuthentication() {
         if (bridge == null) return;
@@ -106,7 +119,7 @@ public class MainActivity extends BridgeActivity {
         }
         WebSettingsCompat.setWebAuthenticationSupport(
             bridge.getWebView().getSettings(),
-            WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
+            WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER
         );
         Log.i(
             TAG,
