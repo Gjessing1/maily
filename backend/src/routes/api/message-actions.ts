@@ -26,7 +26,6 @@ import {
 import { withTransientConnection } from '../../imap/connection.js';
 import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
-import { bumpCleanupCache } from '../../cleanup/cache.js';
 import { purgeMessage } from '../../cleanup/purge.js';
 import { enqueueDelete, enqueueArchive } from '../../outbox/runner.js';
 
@@ -139,7 +138,6 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     }
 
     restoreMessageDeleted(m.id);
-    bumpCleanupCache();
     emitSignal({ type: 'mail:restored', accountId: m.accountId, messageId: m.id });
     return { ok: true };
   });

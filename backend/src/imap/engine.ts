@@ -285,9 +285,8 @@ export class AccountEngine {
         }
         // Non-INBOX mail (a saved draft, a Sent copy, mail filtered past IDLE) arrives
         // here with no `mail:new` of its own — deliberately, since Web Push is INBOX-only
-        // (§9). Without a signal, though, nothing invalidates the server's prepared first
-        // page or tells a foreground client to refetch: a Drafts view that was cached
-        // while the folder was empty kept serving [] long after the draft had synced.
+        // (§9). The folder signal tells a foreground client to refetch the affected view;
+        // it is transport only and is no longer responsible for server-cache correctness.
         if (result.insertedIds.length || result.updated || result.expunged) {
           emitSignal({ type: 'mail:folder', accountId: this.id, folderId: folder.id });
           this.log.info(

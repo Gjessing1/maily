@@ -18,7 +18,6 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, withWriteRetry } from '../db/client.js';
 import { attachments, folders, messageFolders, messages } from '../db/schema.js';
 import { emitSignal } from '../events.js';
-import { bumpCleanupCache } from './cache.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('cleanup-purge');
@@ -135,5 +134,4 @@ function purgeRows(rows: PurgeRow[]): void {
   for (const r of rows) {
     emitSignal({ type: 'mail:deleted', accountId: r.accountId, messageId: r.id });
   }
-  bumpCleanupCache();
 }

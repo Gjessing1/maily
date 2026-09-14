@@ -174,6 +174,16 @@ test('GET /api/folders/:folderId/messages returns message DTOs, newest first, li
     subject: 'newer',
     receivedAt: new Date('2025-02-01T00:00:00Z'),
   });
+  rawDb
+    .insert(schema.attachments)
+    .values({
+      messageId: newer,
+      filename: 'newer.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      isInline: false,
+    })
+    .run();
 
   const all = await get(`/api/folders/${folderId}/messages`);
   assert.equal(all.statusCode, 200);
@@ -184,6 +194,10 @@ test('GET /api/folders/:folderId/messages returns message DTOs, newest first, li
   assert.deepEqual(first.to, [{ name: 'Bob', address: 'bob@example.com' }]);
   assert.equal(first.seen, false);
   assert.deepEqual(first.folderIds, [folderId]);
+  assert.deepEqual(
+    first.attachments.map((a: { filename: string }) => a.filename),
+    ['newer.pdf'],
+  );
 
   const limited = await get(`/api/folders/${folderId}/messages?limit=1`);
   assert.equal(limited.json().length, 1);

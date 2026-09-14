@@ -526,7 +526,7 @@ export const api = {
   // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
-    /** The whole dashboard in one round-trip, served from the backend's precomputed cache. */
+    /** The whole dashboard in one round-trip, memoised against the backend's data version. */
     dashboard: (opts: { years?: number; minMb?: number } = {}) =>
       request<CleanupDashboardDto>(`/api/cleanup/dashboard${groupQuery(opts)}`),
     storage: (opts: GroupPage = {}) =>

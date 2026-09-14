@@ -546,8 +546,8 @@ export interface CleanupKeptDto {
 
 /**
  * The whole Cleanup Dashboard in one response: headline summary, trash-queue progress and
- * the first page of every slice. One round-trip instead of seven, served from the backend's
- * precomputed cache so entering the dashboard is instant.
+ * the first page of every slice. One round-trip instead of seven; repeated reads reuse the
+ * backend's data-versioned memo until an underlying row changes.
  */
 export interface CleanupDashboardDto {
   summary: CleanupSummaryDto;
@@ -640,7 +640,7 @@ export type SocketSignal =
    * A folder's contents changed during a sync pass (messages inserted, re-sighted or
    * expunged) with no per-message signal of its own — the non-INBOX cron path, where
    * mail lands in Drafts/Sent/Trash/… without `mail:new`. Foreground clients refetch
-   * the view they're showing; the server's prepared first pages invalidate off it.
+   * the view they're showing; server-side read correctness does not depend on this signal.
    * Deliberately NOT a push trigger: background notifications stay INBOX-only (§9).
    */
   | { type: 'mail:folder'; accountId: string; folderId: string }

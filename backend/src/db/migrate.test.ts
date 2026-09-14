@@ -87,7 +87,7 @@ function ftsRowsFor(id: string): { subject: string; body: string }[] {
 // Schema objects exist after migrating
 // ---------------------------------------------------------------------------
 
-test('migrations create the messages_fts virtual table and its three sync triggers', () => {
+test('migrations create the FTS index and trigger-maintained cleanup version', () => {
   const fts = sqlite
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'`)
     .get();
@@ -100,6 +100,21 @@ test('migrations create the messages_fts virtual table and its three sync trigge
   for (const t of ['messages_fts_ai', 'messages_fts_ad', 'messages_fts_au']) {
     assert.ok(triggers.includes(t), `trigger ${t} exists`);
   }
+  for (const t of [
+    'cleanup_version_messages_ai',
+    'cleanup_version_messages_ad',
+    'cleanup_version_messages_au',
+    'cleanup_version_attachments_ai',
+    'cleanup_version_queue_au',
+    'cleanup_version_settings_au',
+  ]) {
+    assert.ok(triggers.includes(t), `trigger ${t} exists`);
+  }
+
+  assert.deepEqual(sqlite.prepare(`SELECT scope, version FROM data_versions`).get(), {
+    scope: 'cleanup',
+    version: 0,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -168,6 +183,57 @@ test('the INSERT trigger falls back to the snippet when body_text is NULL', () =
     'snippet stand-in',
     'coalesce(body_text, snippet, "") picks the snippet',
   );
+});
+
+test('cleanup version tracks relevant writes and ignores unrelated message columns', () => {
+  const { accountId } = seedAccount();
+  const version = (): number =>
+    (
+      sqlite.prepare(`SELECT version FROM data_versions WHERE scope = 'cleanup'`).get() as {
+        version: number;
+      }
+    ).version;
+
+  const before = version();
+  const messageId = insertMessage(accountId);
+  assert.equal(version(), before + 1, 'message insert');
+
+  sqlite
+    .prepare(`UPDATE messages SET seen = 1, flagged = 1, source_path = ? WHERE id = ?`)
+    .run('/tmp/source.eml', messageId);
+  assert.equal(version(), before + 1, 'flags and source path are outside cleanup analytics');
+
+  sqlite.prepare(`UPDATE messages SET source_bytes = 1234 WHERE id = ?`).run(messageId);
+  assert.equal(version(), before + 2, 'source byte total');
+
+  const attachmentId = randomUUID();
+  sqlite
+    .prepare(`INSERT INTO attachments (id, message_id, size_bytes) VALUES (?, ?, 100)`)
+    .run(attachmentId, messageId);
+  assert.equal(version(), before + 3, 'attachment insert');
+
+  sqlite
+    .prepare(`UPDATE attachments SET storage_path = ? WHERE id = ?`)
+    .run('/tmp/a', attachmentId);
+  assert.equal(version(), before + 3, 'download location does not affect cleanup analytics');
+
+  sqlite.prepare(`UPDATE attachments SET size_bytes = 200 WHERE id = ?`).run(attachmentId);
+  assert.equal(version(), before + 4, 'attachment size');
+
+  sqlite.prepare(`INSERT INTO app_settings (key, value) VALUES ('prefs', '{}')`).run();
+  assert.equal(version(), before + 5, 'cleanup keyword settings');
+
+  const queueId = randomUUID();
+  sqlite
+    .prepare(
+      `INSERT INTO cleanup_queue (id, message_id, account_id, slice)
+       VALUES (?, ?, ?, 'newsletters')`,
+    )
+    .run(queueId, messageId, accountId);
+  assert.equal(version(), before + 6, 'cleanup queue insert');
+
+  sqlite.prepare(`UPDATE cleanup_queue SET status = 'done' WHERE id = ?`).run(queueId);
+  assert.equal(version(), before + 7, 'cleanup completion tally');
 });
 
 /**

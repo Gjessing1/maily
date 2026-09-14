@@ -374,8 +374,38 @@ export function folderIdsForMessage(messageId: string): string[] {
     .map((r) => r.folderId);
 }
 
+/** Folder ids for a bounded message page in batched queries (one query per 500 ids). */
+export function folderIdsForMessages(messageIds: string[]): Map<string, string[]> {
+  const ids = [...new Set(messageIds)];
+  const result = new Map(ids.map((id) => [id, [] as string[]]));
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const chunk = ids.slice(offset, offset + 500);
+    if (chunk.length === 0) continue;
+    const rows = db
+      .select({ messageId: messageFolders.messageId, folderId: messageFolders.folderId })
+      .from(messageFolders)
+      .where(inArray(messageFolders.messageId, chunk))
+      .all();
+    for (const row of rows) result.get(row.messageId)?.push(row.folderId);
+  }
+  return result;
+}
+
 export function attachmentsForMessage(messageId: string): AttachmentRow[] {
   return db.select().from(attachments).where(eq(attachments.messageId, messageId)).all();
+}
+
+/** Attachment rows for a bounded message page in batched queries (one query per 500 ids). */
+export function attachmentsForMessages(messageIds: string[]): Map<string, AttachmentRow[]> {
+  const ids = [...new Set(messageIds)];
+  const result = new Map(ids.map((id) => [id, [] as AttachmentRow[]]));
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const chunk = ids.slice(offset, offset + 500);
+    if (chunk.length === 0) continue;
+    const rows = db.select().from(attachments).where(inArray(attachments.messageId, chunk)).all();
+    for (const row of rows) result.get(row.messageId)?.push(row);
+  }
+  return result;
 }
 
 export function getAttachment(id: string): AttachmentRow | undefined {

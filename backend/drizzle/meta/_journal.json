@@ -204,6 +204,13 @@
       "when": 1787900000000,
       "tag": "0028_push_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1789406380784,
+      "tag": "0029_cleanup_data_version",
+      "breakpoints": true
     }
   ]
 }

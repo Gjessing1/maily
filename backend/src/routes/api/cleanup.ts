@@ -31,7 +31,7 @@ import {
   type GroupPageOpts,
   type GroupSort,
 } from '../../cleanup/slices.js';
-import { bumpCleanupCache, cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
+import { cachedSliceData, cachedSummary } from '../../cleanup/cache.js';
 import { purgeTrashFolder } from '../../cleanup/purge.js';
 import { enqueueTrash, nudgeTrashQueue, queueStatus } from '../../cleanup/trashQueue.js';
 import { markMessageDeleted, setCleanupKeep } from '../../imap/store.js';
@@ -78,7 +78,7 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/cleanup/summary', async () => cachedSummary());
 
   // The whole dashboard in one round-trip (summary + queue + first page of every slice),
-  // served from the precomputed cache so entering the Cleanup screen is instant.
+  // memoised by the trigger-maintained data version after the first on-demand compute.
   app.get<{ Querystring: { years?: string; minMb?: string } }>(
     '/api/cleanup/dashboard',
     async (req): Promise<CleanupDashboardDto> => {
@@ -219,7 +219,6 @@ export async function cleanupRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'messageIds[] and keep are required' });
     }
     const updated = setCleanupKeep(messageIds, keep);
-    if (updated > 0) bumpCleanupCache();
     const result: CleanupKeepResultDto = { updated };
     return result;
   });

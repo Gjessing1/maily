@@ -7,11 +7,11 @@ import type { FastifyInstance } from 'fastify';
 import type { MessageDto } from '@maily/shared';
 import {
   attachmentsForMessage,
+  attachmentsForMessages,
   folderIdsForMessage,
+  folderIdsForMessages,
   getMessage,
-  listAccounts,
   listArchived,
-  listFolders,
   listMessages,
   listStarred,
   listThread,
@@ -20,10 +20,8 @@ import {
   type MessageRow,
   type UnifiedRole,
 } from '../../db/queries.js';
-import { getPrefs as getStoredPrefs } from '../../db/settings.js';
 import { embedInlineImages } from '../../storage/attachments.js';
 import { toMessageDetailDto, toMessageDto } from '../../http/dto.js';
-import { cachedFirstPage, seedFirstPage } from '../../http/listCache.js';
 import { searchMessages } from '../../search/search.js';
 
 const MAX_PAGE = 200;
@@ -46,56 +44,24 @@ function pageParams(query: { limit?: string; before?: string; unread?: string })
   };
 }
 
-/** Shape a row list to MessageDto, attaching each message's folder ids + attachments. */
-const toListDtos = (rows: MessageRow[]) =>
-  rows.map((m) => toMessageDto(m, folderIdsForMessage(m.id), attachmentsForMessage(m.id)));
-
-/**
- * Route a list request through the prepared first-page cache (listCache.ts) when it IS
- * a first page (no cursor); scroll pages (`before`) compute directly as always.
- */
-const firstPage = (key: string, before: number | undefined, compute: () => MessageDto[]) =>
-  before === undefined ? cachedFirstPage(key, compute) : compute();
-
-/** The unread companion page's fixed limit — matches the client's UNREAD_PAGE. */
-const UNREAD_PAGE = 200;
-
-/**
- * Seed the boot-warm targets: page one of the unified inbox and of every account's
- * inbox folder, plus their unread companions — the views the app lands on. Limits must
- * mirror what the client actually requests (its synced `pageSize` pref, default 100)
- * or the seeded keys would never be hit.
- */
-function seedInboxFirstPages(): void {
-  const pageSize = Number(getStoredPrefs().pageSize) || 100;
-  seedFirstPage(`inbox|${pageSize}|0`, () => toListDtos(listUnifiedInbox(pageSize)));
-  seedFirstPage(`inbox|${UNREAD_PAGE}|1`, () =>
-    toListDtos(listUnifiedInbox(UNREAD_PAGE, undefined, true)),
+/** Shape a row list with two batched relation queries instead of two queries per row. */
+const toListDtos = (rows: MessageRow[]): MessageDto[] => {
+  const ids = rows.map((m) => m.id);
+  const folderIds = folderIdsForMessages(ids);
+  const attachmentRows = attachmentsForMessages(ids);
+  return rows.map((m) =>
+    toMessageDto(m, folderIds.get(m.id) ?? [], attachmentRows.get(m.id) ?? []),
   );
-  for (const account of listAccounts()) {
-    for (const f of listFolders(account.id).filter((f) => f.role === 'inbox')) {
-      seedFirstPage(`folder|${f.id}|${pageSize}|0`, () => toListDtos(listMessages(f.id, pageSize)));
-      seedFirstPage(`folder|${f.id}|${UNREAD_PAGE}|1`, () =>
-        toListDtos(listMessages(f.id, UNREAD_PAGE, undefined, true)),
-      );
-    }
-  }
-}
+};
 
 export async function messageRoutes(app: FastifyInstance): Promise<void> {
-  // Register the boot-warm targets; startListCache() (index.ts) warms them shortly
-  // after start so the first visit after a deploy is served from memory.
-  seedInboxFirstPages();
-
   app.get<{
     Params: { folderId: string };
     Querystring: { limit?: string; before?: string; unread?: string };
   }>('/api/folders/:folderId/messages', async (req) => {
     const { limit, before, unread } = pageParams(req.query);
     const { folderId } = req.params;
-    return firstPage(`folder|${folderId}|${limit}|${unread ? 1 : 0}`, before, () =>
-      toListDtos(listMessages(folderId, limit, before, unread)),
-    );
+    return toListDtos(listMessages(folderId, limit, before, unread));
   });
 
   // Virtual "Unified Inbox": every account's inbox merged into one stream.
@@ -103,9 +69,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     '/api/inbox',
     async (req) => {
       const { limit, before, unread } = pageParams(req.query);
-      return firstPage(`inbox|${limit}|${unread ? 1 : 0}`, before, () =>
-        toListDtos(listUnifiedInbox(limit, before, unread)),
-      );
+      return toListDtos(listUnifiedInbox(limit, before, unread));
     },
   );
 
@@ -119,9 +83,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     const role = req.params.role as UnifiedRole;
     if (!UNIFIED_ROLES.includes(role)) return reply.code(404).send({ error: 'unknown role' });
     const { limit, before, unread } = pageParams(req.query);
-    return firstPage(`unified|${role}|${limit}|${unread ? 1 : 0}`, before, () =>
-      toListDtos(listUnifiedByRole(role, limit, before, unread)),
-    );
+    return toListDtos(listUnifiedByRole(role, limit, before, unread));
   });
 
   // Virtual "Archived" view for an account: archive-role folder minus inbox/sent/
@@ -132,9 +94,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
   }>('/api/accounts/:accountId/archived', async (req) => {
     const { limit, before, unread } = pageParams(req.query);
     const { accountId } = req.params;
-    return firstPage(`archived|${accountId}|${limit}|${unread ? 1 : 0}`, before, () =>
-      toListDtos(listArchived(accountId, limit, before, unread)),
-    );
+    return toListDtos(listArchived(accountId, limit, before, unread));
   });
 
   // Virtual "Starred" view for an account: every \Flagged message, provider-agnostic.
@@ -146,9 +106,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
   }>('/api/accounts/:accountId/starred', async (req) => {
     const { limit, before, unread } = pageParams(req.query);
     const { accountId } = req.params;
-    return firstPage(`starred|${accountId}|${limit}|${unread ? 1 : 0}`, before, () =>
-      toListDtos(listStarred(accountId, limit, before, unread)),
-    );
+    return toListDtos(listStarred(accountId, limit, before, unread));
   });
 
   // Whole conversation for a message (threaded reader): every message sharing this

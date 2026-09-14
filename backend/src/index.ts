@@ -21,8 +21,6 @@ import { sweepStaleUploads } from './storage/uploads.js';
 import { startContactsSync } from './contacts/carddav.js';
 import { reloadContactCache } from './contacts/store.js';
 import { startTrashQueue } from './cleanup/trashQueue.js';
-import { startCleanupCache } from './cleanup/cache.js';
-import { startListCache } from './http/listCache.js';
 import { drainSnippets } from './cleanup/snippetBackfill.js';
 import { backfillSourceBytes } from './cleanup/sourceBytesBackfill.js';
 import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
@@ -105,14 +103,6 @@ async function main(): Promise<void> {
   // Server-owned outbox: commit deferred sends (undo-send / scheduled) and undoable
   // delete/archive MOVEs at their due time — independent of whether the PWA is open.
   startOutbox();
-
-  // Precompute the Cleanup Dashboard aggregates (warm at boot, re-warm after mail changes)
-  // so entering the Cleanup screen is served from memory instead of full-table scans.
-  startCleanupCache();
-
-  // Precompute page one of the list views (inbox heads + unread companions): warm at
-  // boot, invalidate + re-warm on mail signals, so first paint is a memory read.
-  startListCache();
 
   // Periodic WAL-safe SQLite snapshot into backups/ for the off-host backup (backrest) to grab —
   // a plain copy of the live WAL-mode DB can be torn. The live source of truth (ARCHITECTURE §1).
