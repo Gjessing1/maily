@@ -41,6 +41,7 @@ import type {
   SaveDraftResult,
   SendMessageRequest,
   ServerConfigDto,
+  ServerSettings,
   UploadDto,
 } from '@maily/shared';
 import {
@@ -318,12 +319,21 @@ export const api = {
 
   config: () => request<ServerConfigDto>('/api/config'),
 
-  /** Server-persisted UI preferences (synced across devices). */
+  /** UI preferences, synced across devices. */
   getSettings: () => request<Record<string, unknown>>('/api/settings'),
-  putSettings: (prefs: Record<string, unknown>) =>
+  /** Merge patch: send only the changed keys; `null` removes one. */
+  patchSettings: (patch: Record<string, unknown>) =>
     request<{ ok: boolean }>('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify(prefs),
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  /** Settings the server acts on (cleanup keyword lists, undo-send window). */
+  serverSettings: () => request<ServerSettings>('/api/settings/server'),
+  patchServerSettings: (patch: Partial<ServerSettings>) =>
+    request<ServerSettings>('/api/settings/server', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
     }),
 
   messages: (folderId: string, opts: ListOpts = {}) =>

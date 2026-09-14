@@ -4,7 +4,7 @@
  * account-security / medical mail out of every delete-eligible slice — plus the user's
  * custom protected-keyword extension.
  *
- * The protected match now reads the synced prefs blob for custom additions, so this bootstraps
+ * The protected match reads the user's list from the server settings, so this bootstraps
  * an isolated temp DB (migrations create app_settings) before the dynamic import, like
  * slices.test.ts — pointing MAILY_DATA_DIR at a throwaway dir first.
  */
@@ -31,7 +31,7 @@ before(async () => {
 
 after(() => rmSync(tmpRoot, { recursive: true, force: true }));
 
-beforeEach(() => settings.putPrefs({}));
+beforeEach(() => settings.putSetting(settings.SERVER_SETTINGS_KEY, {}));
 
 test('isProtected: English protected keywords trigger', () => {
   assert.ok(Safety.isProtected({ subject: 'Your invoice is ready' }));
@@ -65,7 +65,7 @@ test('protectedMatch is a non-empty OR-joined prefix FTS expression', () => {
 test('a customised protected list fully replaces the built-ins (add + remove)', () => {
   // The Cleanup editor seeds from the built-ins, so saving a list is full ownership: words you
   // added apply, and built-ins you dropped (here everything but the two custom words) do not.
-  settings.putPrefs({ cleanupProtectedKeywords: ['warranty', 'garanti'] });
+  settings.patchServerSettings({ cleanupProtectedKeywords: ['warranty', 'garanti'] });
   assert.match(Safety.protectedMatch(), /"warranty"\*/);
   assert.ok(Safety.isProtected({ subject: 'Your warranty certificate' }));
   assert.ok(Safety.isProtected({ subject: 'Din garanti er gyldig' }));
@@ -73,9 +73,11 @@ test('a customised protected list fully replaces the built-ins (add + remove)', 
   assert.equal(Safety.isProtected({ subject: 'Your invoice' }), false);
 });
 
-test('an empty or unset protected list falls back to the built-ins (reset = revert)', () => {
-  settings.putPrefs({ cleanupProtectedKeywords: [] });
+test('an empty, unset or garbled protected list falls back to the built-ins', () => {
+  settings.patchServerSettings({ cleanupProtectedKeywords: [] });
   assert.ok(Safety.isProtected({ subject: 'Your invoice' }));
-  settings.putPrefs({});
+  settings.putSetting(settings.SERVER_SETTINGS_KEY, {});
+  assert.ok(Safety.isProtected({ subject: 'Your invoice' }));
+  settings.putSetting(settings.SERVER_SETTINGS_KEY, { cleanupProtectedKeywords: 'warranty' });
   assert.ok(Safety.isProtected({ subject: 'Your invoice' }));
 });

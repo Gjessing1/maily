@@ -408,6 +408,22 @@ export interface ServerConfigDto {
   buildId: string;
 }
 
+/**
+ * Settings the server acts on, as opposed to the client-owned UI prefs. Validated by the server
+ * on write (`PATCH /api/settings/server`, a partial update). An empty keyword list means "use the
+ * built-in words", so saving an empty list can never switch a cleanup gate off.
+ */
+export interface ServerSettings {
+  /** The cleanup hard gate: mail whose body carries one of these is never offered for cleanup. */
+  cleanupProtectedKeywords: string[];
+  /** Markers that put mail in the newsletters slice. */
+  cleanupNewsletterKeywords: string[];
+  /** Markers that spare an old message from the cold-storage slice. */
+  cleanupColdKeepKeywords: string[];
+  /** Seconds a send is held, cancelable, before it goes out; 0 sends immediately. */
+  undoSendSeconds: number;
+}
+
 /** Row counts for one slice of the enrichment ledger (Settings → Enrichment). */
 export interface EnrichmentCounts {
   /** All ledger rows in this slice (done + pending + failed + dead). */
@@ -644,7 +660,9 @@ export type SocketSignal =
    * Deliberately NOT a push trigger: background notifications stay INBOX-only (§9).
    */
   | { type: 'mail:folder'; accountId: string; folderId: string }
-  | { type: 'sync:progress'; accountId: string; done: number; total: number };
+  | { type: 'sync:progress'; accountId: string; done: number; total: number }
+  /** Prefs or server settings were saved, possibly on another device; clients re-read them. */
+  | { type: 'settings:changed' };
 
 /** The kind of deferred action staged in the server-side outbox. */
 export type OutboxKind = 'send' | 'delete' | 'archive';

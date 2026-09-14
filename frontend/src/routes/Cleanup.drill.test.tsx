@@ -92,9 +92,6 @@ const prefs = {
   },
   cleanupColdYears: 2,
   cleanupLargeMinMb: 10,
-  cleanupColdKeepKeywords: [],
-  cleanupNewsletterKeywords: [],
-  cleanupProtectedKeywords: [],
 };
 vi.mock('../state/prefs', () => ({
   usePrefs: () => prefs,

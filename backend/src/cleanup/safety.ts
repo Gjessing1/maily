@@ -11,7 +11,7 @@
  * the safe direction for a delete filter.
  */
 import { sql, type SQL } from 'drizzle-orm';
-import { getPrefs } from '../db/settings.js';
+import { getServerSettings, type KeywordListKey } from '../db/settings.js';
 import { PROTECTED_KEYWORDS } from './keywords.js';
 
 /** Build an FTS5 MATCH expression: prefix-match each term, OR-joined. */
@@ -19,31 +19,17 @@ export function ftsOrMatch(terms: string[]): string {
   return terms.map((t) => `"${t}"*`).join(' OR ');
 }
 
-/** The cleanup keyword lists the user fully owns from the Cleanup screen (synced prefs blob). */
-export type CustomKeywordKey =
-  | 'cleanupColdKeepKeywords'
-  | 'cleanupNewsletterKeywords'
-  | 'cleanupProtectedKeywords';
-
 /**
- * The effective keyword list for `key`: the user's own list from the synced prefs blob when they
+ * The effective keyword list for `key`: the user's own list from the server settings when they
  * have customised it, else `defaults`. This is a full *replacement* model, not additive — the
  * Cleanup screen seeds the editor from the built-ins, so removing a built-in there persists a
- * shorter list and that built-in stops applying. A missing/empty/garbled pref falls back to the
- * built-ins (so an empty list can never silently switch a gate off; reset = revert to defaults).
- * Each term is lowercased, stripped of double quotes (they'd break the FTS phrase wrapper in
- * {@link ftsOrMatch}) and de-duped.
+ * shorter list and that built-in stops applying. An empty list falls back to the built-ins (so
+ * saving nothing can never silently switch a gate off; reset = revert to defaults). Terms arrive
+ * normalised for {@link ftsOrMatch}: lowercased, without double quotes, de-duped.
  */
-export function effectiveKeywords(key: CustomKeywordKey, defaults: string[]): string[] {
-  const raw = (getPrefs() as Record<string, unknown>)[key];
-  if (!Array.isArray(raw)) return defaults;
-  const out = new Set<string>();
-  for (const x of raw) {
-    if (typeof x !== 'string') continue;
-    const term = x.trim().toLowerCase().replace(/"/g, '');
-    if (term) out.add(term);
-  }
-  return out.size > 0 ? [...out] : defaults;
+export function effectiveKeywords(key: KeywordListKey, defaults: string[]): string[] {
+  const list = getServerSettings()[key];
+  return list.length > 0 ? list : defaults;
 }
 
 /** The effective protected-safety keyword list (built-ins, user-extended or user-trimmed). */

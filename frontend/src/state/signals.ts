@@ -12,6 +12,8 @@ import {
   patchCachedFlags,
   removeCachedMessage,
 } from '../db/cache';
+import { hydratePrefs } from './prefs';
+import { hydrateServerSettings } from './serverSettings';
 import { showNotice } from './undo';
 
 export interface SyncProgress {
@@ -70,6 +72,11 @@ export function useSignals(): { progress: SyncProgress | null } {
         case 'mail:send-failed':
           // The send exhausted its retries — let the user know it never went out.
           showNotice(`Send failed: ${signal.error}`);
+          break;
+        case 'settings:changed':
+          // Prefs or server settings were saved, maybe on another device — re-read both.
+          void hydratePrefs();
+          void hydrateServerSettings();
           break;
         case 'sync:progress':
           setProgress({

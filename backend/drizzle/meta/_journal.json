@@ -211,6 +211,13 @@
       "when": 1789406380784,
       "tag": "0029_cleanup_data_version",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1789420000000,
+      "tag": "0030_server_settings",
+      "breakpoints": true
     }
   ]
 }

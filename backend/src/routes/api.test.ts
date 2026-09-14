@@ -336,16 +336,62 @@ test('POST /api/messages/:id/archive is 409 without an archive folder, 404 for u
   assert.equal(missing.statusCode, 404);
 });
 
-test('PUT /api/settings rejects a non-object body and round-trips a valid one', async () => {
-  const bad = await send('PUT', '/api/settings', ['not', 'an', 'object']);
+test('PATCH /api/settings merges top-level keys and drops server settings', async () => {
+  const bad = await send('PATCH', '/api/settings', ['not', 'an', 'object']);
   assert.equal(bad.statusCode, 400);
 
-  const ok = await send('PUT', '/api/settings', { theme: 'dark' });
-  assert.equal(ok.statusCode, 200);
-  assert.deepEqual(ok.json(), { ok: true });
+  const first = await send('PATCH', '/api/settings', { theme: 'dark', signature: 'Lars' });
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(first.json(), { ok: true });
 
-  const read = await get('/api/settings');
-  assert.equal(read.json().theme, 'dark');
+  // A second device changing other keys must not revert the first device's edit.
+  await send('PATCH', '/api/settings', { signature: null, pageSize: 50, undoSendSeconds: 0 });
+
+  const read = (await get('/api/settings')).json();
+  assert.equal(read.theme, 'dark');
+  assert.equal(read.pageSize, 50);
+  assert.equal('signature' in read, false, 'null removes a key');
+  assert.equal('undoSendSeconds' in read, false, 'server settings never land in the prefs blob');
+});
+
+test('PATCH /api/settings/server validates, normalises and merges', async () => {
+  assert.deepEqual((await get('/api/settings/server')).json(), {
+    cleanupProtectedKeywords: [],
+    cleanupNewsletterKeywords: [],
+    cleanupColdKeepKeywords: [],
+    undoSendSeconds: 10,
+  });
+
+  for (const body of [
+    ['not', 'an', 'object'],
+    { undoSendSeconds: -1 },
+    { undoSendSeconds: 2.5 },
+    { cleanupProtectedKeywords: 'warranty' },
+    { cleanupProtectedKeywords: [1] },
+    // Rejected whole: the valid key in a request with an unknown one doesn't apply.
+    { undoSendSeconds: 5, theme: 'dark' },
+  ]) {
+    const res = await send('PATCH', '/api/settings/server', body);
+    assert.equal(res.statusCode, 400, JSON.stringify(body));
+  }
+  assert.equal((await get('/api/settings/server')).json().undoSendSeconds, 10);
+
+  const saved = await send('PATCH', '/api/settings/server', {
+    cleanupProtectedKeywords: [' Warranty ', 'warranty', '"garanti"', ''],
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.json().cleanupProtectedKeywords, ['warranty', 'garanti']);
+
+  await send('PATCH', '/api/settings/server', { undoSendSeconds: 0 });
+  const read = (await get('/api/settings/server')).json();
+  assert.equal(read.undoSendSeconds, 0);
+  assert.deepEqual(read.cleanupProtectedKeywords, ['warranty', 'garanti'], 'other keys kept');
+
+  // Restore the built-in gate for the rest of this file's tests.
+  await send('PATCH', '/api/settings/server', {
+    cleanupProtectedKeywords: [],
+    undoSendSeconds: 10,
+  });
 });
 
 test('GET /api/search and /api/contacts short-circuit to [] on an empty query', async () => {

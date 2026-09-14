@@ -6,6 +6,7 @@ import { useAndroidBackButton } from './state/androidBack';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { hydratePrefs } from './state/prefs';
+import { hydrateServerSettings } from './state/serverSettings';
 import { isPopout, onWindowMessage, sweepHandoffs } from './ui/popout';
 import { showNotice, stageSend } from './state/undo';
 import { useOnlineStatus } from './state/connectivity';
@@ -96,19 +97,22 @@ export function App() {
   // the cache regardless of which screen is mounted.
   const { progress } = useSignals();
 
-  // Pull server-side preferences once authenticated so settings are consistent
-  // across devices (the server is the source of truth; local storage is a cache).
-  // Re-hydrate (throttled) when the app comes back to the foreground or the
-  // socket reconnects, so a preference flipped on another device shows up here
-  // without a full app restart. Pending local edits win (see hydratePrefs).
+  // Pull the synced prefs and the server settings once authenticated. A change made elsewhere
+  // arrives as a `settings:changed` signal (state/signals.ts); re-read (throttled) when the app
+  // comes back to the foreground or the socket reconnects too, since a signal sent while this
+  // device was away is missed. Unconfirmed local edits win (see hydratePrefs).
   useEffect(() => {
     if (!authed) return;
-    void hydratePrefs();
+    const hydrate = () => {
+      void hydratePrefs();
+      void hydrateServerSettings();
+    };
+    hydrate();
     let last = Date.now();
     const rehydrate = () => {
       if (Date.now() - last < 30_000) return;
       last = Date.now();
-      void hydratePrefs();
+      hydrate();
     };
     const onVisible = () => {
       if (document.visibilityState === 'visible') rehydrate();

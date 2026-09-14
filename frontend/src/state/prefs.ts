@@ -1,8 +1,10 @@
 /**
- * UI preferences. Display-only prefs (never secrets) that the user expects to be
- * "global" — the same on every device. The server (SQLite) is the source of truth
- * and `localStorage` is a fast offline cache: we render from the cache instantly,
- * hydrate from the server on login, and push every change back (debounced).
+ * UI preferences: display choices, never secrets. Most follow the user across devices — the
+ * server stores them and `localStorage` is a fast offline cache, so we render from the cache
+ * instantly, hydrate from the server, and push each change back as a merge patch of only the keys
+ * that changed, so two devices editing different prefs never overwrite each other. The
+ * {@link DEVICE_ONLY} prefs stay on this device. Settings the server acts on (cleanup keyword
+ * lists, the undo-send window) aren't prefs; they live in `state/serverSettings.ts`.
  * Reactive via useSyncExternalStore so flipping a toggle updates every mounted view.
  */
 import { useSyncExternalStore } from 'react';
@@ -58,7 +60,7 @@ export interface Prefs {
   swipeRight: SwipeAction;
   /** Action committed by swiping a list row left (right→left). */
   swipeLeft: SwipeAction;
-  /** Days of mail to retain in the volatile IndexedDB cache before eviction (§6). */
+  /** Days of mail to retain in the volatile IndexedDB cache before eviction (§6). Device-only. */
   clientCacheDays: number;
   /** Reading-pane placement on wide screens (Gmail-style split). */
   readingPane: ReadingPane;
@@ -66,7 +68,7 @@ export interface Prefs {
    * Minimum viewport width (px) for the split reading pane to engage. Below it,
    * messages open full-screen — so a narrow window (e.g. a laptop with the
    * browser's vertical tab strip eating horizontal space) isn't forced into a
-   * cramped two-pane layout.
+   * cramped two-pane layout. Device-only.
    */
   readingPaneMinWidth: number;
   /** Plain-text signature appended to new messages (empty = none). */
@@ -93,29 +95,14 @@ export interface Prefs {
    */
   trustedImageDomains: string[];
   /**
-   * Which delete-eligible cleanup slices are surfaced as suggestion cards (ROADMAP Phase 6b).
-   * Replaces the old fixed strict/balanced/aggressive presets — each slice is toggled
-   * independently. A missing key falls back to the slice's built-in default in the UI.
+   * Which delete-eligible cleanup slices are surfaced as suggestion cards. Each slice is
+   * toggled independently. A missing key falls back to the slice's built-in default in the UI.
    */
   cleanupSlices: Record<CleanupSliceId, boolean>;
   /** Cold-storage age threshold (years) — older mail without value markers is a candidate. */
   cleanupColdYears: number;
   /** Large-message size threshold (MB). */
   cleanupLargeMinMb: number;
-  /**
-   * The cold-storage "keep" markers — an old message whose body carries one is spared from the
-   * cold-storage slice. Full-ownership lists (not additive): seeded from the built-ins in the
-   * editor, the saved list *replaces* them server-side; empty = revert to the built-in defaults.
-   */
-  cleanupColdKeepKeywords: string[];
-  /** Newsletter/bulk-mail markers — replaces the built-ins server-side; empty = defaults. */
-  cleanupNewsletterKeywords: string[];
-  /**
-   * The protected-safety markers — the HARD gate: mail whose body carries one is never offered
-   * for cleanup. Fully editable (add *or* remove built-ins); the saved list replaces the built-ins
-   * server-side, and an empty list reverts to the built-in defaults.
-   */
-  cleanupProtectedKeywords: string[];
   /**
    * Hrefs of address books collapsed (hidden) in the Contacts manager. A view-only
    * preference — it never affects which books feed composer autocomplete (that's the
@@ -129,17 +116,11 @@ export interface Prefs {
    */
   favoriteContacts: string[];
   /**
-   * Lowercased addresses whose "add as contact" prompt the user dismissed (ROADMAP §A2).
-   * The reader offers the prompt once per unknown sender; dismissing it is permanent and
-   * synced, so the offer can never accumulate into a backlog of senders to triage.
+   * Lowercased addresses whose "add as contact" prompt the user dismissed. The reader
+   * offers the prompt once per unknown sender; dismissing it is permanent and synced, so
+   * the offer can never accumulate into a backlog of senders to triage.
    */
   dismissedContactPrompts: string[];
-  /**
-   * Undo-send window in seconds: how long a send is held in the server outbox (cancelable)
-   * before it actually goes out. `0` disables the hold (send immediately). The backend reads
-   * this same value from the synced prefs blob when queuing a send.
-   */
-  undoSendSeconds: number;
 }
 
 const DEFAULTS: Prefs = {
@@ -169,32 +150,56 @@ const DEFAULTS: Prefs = {
   },
   cleanupColdYears: 2,
   cleanupLargeMinMb: 10,
-  cleanupColdKeepKeywords: [],
-  cleanupNewsletterKeywords: [],
-  cleanupProtectedKeywords: [],
   hiddenContactBooks: [],
   favoriteContacts: [],
   dismissedContactPrompts: [],
-  undoSendSeconds: 10,
 };
 
+/** Prefs that suit a screen rather than the user: never pushed, and a server copy is ignored. */
+const DEVICE_ONLY: ReadonlySet<keyof Prefs> = new Set<keyof Prefs>([
+  'readingPaneMinWidth',
+  'clientCacheDays',
+]);
+
+const PREF_KEYS = Object.keys(DEFAULTS) as (keyof Prefs)[];
+const SYNCED_KEYS = PREF_KEYS.filter((k) => !DEVICE_ONLY.has(k));
+
 const KEY = 'maily.prefs';
+/** Synced keys edited on this device that the server hasn't confirmed, kept across a reload. */
+const UNSYNCED_KEY = 'maily.prefs.unsynced';
 
 function load(): Prefs {
   try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Prefs>) } : DEFAULTS;
+    const stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, unknown>;
+    const prefs: Record<string, unknown> = { ...DEFAULTS };
+    // Known keys only, so a pref that has since moved or been removed drops out of the cache.
+    for (const k of PREF_KEYS) if (Object.hasOwn(stored, k)) prefs[k] = stored[k];
+    return prefs as unknown as Prefs;
   } catch {
     return DEFAULTS;
   }
 }
 
+function loadUnsynced(): Set<keyof Prefs> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(UNSYNCED_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(stored) ? SYNCED_KEYS.filter((k) => stored.includes(k)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 let current = load();
+const unsynced = loadUnsynced();
+// Pushes the server has accepted. A hydration that started before one landed may carry the
+// value that push replaced, so it's discarded; the push's `settings:changed` signal re-hydrates.
+let pushesLanded = 0;
 const listeners = new Set<() => void>();
 
 function saveLocal(): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(current));
+    localStorage.setItem(UNSYNCED_KEY, JSON.stringify([...unsynced]));
   } catch {
     // Best-effort: storage may be full or disabled — the offline cache just won't persist.
   }
@@ -204,28 +209,30 @@ function notify(): void {
   for (const l of listeners) l();
 }
 
-// Debounced write-back to the server so rapid edits (e.g. typing a signature)
-// coalesce into one request. The whole prefs object is sent; the server owns it.
+// Debounced so rapid edits (e.g. typing a signature) coalesce into one request.
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
-// Local edits not yet confirmed by the server. While set, hydratePrefs must not
-// overwrite `current` — a re-hydration racing the debounced push would silently
-// revert what the user just changed.
-let dirty = false;
 function schedulePush(): void {
-  dirty = true;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => {
-    const pushed = current;
-    void api
-      .putSettings(current as unknown as Record<string, unknown>)
-      .then(() => {
-        // Only clean if nothing changed while the request was in flight.
-        if (current === pushed) dirty = false;
-      })
-      .catch(() => {
-        // Offline / unauthorized — local cache holds the change; it re-syncs next save.
-      });
-  }, 600);
+  pushTimer = setTimeout(push, 600);
+}
+
+/** Send the unsynced keys. A key edited again while the request is in flight stays unsynced. */
+function push(): void {
+  if (unsynced.size === 0) return;
+  const patch: Record<string, unknown> = {};
+  for (const k of unsynced) patch[k] = current[k];
+  void api
+    .patchSettings(patch)
+    .then(() => {
+      pushesLanded++;
+      for (const k of Object.keys(patch) as (keyof Prefs)[]) {
+        if (current[k] === patch[k]) unsynced.delete(k);
+      }
+      saveLocal();
+    })
+    .catch(() => {
+      // Offline / unauthorized — the keys stay unsynced and go up with the next push.
+    });
 }
 
 export function getPrefs(): Prefs {
@@ -234,32 +241,51 @@ export function getPrefs(): Prefs {
 
 export function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): void {
   current = { ...current, [key]: value };
+  const synced = !DEVICE_ONLY.has(key);
+  if (synced) unsynced.add(key);
   saveLocal();
   notify();
-  schedulePush();
+  if (synced) schedulePush();
 }
 
 /**
- * Adopt the server's preferences on login (they're the cross-device source of
- * truth). A fresh server with nothing stored yet is seeded from this device's
- * local cache, so existing users' prefs migrate up on first run. Best-effort:
- * offline/unauthorized just keeps the local cache.
+ * Adopt the server's synced prefs (the cross-device source of truth), keeping this device's own
+ * prefs and any local edit the server hasn't confirmed yet, which is pushed again. A server with
+ * nothing stored is seeded from this device. Best-effort: offline/unauthorized keeps the cache.
  */
 export async function hydratePrefs(): Promise<void> {
+  const landed = pushesLanded;
+  let server: Record<string, unknown>;
   try {
-    const server = await api.getSettings();
-    // Unpushed local edits win — they're about to overwrite the server anyway.
-    if (dirty) return;
-    if (server && Object.keys(server).length > 0) {
-      current = { ...DEFAULTS, ...(server as Partial<Prefs>) };
-      saveLocal();
-      notify();
-    } else {
-      await api.putSettings(current as unknown as Record<string, unknown>);
-    }
+    server = await api.getSettings();
   } catch {
-    // Keep local prefs; they push up on the next successful save.
+    return;
   }
+  if (pushesLanded !== landed) return;
+
+  if (Object.keys(server).length === 0) {
+    for (const k of SYNCED_KEYS) unsynced.add(k);
+    saveLocal();
+    push();
+    return;
+  }
+
+  const next: Record<string, unknown> = { ...current };
+  let changed = false;
+  for (const k of SYNCED_KEYS) {
+    if (unsynced.has(k)) continue;
+    const value = Object.hasOwn(server, k) ? server[k] : DEFAULTS[k];
+    if (JSON.stringify(value) !== JSON.stringify(current[k])) {
+      next[k] = value;
+      changed = true;
+    }
+  }
+  if (changed) {
+    current = next as unknown as Prefs;
+    saveLocal();
+    notify();
+  }
+  if (unsynced.size > 0) schedulePush();
 }
 
 function subscribe(listener: () => void): () => void {

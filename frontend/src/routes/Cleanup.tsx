@@ -26,7 +26,12 @@ import type {
   CleanupSliceDto,
 } from '@maily/shared';
 import { api, type GroupSort } from '../api/client';
-import { getPrefs, setPref, usePrefs, type Prefs } from '../state/prefs';
+import { setPref, usePrefs, type Prefs } from '../state/prefs';
+import {
+  updateServerSettings,
+  useServerSettings,
+  type KeywordListKey,
+} from '../state/serverSettings';
 import { cachedDashboard, loadDashboard } from '../state/cleanupDash';
 import {
   deleteDrillState,
@@ -1226,6 +1231,7 @@ function GuardedMailSection({ count, onChanged }: { count: number; onChanged: ()
 export function Cleanup() {
   const navigate = useNavigate();
   const prefs = usePrefs();
+  const serverSettings = useServerSettings();
   const { coldYears, largeMinMb } = {
     coldYears: prefs.cleanupColdYears,
     largeMinMb: prefs.cleanupLargeMinMb,
@@ -1292,18 +1298,13 @@ export function Cleanup() {
   const large = dash?.large ?? null;
   const newsletters = dash?.newsletters ?? null;
 
-  // Apply a custom-keyword list: persist it, push it to the server now (the keyword sets feed
-  // the slice FTS queries), then refresh the dashboard so the new terms take effect immediately.
+  // Save a custom-keyword list, then refresh the dashboard so the new terms take effect (the
+  // lists feed the slice FTS queries on the server).
   const applyKeywords = useCallback(
-    (
-      key: 'cleanupColdKeepKeywords' | 'cleanupNewsletterKeywords' | 'cleanupProtectedKeywords',
-      list: string[],
-    ) => {
-      setPref(key, list);
-      void api
-        .putSettings(getPrefs() as unknown as Record<string, unknown>)
-        .then(refresh)
-        .catch(() => undefined);
+    (key: KeywordListKey, list: string[]) => {
+      void updateServerSettings({ [key]: list }).then((saved) => {
+        if (saved) refresh();
+      });
     },
     [refresh],
   );
@@ -1409,7 +1410,7 @@ export function Cleanup() {
                 title="Protected words"
                 hint="The full safety gate — edit freely. Reset restores the built-in list."
                 defaults={PROTECTED_BUILTINS}
-                value={prefs.cleanupProtectedKeywords}
+                value={serverSettings.cleanupProtectedKeywords}
                 onChange={(list) => applyKeywords('cleanupProtectedKeywords', list)}
               />
             </section>
@@ -1442,7 +1443,7 @@ export function Cleanup() {
                 title="Words that flag bulk mail"
                 hint="Mail whose body contains one of these is treated as a newsletter."
                 defaults={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
-                value={prefs.cleanupNewsletterKeywords}
+                value={serverSettings.cleanupNewsletterKeywords}
                 onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
               />,
             )}
@@ -1465,7 +1466,7 @@ export function Cleanup() {
                   'kontrakt',
                   'avtale',
                 ]}
-                value={prefs.cleanupColdKeepKeywords}
+                value={serverSettings.cleanupColdKeepKeywords}
                 onChange={(list) => applyKeywords('cleanupColdKeepKeywords', list)}
               />,
             )}

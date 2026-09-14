@@ -11,13 +11,7 @@ import type { SaveDraftRequest, SendMessageRequest } from '@maily/shared';
 import { getEngine } from '../../imap/registry.js';
 import { saveDraft } from '../../mail/draft.js';
 import { enqueueSend, nudgeOutbox } from '../../outbox/runner.js';
-import { getPrefs } from '../../db/settings.js';
-
-/** Undo-send window (seconds) from saved prefs; default 10, 0 = no hold. */
-function undoSendSeconds(): number {
-  const v = getPrefs().undoSendSeconds;
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 10;
-}
+import { getServerSettings } from '../../db/settings.js';
 
 export async function composeRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string }; Body: SendMessageRequest }>(
@@ -30,7 +24,7 @@ export async function composeRoutes(app: FastifyInstance): Promise<void> {
       const now = Date.now();
       // A future sendAt schedules it; otherwise hold for the undo window (0 ⇒ effectively now).
       const scheduled = typeof req.body.sendAt === 'number' && req.body.sendAt > now;
-      const dueAt = scheduled ? req.body.sendAt! : now + undoSendSeconds() * 1000;
+      const dueAt = scheduled ? req.body.sendAt! : now + getServerSettings().undoSendSeconds * 1000;
       const outboxId = enqueueSend(req.params.id, req.body, dueAt);
       // Drain soon so a 0-window (immediate) send doesn't wait for the next poll tick.
       if (!scheduled) nudgeOutbox();

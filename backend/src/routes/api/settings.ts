@@ -1,11 +1,22 @@
 /**
- * Server config + UI preferences. Config exposes only non-secret settings; prefs are
- * stored verbatim (client owns the schema) and synced across devices (ROADMAP §B).
+ * Settings over HTTP — three documents with different owners:
+ * - `/api/config`: non-secret server config from the environment, read-only.
+ * - `/api/settings`: the client-owned UI prefs, synced across devices by top-level merge patch.
+ * - `/api/settings/server`: typed settings the server acts on, validated before they're stored.
+ *
+ * Every write emits `settings:changed` so other open clients re-read.
  */
 import type { FastifyInstance } from 'fastify';
-import type { ServerConfigDto } from '@maily/shared';
+import type { ServerConfigDto, ServerSettings } from '@maily/shared';
 import { env } from '../../env.js';
-import { getPrefs as getStoredPrefs, putPrefs as putStoredPrefs } from '../../db/settings.js';
+import { emitSignal } from '../../events.js';
+import {
+  getPrefs,
+  getServerSettings,
+  parseServerSettingsPatch,
+  patchPrefs,
+  patchServerSettings,
+} from '../../db/settings.js';
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   // Non-secret server config (Settings → Storage shows the server cache window).
@@ -17,16 +28,26 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  // UI preferences, persisted server-side so they sync across devices (ROADMAP §B).
-  // The client owns the schema; the server stores the object verbatim (never secrets).
-  app.get('/api/settings', async () => getStoredPrefs());
+  app.get('/api/settings', async () => getPrefs());
 
-  app.put<{ Body: Record<string, unknown> }>('/api/settings', async (req, reply) => {
+  // Each key in the body replaces its stored value; null removes it. Keys not sent are untouched.
+  app.patch<{ Body: Record<string, unknown> }>('/api/settings', async (req, reply) => {
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return reply.code(400).send({ error: 'settings object required' });
     }
-    putStoredPrefs(body);
+    patchPrefs(body);
+    emitSignal({ type: 'settings:changed' });
     return { ok: true };
+  });
+
+  app.get('/api/settings/server', async (): Promise<ServerSettings> => getServerSettings());
+
+  app.patch<{ Body: unknown }>('/api/settings/server', async (req, reply) => {
+    const parsed = parseServerSettingsPatch(req.body);
+    if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+    const settings = patchServerSettings(parsed.patch);
+    emitSignal({ type: 'settings:changed' });
+    return settings;
   });
 }

@@ -221,7 +221,11 @@ test('cleanup version tracks relevant writes and ignores unrelated message colum
   assert.equal(version(), before + 4, 'attachment size');
 
   sqlite.prepare(`INSERT INTO app_settings (key, value) VALUES ('prefs', '{}')`).run();
-  assert.equal(version(), before + 5, 'cleanup keyword settings');
+  sqlite.prepare(`INSERT INTO app_settings (key, value) VALUES ('download_budget', '{}')`).run();
+  assert.equal(version(), before + 4, 'UI prefs and the download budget are outside cleanup');
+
+  sqlite.prepare(`INSERT INTO app_settings (key, value) VALUES ('server.settings', '{}')`).run();
+  assert.equal(version(), before + 5, 'server settings carry the cleanup keyword lists');
 
   const queueId = randomUUID();
   sqlite

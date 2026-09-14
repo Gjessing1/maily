@@ -282,10 +282,9 @@ export const contacts = sqliteTable(
 );
 
 /**
- * Single-user app settings — the source of truth for UI preferences so they sync
- * across every device/browser instead of living only in each client's localStorage
- * (ARCHITECTURE §5: never secrets, only display prefs). Key-value with a JSON blob;
- * the whole prefs object is stored under one well-known key ('prefs').
+ * Single-user app settings, key-value with a JSON value per key (ARCHITECTURE §5: never
+ * secrets). Holds the client-owned UI prefs ('prefs'), the typed settings the server acts on
+ * ('server.settings') and per-feature state; see `db/settings.ts`.
  */
 export const appSettings = sqliteTable('app_settings', {
   key: text('key').primaryKey(),

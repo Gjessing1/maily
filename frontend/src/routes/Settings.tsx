@@ -15,6 +15,7 @@ import { useBackHandler } from '../state/backButton';
 import { disablePush, enablePush, pushState } from '../api/push';
 import { cache } from '../db/cache';
 import { setPref, usePrefs, type Prefs } from '../state/prefs';
+import { updateServerSettings, useServerSettings } from '../state/serverSettings';
 import { untrustImageDomain } from '../state/trustedImages';
 import { checkForUpdate, type UpdateCheckResult } from '../pwa';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -144,7 +145,47 @@ function ToggleRow({
   );
 }
 
-/** A labelled segmented selector backed by a preference with a fixed option set. */
+/** A labelled segmented selector over a fixed option set. */
+function ChoiceRow<V>({
+  label,
+  hint,
+  value,
+  options,
+  onSelect,
+}: {
+  label: string;
+  hint?: string;
+  value: V;
+  options: { value: V; label: string }[];
+  onSelect: (value: V) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3">
+      <span className="min-w-0">
+        <span className="block text-[15px]">{label}</span>
+        {hint && <span className="mt-0.5 block text-xs text-faint">{hint}</span>}
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button
+            key={String(o.value)}
+            onClick={() => onSelect(o.value)}
+            aria-pressed={value === o.value}
+            className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+              value === o.value
+                ? 'bg-accent text-white'
+                : 'bg-surface-2 text-faint active:bg-surface-3'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A {@link ChoiceRow} backed by a preference. */
 function SelectRow<K extends keyof Prefs>({
   label,
   hint,
@@ -158,28 +199,13 @@ function SelectRow<K extends keyof Prefs>({
 }) {
   const value = usePrefs()[prefKey];
   return (
-    <div className="flex flex-col gap-2 px-4 py-3">
-      <span className="min-w-0">
-        <span className="block text-[15px]">{label}</span>
-        {hint && <span className="mt-0.5 block text-xs text-faint">{hint}</span>}
-      </span>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map((o) => (
-          <button
-            key={String(o.value)}
-            onClick={() => setPref(prefKey, o.value)}
-            aria-pressed={value === o.value}
-            className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
-              value === o.value
-                ? 'bg-accent text-white'
-                : 'bg-surface-2 text-faint active:bg-surface-3'
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </div>
+    <ChoiceRow
+      label={label}
+      hint={hint}
+      value={value}
+      options={options}
+      onSelect={(v) => setPref(prefKey, v)}
+    />
   );
 }
 
@@ -751,7 +777,7 @@ function AppearanceSection() {
         {readingPane !== 'none' && (
           <SelectRow
             label="Split from"
-            hint="Minimum window width for the split to appear. Narrower windows open messages full-screen — handy when the browser's side tab strip leaves little room."
+            hint="Minimum window width for the split to appear. Narrower windows open messages full-screen — handy when the browser's side tab strip leaves little room. Set per device."
             prefKey="readingPaneMinWidth"
             options={[
               { value: 768, label: 'Compact (768)' },
@@ -877,13 +903,15 @@ function ReadingSection() {
 /** Undo-send window, which account a fresh compose uses, and the signature. */
 function ComposingSection({ accounts }: { accounts: AccountDto[] | undefined }) {
   const { signature } = usePrefs();
+  const { undoSendSeconds } = useServerSettings();
   return (
     <>
       <Group title="Sending">
-        <SelectRow
+        <ChoiceRow
           label="Undo send"
           hint="Hold a sent message this long (cancelable) before it goes out. The send commits on the server even if you close the app."
-          prefKey="undoSendSeconds"
+          value={undoSendSeconds}
+          onSelect={(seconds) => void updateServerSettings({ undoSendSeconds: seconds })}
           options={[
             { value: 0, label: 'Off' },
             { value: 5, label: '5s' },
