@@ -75,3 +75,30 @@ test('cachedSliceData memoises until a mail signal invalidates it', () => {
   E.emitSignal({ type: 'mail:deleted', accountId, messageId: newId });
   assert.notEqual(C.cachedSummary(), summary);
 });
+
+test('mail:flags does not invalidate cleanup aggregates', () => {
+  const accountId = randomUUID();
+  db.insert(schema.accounts)
+    .values({
+      id: accountId,
+      email: 'flags@me.example',
+      provider: 'imap',
+      imapHost: 'i',
+      smtpHost: 's',
+    })
+    .run();
+  const messageId = seedMessage(accountId, 'sender@promo.example');
+
+  const slice = C.cachedSliceData('storage');
+  const summary = C.cachedSummary();
+  E.emitSignal({
+    type: 'mail:flags',
+    accountId,
+    messageId,
+    seen: true,
+    flagged: true,
+  });
+
+  assert.equal(C.cachedSliceData('storage'), slice);
+  assert.equal(C.cachedSummary(), summary);
+});

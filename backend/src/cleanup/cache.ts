@@ -5,8 +5,8 @@
  * full {@link SliceData} (and the summary) keyed by slice + thresholds, and keeps the
  * cache *warm in advance*:
  *
- *  - **Invalidation** rides the in-process signal bus — any mail mutation (new / flags /
- *    deleted / archived) bumps the data version, so a hit is never stale relative to a
+ *  - **Invalidation** rides the in-process signal bus — any slice-affecting mail mutation
+ *    (new / deleted / archived) bumps the data version, so a hit is never stale relative to a
  *    signalled write.
  *  - **Re-warm, debounced**: after a quiet period following the last signal, the recently
  *    requested slice/threshold combos (seeded with the defaults) are recomputed in the
@@ -83,7 +83,7 @@ function ensureWired(): void {
   if (wired) return;
   wired = true;
   onSignal((signal) => {
-    if (signal.type === 'sync:progress') return; // progress ticks don't change slice data
+    if (signal.type === 'sync:progress' || signal.type === 'mail:flags') return;
     version += 1;
     scheduleWarm(WARM_DEBOUNCE_MS);
   });
