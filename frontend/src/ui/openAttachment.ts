@@ -28,7 +28,14 @@
  */
 import type { AttachmentDto } from '@maily/shared';
 import { attachmentUrl, fetchAttachmentBlob, getToken } from '../api/client';
-import { isNativeAndroid, openNativeFile } from '../nativeAndroid';
+import {
+  canShareNativeFile,
+  isNativeAndroid,
+  openNativeFile,
+  saveNativeFile,
+  shareNativeFile,
+  type NativeFileRequest,
+} from '../nativeAndroid';
 
 /** Used when a sender attached a file without naming it. */
 const FALLBACK_FILENAME = 'attachment';
@@ -106,18 +113,39 @@ export function saveBlob(blob: Blob, filename: string): void {
  * best. It authenticates with the WebView's own cookies (this deployment is
  * SSO-fronted) plus the app token when maily's own login is in use.
  */
-async function handToAndroid(
-  messageId: string,
-  attachment: AttachmentDto,
-  filename: string,
-): Promise<boolean> {
-  if (!isNativeAndroid()) return false;
-  return openNativeFile({
-    url: new URL(attachmentUrl(messageId, attachment.id), window.location.href).toString(),
-    filename,
+function nativeRequest(messageId: string, attachment: AttachmentDto): NativeFileRequest {
+  return {
+    url: absoluteAttachmentUrl(messageId, attachment),
+    filename: attachment.filename || FALLBACK_FILENAME,
     mimeType: attachment.mimeType,
     authorization: getToken(),
-  });
+  };
+}
+
+async function handToAndroid(messageId: string, attachment: AttachmentDto): Promise<boolean> {
+  if (!isNativeAndroid()) return false;
+  return openNativeFile(nativeRequest(messageId, attachment));
+}
+
+/** The attachment's bytes as an absolute URL on this server. */
+function absoluteAttachmentUrl(messageId: string, attachment: AttachmentDto): string {
+  return new URL(attachmentUrl(messageId, attachment.id), window.location.href).toString();
+}
+
+/**
+ * Where to navigate a browser tab to show an image full-size, given the object URL of
+ * the preview's bytes if they were fetched. The server URL when no in-app token is in
+ * use — the tab then streams the original, survives a reload and is titled with the
+ * filename (the gateway's cookie authenticates it) — else the object URL, since a
+ * top-level navigation cannot carry the `Authorization` header. Null when neither works
+ * yet (in-app login, preview not loaded).
+ */
+export function imageTabUrl(
+  messageId: string,
+  attachment: AttachmentDto,
+  objectUrl: string | null,
+): string | null {
+  return getToken() ? objectUrl : absoluteAttachmentUrl(messageId, attachment);
 }
 
 /**
@@ -138,7 +166,9 @@ export async function openAttachment(
   // is half of what was wrong with the call this replaced. Both checks are property
   // reads; a blocked popup returns null and falls through to the download below, which
   // beats leaving the click looking ignored.
-  if (!isNativeAndroid() && opensInATab(attachment)) {
+  // Android: the shell downloads it and hands it to the app that views the type.
+  if (await handToAndroid(messageId, attachment)) return;
+  if (opensInATab(attachment)) {
     if (window.open(attachmentUrl(messageId, attachment.id), '_blank')) return;
   }
   await saveAttachment(messageId, attachment, cached);
@@ -146,16 +176,84 @@ export async function openAttachment(
 
 /**
  * Put one attachment on disk (the explicit Download action, and the fallback for
- * everything `openAttachment` cannot show). Android still goes through the shell — a
- * WebView can save no `blob:`, so the shell's "open or save" handoff is the only thing
- * there that reaches the filesystem at all.
+ * everything `openAttachment` cannot show). Android goes through the shell — a WebView
+ * can save no `blob:` — which saves it into the phone's Downloads (APK 0.5.0+); an older
+ * shell only has its "open or save" viewer handoff.
  */
 export async function saveAttachment(
   messageId: string,
   attachment: AttachmentDto,
   cached?: Blob | null,
-): Promise<void> {
+): Promise<SaveOutcome> {
   const filename = attachment.filename || FALLBACK_FILENAME;
-  if (await handToAndroid(messageId, attachment, filename)) return;
+  if (isNativeAndroid()) {
+    const saved = await saveNativeFile(nativeRequest(messageId, attachment));
+    if (saved !== false) {
+      return saved === null ? { kind: 'handed-off' } : { kind: 'saved', name: saved };
+    }
+    // An APK older than saveFile: its "open or save" handoff is all it has — and one
+    // older still has neither, so it falls through to the browser download below.
+    if (await handToAndroid(messageId, attachment)) return { kind: 'handed-off' };
+  }
   saveBlob(cached ?? (await fetchAttachmentBlob(messageId, attachment.id)), filename);
+  return { kind: 'downloaded' };
+}
+
+/**
+ * What a save did, so the caller can say so. A browser download shows its own UI, so
+ * only the Android save — which is otherwise silent — names where the file went.
+ */
+export type SaveOutcome =
+  | { kind: 'saved'; name: string }
+  | { kind: 'downloaded' }
+  | { kind: 'handed-off' };
+
+/** A throwaway file to ask the Web Share API whether it takes files of this type. */
+function probeFile(attachment: AttachmentDto): File {
+  return new File([''], attachment.filename || FALLBACK_FILENAME, {
+    type: attachment.mimeType || 'application/octet-stream',
+  });
+}
+
+/**
+ * Whether this platform can put the attachment on a share sheet: the Android shell's own
+ * (APK 0.5.0+), or the Web Share API where it accepts files — phone browsers and
+ * installed PWAs, some desktop ones. Where neither exists the Share action is hidden
+ * rather than quietly downgraded to a download.
+ */
+export function canShareAttachment(attachment: AttachmentDto): boolean {
+  if (isNativeAndroid()) return canShareNativeFile();
+  if (typeof navigator === 'undefined' || typeof navigator.canShare !== 'function') return false;
+  try {
+    return navigator.canShare({ files: [probeFile(attachment)] });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Share one attachment. On Android the shell fetches it and opens the share sheet; in a
+ * browser the bytes (reused from `cached` when the preview already has them) go through
+ * the Web Share API. Resolves quietly when the user dismisses the sheet.
+ */
+export async function shareAttachment(
+  messageId: string,
+  attachment: AttachmentDto,
+  cached?: Blob | null,
+): Promise<void> {
+  if (isNativeAndroid()) {
+    if (await shareNativeFile(nativeRequest(messageId, attachment))) return;
+    // Older APK: its viewer handoff falls back to the share sheet for unviewable types.
+    if (await handToAndroid(messageId, attachment)) return;
+  }
+  const blob = cached ?? (await fetchAttachmentBlob(messageId, attachment.id));
+  const filename = attachment.filename || FALLBACK_FILENAME;
+  const file = new File([blob], filename, { type: attachment.mimeType || blob.type });
+  try {
+    await navigator.share({ files: [file], title: filename });
+  } catch (error) {
+    // The user closing the sheet is not a failure.
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    throw error;
+  }
 }

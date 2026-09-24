@@ -225,6 +225,42 @@ public class MailyNativePlugin extends Plugin {
      */
     @PluginMethod
     public void openFile(PluginCall call) {
+        runFileAction(call, "open", (url, filename, mimeType, authorization) -> {
+            MailyAttachments.open(getContext(), url, filename, mimeType, authorization);
+            return new JSObject();
+        });
+    }
+
+    /** Download one attachment and offer it to the share sheet. Same threading as openFile. */
+    @PluginMethod
+    public void shareFile(PluginCall call) {
+        runFileAction(call, "share", (url, filename, mimeType, authorization) -> {
+            MailyAttachments.share(getContext(), url, filename, mimeType, authorization);
+            return new JSObject();
+        });
+    }
+
+    /**
+     * Download one attachment into the phone's Downloads. Resolves `savedAs` with the name
+     * it landed under, or null when this Android is too old for that and the share sheet
+     * was offered instead (MailyAttachments.save).
+     */
+    @PluginMethod
+    public void saveFile(PluginCall call) {
+        runFileAction(call, "save", (url, filename, mimeType, authorization) -> {
+            String savedAs = MailyAttachments.save(getContext(), url, filename, mimeType, authorization);
+            JSObject result = new JSObject();
+            result.put("savedAs", savedAs);
+            return result;
+        });
+    }
+
+    private interface FileAction {
+        JSObject run(String url, String filename, String mimeType, String authorization) throws Exception;
+    }
+
+    /** Shared argument handling + background execution for the attachment actions. */
+    private void runFileAction(PluginCall call, String verb, FileAction action) {
         String url = call.getString("url");
         if (url == null || url.isBlank()) {
             call.reject("An attachment URL is required");
@@ -235,13 +271,12 @@ public class MailyNativePlugin extends Plugin {
         String authorization = call.getString("authorization");
         getBridge().execute(() -> {
             try {
-                MailyAttachments.open(getContext(), url, filename, mimeType, authorization);
-                call.resolve();
+                call.resolve(action.run(url, filename, mimeType, authorization));
             } catch (Exception error) {
-                Log.w(PLUGIN_TAG, "could not open an attachment", error);
+                Log.w(PLUGIN_TAG, "could not " + verb + " an attachment", error);
                 String message = error.getMessage();
                 call.reject(message == null || message.isBlank()
-                    ? "Could not open this attachment"
+                    ? "Could not " + verb + " this attachment"
                     : message, error);
             }
         });

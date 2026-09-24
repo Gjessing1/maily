@@ -25,8 +25,14 @@ vi.mock('../api/client', () => ({
 }));
 
 const openFile = vi.fn<(request: unknown) => Promise<void>>();
+const shareFile = vi.fn<(request: unknown) => Promise<void>>();
+const saveFile = vi.fn<(request: unknown) => Promise<{ savedAs: string | null }>>(async () => ({
+  savedAs: '247201_002657536.pdf',
+}));
 let native = true;
 let hasOpenFile = true;
+/** APK 0.5.0+ — the share and save-to-Downloads methods. */
+let hasFileActions = false;
 
 vi.mock('../nativeAndroid', () => ({
   isNativeAndroid: () => native,
@@ -34,6 +40,16 @@ vi.mock('../nativeAndroid', () => ({
     if (!native || !hasOpenFile) return false;
     await openFile(request);
     return true;
+  },
+  canShareNativeFile: () => native && hasFileActions,
+  shareNativeFile: async (request: unknown) => {
+    if (!native || !hasFileActions) return false;
+    await shareFile(request);
+    return true;
+  },
+  saveNativeFile: async (request: unknown) => {
+    if (!native || !hasFileActions) return false;
+    return (await saveFile(request)).savedAs;
   },
 }));
 
@@ -79,6 +95,7 @@ describe('handing an attachment to the platform', () => {
   beforeEach(() => {
     native = false;
     hasOpenFile = true;
+    hasFileActions = false;
     token = 'jwt-token';
     window.matchMedia = realMatchMedia;
     vi.clearAllMocks();
@@ -239,5 +256,81 @@ describe('handing an attachment to the platform', () => {
 
     expect(openFile).toHaveBeenCalledTimes(1);
     expect(fetchAttachmentBlob).not.toHaveBeenCalled();
+  });
+
+  it('saves into Downloads on an APK that can, and says under what name', async () => {
+    native = true;
+    hasFileActions = true;
+    const { saveAttachment } = await import('./openAttachment');
+
+    await expect(saveAttachment('msg-1', PDF)).resolves.toEqual({
+      kind: 'saved',
+      name: '247201_002657536.pdf',
+    });
+    expect(saveFile).toHaveBeenCalledWith(
+      expect.objectContaining({ filename: '247201_002657536.pdf', authorization: 'jwt-token' }),
+    );
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it('still opens the viewer on a tap, not a save, on an APK that can save', async () => {
+    native = true;
+    hasFileActions = true;
+    const { openAttachment } = await import('./openAttachment');
+
+    await openAttachment('msg-1', PDF);
+
+    expect(openFile).toHaveBeenCalledTimes(1);
+    expect(saveFile).not.toHaveBeenCalled();
+  });
+
+  it('shares through the shell on Android and through the Web Share API elsewhere', async () => {
+    native = true;
+    hasFileActions = true;
+    const { shareAttachment, canShareAttachment } = await import('./openAttachment');
+    expect(canShareAttachment(PDF)).toBe(true);
+    await shareAttachment('msg-1', PDF);
+    expect(shareFile).toHaveBeenCalledTimes(1);
+    expect(fetchAttachmentBlob).not.toHaveBeenCalled();
+
+    native = false;
+    const share = vi.fn(async () => undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    await shareAttachment('msg-1', PDF, new Blob(['cached'], { type: 'application/pdf' }));
+    expect(fetchAttachmentBlob).not.toHaveBeenCalled();
+    expect(share).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '247201_002657536.pdf', files: [expect.any(File)] }),
+    );
+  });
+
+  it('treats a dismissed share sheet as done, not as a failure', async () => {
+    const share = vi.fn(async () => {
+      throw new DOMException('Share canceled', 'AbortError');
+    });
+    Object.assign(navigator, { share, canShare: () => true });
+    const { shareAttachment } = await import('./openAttachment');
+
+    await expect(shareAttachment('msg-1', PDF, new Blob(['x']))).resolves.toBeUndefined();
+  });
+
+  it('hides Share where neither the shell nor the browser can share files', async () => {
+    native = true;
+    const { canShareAttachment } = await import('./openAttachment');
+    expect(canShareAttachment(PDF)).toBe(false); // APK older than shareFile
+
+    native = false;
+    Object.assign(navigator, { canShare: () => false });
+    expect(canShareAttachment(PDF)).toBe(false);
+  });
+
+  it('opens an image tab on the server URL behind the gateway, the bytes otherwise', async () => {
+    const { imageTabUrl } = await import('./openAttachment');
+    token = null;
+    expect(imageTabUrl('msg-1', PDF, null)).toBe(
+      `${window.location.origin}/api/messages/msg-1/attachments/att-1`,
+    );
+    token = 'jwt-token';
+    expect(imageTabUrl('msg-1', PDF, 'blob:maily/1')).toBe('blob:maily/1');
+    expect(imageTabUrl('msg-1', PDF, null)).toBeNull();
   });
 });

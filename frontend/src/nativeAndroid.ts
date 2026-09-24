@@ -46,6 +46,10 @@ interface MailyNativePlugin {
   disablePush(): Promise<{ token: string | null }>;
   pushStatus(): Promise<NativePushStatus>;
   openFile(options: NativeFileRequest): Promise<void>;
+  /** APK 0.5.0+. */
+  shareFile?(options: NativeFileRequest): Promise<void>;
+  /** APK 0.5.0+. `savedAs` null: Android < 10, the share sheet was offered instead. */
+  saveFile?(options: NativeFileRequest): Promise<{ savedAs: string | null }>;
 }
 
 /**
@@ -115,6 +119,33 @@ export async function openNativeFile(request: NativeFileRequest): Promise<boolea
   if (!plugin?.openFile) return false;
   await plugin.openFile(request);
   return true;
+}
+
+/** Whether this shell can put an attachment on the share sheet (APK 0.5.0+). */
+export function canShareNativeFile(): boolean {
+  return typeof nativePlugin()?.shareFile === 'function';
+}
+
+/**
+ * Ask the shell to download one attachment and offer it to Android's share sheet.
+ * Returns false on a shell without the method (an APK older than the web app).
+ */
+export async function shareNativeFile(request: NativeFileRequest): Promise<boolean> {
+  const plugin = nativePlugin();
+  if (!plugin?.shareFile) return false;
+  await plugin.shareFile(request);
+  return true;
+}
+
+/**
+ * Ask the shell to save one attachment into the phone's Downloads. Resolves the name it
+ * was saved under; null when the shell offered the share sheet instead (Android < 10);
+ * `false` on a shell without the method.
+ */
+export async function saveNativeFile(request: NativeFileRequest): Promise<string | null | false> {
+  const plugin = nativePlugin();
+  if (!plugin?.saveFile) return false;
+  return (await plugin.saveFile(request)).savedAs;
 }
 
 /**

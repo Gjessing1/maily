@@ -2,9 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentBlob } from '../api/client';
 import { isNativeAndroid } from '../nativeAndroid';
-import { openAttachment, saveAttachment, saveBlob } from '../ui/openAttachment';
+import {
+  canShareAttachment,
+  imageTabUrl,
+  openAttachment,
+  saveAttachment,
+  shareAttachment,
+} from '../ui/openAttachment';
+import { showNotice } from '../state/undo';
 import { Spinner } from '../ui/Spinner';
-import { DownloadIcon, ShareIcon } from '../ui/icons';
+import { DownloadIcon, NewWindowIcon, ShareIcon } from '../ui/icons';
 import { useOnlineStatus } from '../state/connectivity';
 
 function humanSize(bytes: number | null): string {
@@ -28,13 +35,21 @@ export function isImageAttachment(a: AttachmentDto): boolean {
  * a message never silently pulls many MB (attachment bytes stay on-demand, ARCHITECTURE §4). */
 const AUTOLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
+const ACTION =
+  'shrink-0 rounded-full p-2 text-muted active:bg-surface-2 active:text-accent disabled:opacity-40';
+
 /**
- * Inline preview for a received image attachment, with Gmail-style quick actions:
- * a thumbnail (tap to open full-size), Share (native share sheet → SMS, mail, Photos,
- * … via the Web Share API where supported) and Download. Bytes are fetched lazily — on
- * mount for reasonably-sized images, otherwise on a "Show preview" tap — then reused for
- * the image, the share File and the download (one fetch, no re-download per action). The
- * Android shell is the exception: it fetches the file itself (see `openAttachment`).
+ * Inline preview for a received image attachment. Tapping the image opens it full-size
+ * where the platform shows images best — a browser tab on the web, the phone's own
+ * viewer (Photos, Gallery, …) in the Android app — and the row below offers the explicit
+ * choices: Open, Share (the share sheet → Messages, Drive, a chat…) and Download (to disk;
+ * the phone's Downloads in the Android app).
+ *
+ * The two shells get there differently, which `ui/openAttachment` hides: a browser reuses
+ * the bytes fetched for the preview (one fetch, no re-download per action), while the
+ * Android shell fetches the file natively, since a WebView can neither open a popup nor
+ * save or share a `blob:`. Bytes are fetched lazily — on mount for reasonably-sized
+ * images, otherwise on a "Show preview" tap.
  */
 export function ImageAttachment({
   messageId,
@@ -50,6 +65,8 @@ export function ImageAttachment({
   const [error, setError] = useState(false);
   const objectUrl = useRef<string | null>(null);
   const filename = attachment.filename || 'image';
+  const native = isNativeAndroid();
+  const canShare = canShareAttachment(attachment);
 
   async function load() {
     if (!online || busy || objectUrl.current) return;
@@ -77,54 +94,67 @@ export function ImageAttachment({
     // so the auto-load + object-URL cleanup runs once for this attachment's lifetime.
   }, []);
 
-  // Routed through the platform helpers so the Android shell gets its native path: a
-  // WebView can save no `blob:`, which left the button below dead in the APK. Both are
-  // enabled before the preview has loaded — they fetch the bytes when we hold none.
-  async function run(action: typeof openAttachment): Promise<void> {
+  /** Run one platform action, turning a failure into a visible message. */
+  async function run(action: () => Promise<void>, failure: string): Promise<void> {
     if (!online) return;
     try {
-      await action(messageId, attachment, blob);
-    } catch {
-      setError(true);
+      await action();
+    } catch (e) {
+      showNotice((e as Error).message || failure);
     }
   }
 
-  /** The Download button: to disk, never to a tab — the thumbnail is already the view. */
-  const download = () => run(saveAttachment);
+  /** Where a browser tab should go to show the image; null in the Android app. */
+  const tabUrl = native ? null : imageTabUrl(messageId, attachment, url);
 
-  // The Web Share API (mobile, installed PWA) opens the OS share sheet; if file sharing
-  // isn't available we fall back to a plain download so the action always does something.
-  const canShareFiles =
-    typeof navigator !== 'undefined' && typeof navigator.canShare === 'function';
-  async function share() {
-    if (!blob) return;
-    const file = new File([blob], filename, { type: attachment.mimeType || blob.type });
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: filename });
+  /**
+   * Open full-size. In a browser this is a synchronous `window.open` inside the click, so
+   * no popup blocker objects; when no tab URL exists yet (in-app login, preview not
+   * loaded) it falls back to the general attachment handling, which downloads.
+   */
+  function openFull() {
+    if (tabUrl) {
+      // Not the `noopener` feature: with it, `window.open` returns null even on success,
+      // which is indistinguishable from a blocked popup.
+      const tab = window.open(tabUrl, '_blank');
+      if (tab) {
+        tab.opener = null;
         return;
       }
-    } catch {
-      // User cancelled, or the platform rejected the share — fall through to download.
     }
-    saveBlob(blob, filename);
+    void run(() => openAttachment(messageId, attachment, blob), 'Couldn’t open this image');
+  }
+
+  function share() {
+    void run(() => shareAttachment(messageId, attachment, blob), 'Couldn’t share this image');
+  }
+
+  function download() {
+    void run(async () => {
+      const outcome = await saveAttachment(messageId, attachment, blob);
+      // A browser shows its own download UI; the Android save is otherwise silent.
+      if (outcome.kind === 'saved') showNotice(`Saved to Downloads as ${outcome.name}`);
+    }, 'Couldn’t download this image');
   }
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
       {url ? (
         <a
-          href={url}
+          // A real link where there is a tab to open, so the browser's own affordances
+          // (middle-click, "open in new tab", long-press) work on it too.
+          href={tabUrl ?? url}
           target="_blank"
           rel="noopener"
           onClick={(event) => {
-            // The APK's WebView opens no popup window (see openAttachment), so the tap
-            // would do nothing there; let Android open the image with a real app.
-            if (!isNativeAndroid()) return;
+            // The APK's WebView opens no popup window, so hand the image to the phone's
+            // viewer instead.
+            if (!native) return;
             event.preventDefault();
-            void run(openAttachment);
+            openFull();
           }}
           className="block bg-surface-2"
+          aria-label={`Open ${filename}`}
         >
           <img
             src={url}
@@ -150,30 +180,40 @@ export function ImageAttachment({
           )}
         </button>
       )}
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div className="flex items-center gap-1 px-3 py-2">
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{filename}</span>
           <span className="block text-xs text-faint">{humanSize(attachment.sizeBytes)}</span>
         </span>
-        {canShareFiles && (
+        <button
+          type="button"
+          onClick={openFull}
+          disabled={!online}
+          aria-label="Open"
+          title={native ? 'Open in viewer' : 'Open in new tab'}
+          className={ACTION}
+        >
+          <NewWindowIcon className="size-5" />
+        </button>
+        {canShare && (
           <button
             type="button"
-            onClick={() => void share()}
-            disabled={!blob}
+            onClick={share}
+            disabled={!online}
             aria-label="Share"
             title="Share"
-            className="shrink-0 rounded-full p-2 text-muted active:bg-surface-2 active:text-accent disabled:opacity-40"
+            className={ACTION}
           >
             <ShareIcon className="size-5" />
           </button>
         )}
         <button
           type="button"
-          onClick={() => void download()}
+          onClick={download}
           disabled={!online}
           aria-label="Download"
           title="Download"
-          className="shrink-0 rounded-full p-2 text-muted active:bg-surface-2 active:text-accent disabled:opacity-40"
+          className={ACTION}
         >
           <DownloadIcon className="size-5" />
         </button>

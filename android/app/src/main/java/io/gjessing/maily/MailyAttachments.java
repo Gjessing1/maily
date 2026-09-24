@@ -1,14 +1,20 @@
 package io.gjessing.maily;
 
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
 import androidx.core.content.FileProvider;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,7 +24,8 @@ import java.net.URL;
 import javax.net.ssl.HttpsURLConnection;
 
 /**
- * Downloading one attachment and handing it to an app that can open it.
+ * Downloading one attachment and handing it on: to an app that can open it, to the share
+ * sheet, or into the phone's Downloads.
  *
  * The shell has to do this, because the WebView cannot. `window.open` opens no popup
  * (Capacitor leaves `setSupportMultipleWindows` off, the same trap that once broke links
@@ -60,6 +67,87 @@ final class MailyAttachments {
         String type = resolveMimeType(mimeType, name);
         File file = download(context, url, name, authorization);
         view(context, file, type);
+    }
+
+    /**
+     * Fetch the attachment and offer it to the share sheet (Messages, Drive, a chat…).
+     * Blocking — the caller owns the thread.
+     */
+    static void share(Context context, String url, String filename, String mimeType, String authorization)
+        throws IOException {
+        String name = safeFilename(filename);
+        String type = resolveMimeType(mimeType, name);
+        File file = download(context, url, name, authorization);
+        send(context, file, type);
+    }
+
+    /**
+     * Fetch the attachment and save a copy to the phone's Downloads, where Files and the
+     * gallery can find it — the copy in the app cache is swept within a day. Blocking.
+     *
+     * @return the name it was saved under (the system may de-duplicate it), or null when
+     *     this Android predates scoped Downloads (API 29) and the share sheet was offered
+     *     instead, so the user can still "Save to…" somewhere.
+     */
+    static String save(Context context, String url, String filename, String mimeType, String authorization)
+        throws IOException {
+        String name = safeFilename(filename);
+        String type = resolveMimeType(mimeType, name);
+        File file = download(context, url, name, authorization);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Writing to shared storage below Android 10 needs a storage permission this
+            // app does not hold; the share sheet reaches Files/Drive without one.
+            send(context, file, type);
+            return null;
+        }
+        return saveToDownloads(context, file, name, type);
+    }
+
+    /** Copy a downloaded file into MediaStore's Downloads collection (Android 10+). */
+    private static String saveToDownloads(Context context, File file, String name, String type)
+        throws IOException {
+        ContentResolver resolver = context.getContentResolver();
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, type);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+        // Hidden from other apps until the bytes are all there.
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri target = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (target == null) throw new IOException("Could not save to Downloads");
+        try (InputStream in = new FileInputStream(file);
+             OutputStream out = resolver.openOutputStream(target)) {
+            if (out == null) throw new IOException("Could not save to Downloads");
+            copy(in, out);
+        } catch (IOException error) {
+            resolver.delete(target, null, null);
+            throw error;
+        }
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        resolver.update(target, done, null, null);
+        return savedName(resolver, target, name);
+    }
+
+    /** The display name MediaStore settled on — "photo (1).jpg" when "photo.jpg" existed. */
+    private static String savedName(ContentResolver resolver, Uri uri, String fallback) {
+        try (android.database.Cursor cursor = resolver.query(
+            uri, new String[] { MediaStore.MediaColumns.DISPLAY_NAME }, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String name = cursor.getString(0);
+                if (name != null && !name.isEmpty()) return name;
+            }
+        } catch (RuntimeException error) {
+            Log.d(TAG, "could not read back the saved name", error);
+        }
+        return fallback;
+    }
+
+    private static void copy(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[16 * 1024];
+        for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
+            out.write(buffer, 0, read);
+        }
     }
 
     /** Stream the response to a private cache file, never into memory. */
@@ -105,10 +193,7 @@ final class MailyAttachments {
 
             try (InputStream in = connection.getInputStream();
                  OutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[16 * 1024];
-                for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
-                    out.write(buffer, 0, read);
-                }
+                copy(in, out);
             }
         } catch (IOException error) {
             // A half-written file would open as a corrupt document.
@@ -135,6 +220,12 @@ final class MailyAttachments {
 
         // Nothing opens the type: let the user send it somewhere that can (Files, Drive,
         // a chat), which is still a file in their hands rather than a dead tap.
+        send(context, file, mimeType);
+    }
+
+    /** Offer the file to the share sheet. */
+    private static void send(Context context, File file, String mimeType) throws IOException {
+        Uri uri = FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
         Intent send = new Intent(Intent.ACTION_SEND)
             .setType(mimeType)
             .putExtra(Intent.EXTRA_STREAM, uri)
@@ -144,7 +235,7 @@ final class MailyAttachments {
         try {
             context.startActivity(chooser);
         } catch (ActivityNotFoundException nothing) {
-            throw new IOException("No app on this phone can open this file");
+            throw new IOException("No app on this phone can take this file");
         }
     }
 
