@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { NARROW_COLUMN, SETTINGS_COLUMN } from '../ui/layout';
 import { useNavigate } from 'react-router-dom';
 import type {
   AccountDto,
@@ -1316,20 +1317,24 @@ export function Settings() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => (drilled ? setSection(null) : navigate(-1))}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label={drilled ? 'Back to settings' : 'Back'}
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 truncate text-lg font-semibold">
-          {drilled && opened ? opened.label : 'Settings'}
-        </h1>
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${SETTINGS_COLUMN} flex items-center gap-1 px-2 py-2`}>
+          <button
+            onClick={() => (drilled ? setSection(null) : navigate(-1))}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label={drilled ? 'Back to settings' : 'Back'}
+          >
+            <BackIcon />
+          </button>
+          <h1 className="flex-1 truncate text-lg font-semibold">
+            {drilled && opened ? opened.label : 'Settings'}
+          </h1>
+        </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <div
+        className={`${SETTINGS_COLUMN} flex min-h-0 flex-1 ${wide ? 'min-[72rem]:border-x min-[72rem]:border-border' : ''}`}
+      >
         {!drilled && (
           <nav
             aria-label="Settings sections"
@@ -1360,7 +1365,7 @@ export function Settings() {
           <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
             {/* Capped so a wide window doesn't stretch rows and hint text across the
                 whole pane; a no-op at phone widths. */}
-            <div className="mx-auto w-full max-w-2xl">
+            <div className={NARROW_COLUMN}>
               {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
               {current.id === 'appearance' && <AppearanceSection />}
               {current.id === 'list' && <ListSection />}

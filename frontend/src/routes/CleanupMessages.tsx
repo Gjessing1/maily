@@ -10,6 +10,7 @@
  * and intersects them with whatever scope we send, so a stale/protected id is silently dropped.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { NARROW_COLUMN } from '../ui/layout';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { CleanupExecuteRequest, CleanupMessageDto } from '@maily/shared';
 import { api } from '../api/client';
@@ -311,30 +312,32 @@ export function CleanupMessages() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 text-fg active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
-        <div className="min-w-0 flex-1 px-2">
-          <h1 className="truncate text-lg font-semibold">{title}</h1>
-          <p className="truncate text-xs text-faint">
-            {SLICE_LABELS[slice] ?? 'Cleanup'}
-            {!loading && ` · ${total.toLocaleString()} message${total === 1 ? '' : 's'}`}
-          </p>
-        </div>
-        {actionable && !loading && messages.length > 0 && exec === 'idle' && (
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${NARROW_COLUMN} flex items-center gap-1 px-2 py-2`}>
           <button
-            type="button"
-            onClick={allChecked ? deselectAll : selectAll}
-            className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-accent active:bg-surface-2"
+            onClick={() => navigate(-1)}
+            className="rounded-full p-2 text-fg active:bg-surface-2"
+            aria-label="Back"
           >
-            {allChecked ? 'Deselect all' : 'Select all'}
+            <BackIcon />
           </button>
-        )}
+          <div className="min-w-0 flex-1 px-2">
+            <h1 className="truncate text-lg font-semibold">{title}</h1>
+            <p className="truncate text-xs text-faint">
+              {SLICE_LABELS[slice] ?? 'Cleanup'}
+              {!loading && ` · ${total.toLocaleString()} message${total === 1 ? '' : 's'}`}
+            </p>
+          </div>
+          {actionable && !loading && messages.length > 0 && exec === 'idle' && (
+            <button
+              type="button"
+              onClick={allChecked ? deselectAll : selectAll}
+              className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-accent active:bg-surface-2"
+            >
+              {allChecked ? 'Deselect all' : 'Select all'}
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">

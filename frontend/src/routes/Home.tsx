@@ -20,6 +20,7 @@ import { useMediaQuery } from '../ui/useMediaQuery';
 import { usePullToRefresh } from '../ui/usePullToRefresh';
 import { PullToRefreshIndicator } from '../ui/PullToRefreshIndicator';
 import { Spinner } from '../ui/Spinner';
+import { LIST_COLUMN, pinnedRight, SPLIT_FRAME } from '../ui/layout';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 import {
   ArchiveIcon,
@@ -329,7 +330,7 @@ export function Home() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
         {selectionMode ? (
-          <div className="flex min-h-14 items-center gap-1 px-2 py-2">
+          <div className={`${LIST_COLUMN} flex min-h-14 items-center gap-1 px-2 py-2`}>
             <button
               onClick={clearSelect}
               className="rounded-full p-2 text-fg active:bg-surface-2"
@@ -370,7 +371,7 @@ export function Home() {
             </button>
           </div>
         ) : (
-          <div className="flex min-h-14 items-center gap-1 px-2 py-2">
+          <div className={`${LIST_COLUMN} flex min-h-14 items-center gap-1 px-2 py-2`}>
             {/* On mobile, Folders/Search live in the bottom bar; keep them up top on wide screens. */}
             {isWide && (
               <button
@@ -415,64 +416,66 @@ export function Home() {
           refreshing={pull.refreshing}
           dragging={pull.dragging}
         />
-        {error && <p className="px-4 py-2 text-sm text-danger">Couldn’t refresh: {error}</p>}
+        <div className={LIST_COLUMN}>
+          {error && <p className="px-4 py-2 text-sm text-danger">Couldn’t refresh: {error}</p>}
 
-        {loading ? (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        ) : conversations.length > 0 ? (
-          <>
-            {conversations.map((c, i) => {
-              // Render the latest message as the conversation row, but reflect the
-              // whole thread's state: unread if ANY member is unread, flagged if any
-              // is flagged. Multi-sender threads show the participant list as the name.
-              const repr = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
-              const id = c.latest.id;
-              const displayName =
-                !showRecipient && c.count > 1 && c.participants.length > 1
-                  ? c.participants.join(', ')
-                  : undefined;
-              return (
-                <Fragment key={id}>
-                  {showSections && i === 0 && <SectionLabel>Unread</SectionLabel>}
-                  {showSections && i === unreadCount && (
-                    <SectionLabel divider>Everything else</SectionLabel>
-                  )}
-                  <MessageRow
-                    message={repr}
-                    onDelete={handleDelete}
-                    onToggleRead={handleToggleRead}
-                    onToggleFlag={handleToggleFlag}
-                    readOnly={!online}
-                    isWide={isWide}
-                    swipeRight={prefs.swipeRight}
-                    swipeLeft={prefs.swipeLeft}
-                    to={splitMode ? selectTo(id) : undefined}
-                    selected={splitMode && !!selectedId && c.ids.includes(selectedId)}
-                    selectionMode={selectionMode}
-                    checked={selectedIds.has(id)}
-                    onEnterSelect={online ? enterSelect : undefined}
-                    onToggleSelect={online ? toggleSelect : undefined}
-                    onContextMenu={online ? openMenu : undefined}
-                    showRecipient={showRecipient}
-                    accountTag={accountTagFor(c.latest.accountId)}
-                    threadCount={c.count}
-                    displayName={displayName}
-                  />
-                </Fragment>
-              );
-            })}
-            <div ref={sentinel} className="flex justify-center py-6">
-              {refreshing && hasMore && <Spinner />}
+          {loading ? (
+            <div className="flex justify-center py-16">
+              <Spinner />
             </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
-            <p>No messages here.</p>
-            {refreshing && <Spinner />}
-          </div>
-        )}
+          ) : conversations.length > 0 ? (
+            <>
+              {conversations.map((c, i) => {
+                // Render the latest message as the conversation row, but reflect the
+                // whole thread's state: unread if ANY member is unread, flagged if any
+                // is flagged. Multi-sender threads show the participant list as the name.
+                const repr = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
+                const id = c.latest.id;
+                const displayName =
+                  !showRecipient && c.count > 1 && c.participants.length > 1
+                    ? c.participants.join(', ')
+                    : undefined;
+                return (
+                  <Fragment key={id}>
+                    {showSections && i === 0 && <SectionLabel>Unread</SectionLabel>}
+                    {showSections && i === unreadCount && (
+                      <SectionLabel divider>Everything else</SectionLabel>
+                    )}
+                    <MessageRow
+                      message={repr}
+                      onDelete={handleDelete}
+                      onToggleRead={handleToggleRead}
+                      onToggleFlag={handleToggleFlag}
+                      readOnly={!online}
+                      isWide={isWide}
+                      swipeRight={prefs.swipeRight}
+                      swipeLeft={prefs.swipeLeft}
+                      to={splitMode ? selectTo(id) : undefined}
+                      selected={splitMode && !!selectedId && c.ids.includes(selectedId)}
+                      selectionMode={selectionMode}
+                      checked={selectedIds.has(id)}
+                      onEnterSelect={online ? enterSelect : undefined}
+                      onToggleSelect={online ? toggleSelect : undefined}
+                      onContextMenu={online ? openMenu : undefined}
+                      showRecipient={showRecipient}
+                      accountTag={accountTagFor(c.latest.accountId)}
+                      threadCount={c.count}
+                      displayName={displayName}
+                    />
+                  </Fragment>
+                );
+              })}
+              <div ref={sentinel} className="flex justify-center py-6">
+                {refreshing && hasMore && <Spinner />}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
+              <p>No messages here.</p>
+              {refreshing && <Spinner />}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
@@ -480,7 +483,11 @@ export function Home() {
   return (
     <div className="h-full">
       {splitMode ? (
-        <div className={`flex h-full ${prefs.readingPane === 'right' ? 'flex-row' : 'flex-col'}`}>
+        <div
+          className={`${SPLIT_FRAME} flex h-full ${
+            prefs.readingPane === 'right' ? 'flex-row' : 'flex-col'
+          } min-[120rem]:border-x min-[120rem]:border-border`}
+        >
           <div
             className={
               prefs.readingPane === 'right'
@@ -518,7 +525,10 @@ export function Home() {
         <Link
           to="/compose"
           state={{ fresh: true }}
-          className="fixed bottom-[calc(1.25rem+var(--app-safe-area-bottom))] right-5 z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
+          // Pinned to the content's right edge, not the window's: on an ultrawide the
+          // window edge is far from the centred list.
+          style={{ right: pinnedRight(splitMode ? 120 : 64) }}
+          className="fixed bottom-[calc(1.25rem+var(--app-safe-area-bottom))] z-10 flex size-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition active:scale-95"
           aria-label="Compose"
         >
           <PencilIcon />

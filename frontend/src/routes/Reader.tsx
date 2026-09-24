@@ -45,6 +45,7 @@ import { fullDate, senderName } from '../ui/format';
 import { closePopout, isPopout, openPopout, usePopoutCapable } from '../ui/popout';
 import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
+import { READING_COLUMN } from '../ui/layout';
 
 /**
  * Message reader body. Driven by an explicit `id` + `onClose` so it works both as
@@ -305,274 +306,278 @@ export function ReaderView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        {!embedded && (
-          <button
-            onClick={onClose}
-            className="rounded-full p-2 active:bg-surface-2"
-            aria-label={popout ? 'Close window' : 'Back'}
-          >
-            {popout ? <CloseIcon /> : <BackIcon />}
-          </button>
-        )}
-        {/* In the split pane the message can feel cramped; offer a one-tap jump to the
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${READING_COLUMN} flex items-center gap-1 px-2 py-2`}>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label={popout ? 'Close window' : 'Back'}
+            >
+              {popout ? <CloseIcon /> : <BackIcon />}
+            </button>
+          )}
+          {/* In the split pane the message can feel cramped; offer a one-tap jump to the
             full-screen reader (the list collapses, the message gets the whole width). */}
-        {embedded && id && (
-          <button
-            onClick={() => navigate(`/m/${id}`)}
-            className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Open full screen"
-          >
-            <ExpandIcon className="text-fg" />
-          </button>
-        )}
-        {/* Detach the message into its own window so it can sit beside a reply being
+          {embedded && id && (
+            <button
+              onClick={() => navigate(`/m/${id}`)}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Open full screen"
+            >
+              <ExpandIcon className="text-fg" />
+            </button>
+          )}
+          {/* Detach the message into its own window so it can sit beside a reply being
             written in the main window. Blocked popups fall back to the normal route. */}
-        {canPopout && id && (
-          <button
-            onClick={() => {
-              if (!openPopout(`/m/${id}`, `m:${id}`)) navigate(`/m/${id}`);
-            }}
-            className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Open in new window"
-            title="Open in new window"
-          >
-            <NewWindowIcon className="text-fg" />
-          </button>
-        )}
-        <div className="flex-1" />
-        {isTrashed ? (
-          /* Trash toolbar: the message is awaiting disposal, so the only actions that
+          {canPopout && id && (
+            <button
+              onClick={() => {
+                if (!openPopout(`/m/${id}`, `m:${id}`)) navigate(`/m/${id}`);
+              }}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Open in new window"
+              title="Open in new window"
+            >
+              <NewWindowIcon className="text-fg" />
+            </button>
+          )}
+          <div className="flex-1" />
+          {isTrashed ? (
+            /* Trash toolbar: the message is awaiting disposal, so the only actions that
              make sense are the two disposal outcomes — labelled, not icon soup. */
-          <>
-            <button
-              onClick={restore}
-              disabled={!online || restoring || deletingForever}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-accent active:bg-surface-2 disabled:opacity-50"
-            >
-              <InboxIcon className="size-4" />
-              {restoring ? 'Restoring…' : 'Restore to Inbox'}
-            </button>
-            <button
-              onClick={() => setConfirmForever(true)}
-              disabled={!online || restoring || deletingForever}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
-            >
-              <TrashIcon className="size-4" />
-              {deletingForever ? 'Deleting…' : 'Delete forever'}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={toggleSeen}
-              disabled={!online}
-              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-              aria-label={seen ? 'Mark as unread' : 'Mark as read'}
-            >
-              {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
-            </button>
-            <button
-              onClick={toggleStar}
-              disabled={!online}
-              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-              aria-label="Flag"
-            >
-              <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
-            </button>
-            <button
-              onClick={() => setAddToCalendar(true)}
-              disabled={!online}
-              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-              aria-label="Add to calendar"
-            >
-              <CalendarIcon className="text-fg" />
-            </button>
-            <button
-              onClick={archive}
-              disabled={!online}
-              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-              aria-label="Archive"
-            >
-              <ArchiveIcon className="text-fg" />
-            </button>
-            <button
-              onClick={() => setConfirmDelete(true)}
-              disabled={!online}
-              className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-              aria-label="Delete"
-            >
-              <TrashIcon className="text-fg" />
-            </button>
-            {isDraft ? (
+            <>
               <button
-                onClick={editDraft}
+                onClick={restore}
+                disabled={!online || restoring || deletingForever}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-accent active:bg-surface-2 disabled:opacity-50"
+              >
+                <InboxIcon className="size-4" />
+                {restoring ? 'Restoring…' : 'Restore to Inbox'}
+              </button>
+              <button
+                onClick={() => setConfirmForever(true)}
+                disabled={!online || restoring || deletingForever}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-danger active:bg-surface-2 disabled:opacity-50"
+              >
+                <TrashIcon className="size-4" />
+                {deletingForever ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={toggleSeen}
                 disabled={!online}
                 className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                aria-label="Edit draft"
+                aria-label={seen ? 'Mark as unread' : 'Mark as read'}
               >
-                <PencilIcon className="text-accent" />
+                {seen ? <MailIcon className="text-fg" /> : <MailOpenIcon className="text-accent" />}
               </button>
-            ) : (
-              <>
+              <button
+                onClick={toggleStar}
+                disabled={!online}
+                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                aria-label="Flag"
+              >
+                <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
+              </button>
+              <button
+                onClick={() => setAddToCalendar(true)}
+                disabled={!online}
+                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                aria-label="Add to calendar"
+              >
+                <CalendarIcon className="text-fg" />
+              </button>
+              <button
+                onClick={archive}
+                disabled={!online}
+                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                aria-label="Archive"
+              >
+                <ArchiveIcon className="text-fg" />
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                disabled={!online}
+                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                aria-label="Delete"
+              >
+                <TrashIcon className="text-fg" />
+              </button>
+              {isDraft ? (
                 <button
-                  onClick={reply}
+                  onClick={editDraft}
                   disabled={!online}
                   className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                  aria-label="Reply"
+                  aria-label="Edit draft"
                 >
-                  <ReplyIcon className="text-fg" />
+                  <PencilIcon className="text-accent" />
                 </button>
-                <button
-                  onClick={replyAll}
-                  disabled={!online}
-                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                  aria-label="Reply all"
-                >
-                  <ReplyAllIcon className="text-fg" />
-                </button>
-                <button
-                  onClick={forward}
-                  disabled={!online}
-                  className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                  aria-label="Forward"
-                >
-                  <ForwardIcon className="text-fg" />
-                </button>
-              </>
-            )}
-          </>
-        )}
+              ) : (
+                <>
+                  <button
+                    onClick={reply}
+                    disabled={!online}
+                    className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                    aria-label="Reply"
+                  >
+                    <ReplyIcon className="text-fg" />
+                  </button>
+                  <button
+                    onClick={replyAll}
+                    disabled={!online}
+                    className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                    aria-label="Reply all"
+                  >
+                    <ReplyAllIcon className="text-fg" />
+                  </button>
+                  <button
+                    onClick={forward}
+                    disabled={!online}
+                    className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
+                    aria-label="Forward"
+                  >
+                    <ForwardIcon className="text-fg" />
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
-        {loading ? (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        ) : error && !detail ? (
-          <p className="px-4 py-8 text-center text-muted">
-            {online
-              ? 'Couldn’t load this message.'
-              : 'This message body was not downloaded for offline reading.'}
-          </p>
-        ) : detail && threaded ? (
-          <article>
-            <div className="px-4 pb-3 pt-3">
-              <h1 className="text-xl font-semibold leading-snug">
-                {detail.subject || '(no subject)'}
-              </h1>
-              <p className="mt-1 text-xs text-faint">{threadMembers.length} messages</p>
+        <div className={READING_COLUMN}>
+          {loading ? (
+            <div className="flex justify-center py-16">
+              <Spinner />
             </div>
-            <ConversationThread
-              members={threadMembers}
-              openId={id}
-              accounts={accounts ?? []}
-              readOnly={!online}
-            />
-            <div className="h-12" />
-          </article>
-        ) : detail ? (
-          <article>
-            <div className="px-4 pb-4 pt-3">
-              <h1 className="text-xl font-semibold leading-snug">
-                {detail.subject || '(no subject)'}
-              </h1>
-              {detail.localOnly && (
-                <span
-                  className="mt-2 inline-block rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-faint"
-                  title="Stored on this server only — no longer on the mail provider"
-                >
-                  Local copy only
-                </span>
-              )}
-              <div className="mt-3 flex w-full items-center gap-3">
-                <SenderAvatar
-                  name={detail.fromName}
-                  address={detail.fromAddress}
-                  seed={detail.id}
-                  className="size-10 text-sm"
-                />
-                <button
-                  onClick={() => setDetailsOpen((o) => !o)}
-                  aria-expanded={detailsOpen}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">
-                      {senderName(detail.fromName, detail.fromAddress)}
-                    </p>
-                    <p className="truncate text-xs text-faint">
-                      {detail.to.length ? `to ${joinAddrs(detail.to)}` : ''}
-                      {detail.to.length ? ' · ' : ''}
-                      {fullDate(detail.sentAt ?? detail.receivedAt)}
-                    </p>
-                  </div>
-                  <ChevronDownIcon
-                    className={`size-4 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
+          ) : error && !detail ? (
+            <p className="px-4 py-8 text-center text-muted">
+              {online
+                ? 'Couldn’t load this message.'
+                : 'This message body was not downloaded for offline reading.'}
+            </p>
+          ) : detail && threaded ? (
+            <article>
+              <div className="px-4 pb-3 pt-3">
+                <h1 className="text-xl font-semibold leading-snug">
+                  {detail.subject || '(no subject)'}
+                </h1>
+                <p className="mt-1 text-xs text-faint">{threadMembers.length} messages</p>
+              </div>
+              <ConversationThread
+                members={threadMembers}
+                openId={id}
+                accounts={accounts ?? []}
+                readOnly={!online}
+              />
+              <div className="h-12" />
+            </article>
+          ) : detail ? (
+            <article>
+              <div className="px-4 pb-4 pt-3">
+                <h1 className="text-xl font-semibold leading-snug">
+                  {detail.subject || '(no subject)'}
+                </h1>
+                {detail.localOnly && (
+                  <span
+                    className="mt-2 inline-block rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-faint"
+                    title="Stored on this server only — no longer on the mail provider"
+                  >
+                    Local copy only
+                  </span>
+                )}
+                <div className="mt-3 flex w-full items-center gap-3">
+                  <SenderAvatar
+                    name={detail.fromName}
+                    address={detail.fromAddress}
+                    seed={detail.id}
+                    className="size-10 text-sm"
                   />
-                </button>
+                  <button
+                    onClick={() => setDetailsOpen((o) => !o)}
+                    aria-expanded={detailsOpen}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">
+                        {senderName(detail.fromName, detail.fromAddress)}
+                      </p>
+                      <p className="truncate text-xs text-faint">
+                        {detail.to.length ? `to ${joinAddrs(detail.to)}` : ''}
+                        {detail.to.length ? ' · ' : ''}
+                        {fullDate(detail.sentAt ?? detail.receivedAt)}
+                      </p>
+                    </div>
+                    <ChevronDownIcon
+                      className={`size-4 shrink-0 text-faint transition-transform ${detailsOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                </div>
+
+                {detailsOpen && (
+                  <div className="mt-3">
+                    <MessageHeaderDetails detail={detail} />
+                  </div>
+                )}
+
+                <AddSenderPrompt name={detail.fromName} address={detail.fromAddress} />
               </div>
 
-              {detailsOpen && (
-                <div className="mt-3">
-                  <MessageHeaderDetails detail={detail} />
-                </div>
-              )}
-
-              <AddSenderPrompt name={detail.fromName} address={detail.fromAddress} />
-            </div>
-
-            <div className="border-t border-border">
-              {imagesBlocked && (
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-surface px-4 py-2 text-sm">
-                  <span className="text-muted">Remote images blocked for privacy.</span>
-                  <div className="flex shrink-0 items-center gap-4">
-                    {trustDomain && (
+              <div className="border-t border-border">
+                {imagesBlocked && (
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-surface px-4 py-2 text-sm">
+                    <span className="text-muted">Remote images blocked for privacy.</span>
+                    <div className="flex shrink-0 items-center gap-4">
+                      {trustDomain && (
+                        <button
+                          onClick={() => trustImageDomain(trustDomain)}
+                          className="font-medium text-accent active:opacity-70"
+                        >
+                          Always trust {trustDomain}
+                        </button>
+                      )}
                       <button
-                        onClick={() => trustImageDomain(trustDomain)}
+                        onClick={() => setShowImages(true)}
                         className="font-medium text-accent active:opacity-70"
                       >
-                        Always trust {trustDomain}
+                        Show images
                       </button>
-                    )}
-                    <button
-                      onClick={() => setShowImages(true)}
-                      className="font-medium text-accent active:opacity-70"
-                    >
-                      Show images
-                    </button>
+                    </div>
                   </div>
-                </div>
-              )}
-              {detail.bodyHtml ? (
-                <MailHtml html={detail.bodyHtml} allowImages={allowImages} onMailto={composeTo} />
-              ) : (
-                <div className="px-4 py-3">
-                  <MailText text={detail.bodyText ?? '(no content)'} />
-                </div>
-              )}
-            </div>
-
-            {visibleAttachments.length > 0 && (
-              <div className="space-y-2 border-t border-border px-4 py-4">
-                {visibleAttachments.filter(isImageAttachment).map((a) => (
-                  <ImageAttachment key={a.id} messageId={detail.id} attachment={a} />
-                ))}
-                {visibleAttachments.some((a) => !isImageAttachment(a)) && (
-                  <div className="flex flex-wrap gap-2">
-                    {visibleAttachments
-                      .filter((a) => !isImageAttachment(a))
-                      .map((a) => (
-                        <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
-                      ))}
+                )}
+                {detail.bodyHtml ? (
+                  <MailHtml html={detail.bodyHtml} allowImages={allowImages} onMailto={composeTo} />
+                ) : (
+                  <div className="px-4 py-3">
+                    <MailText text={detail.bodyText ?? '(no content)'} />
                   </div>
                 )}
               </div>
-            )}
-            <div className="h-12" />
-          </article>
-        ) : null}
+
+              {visibleAttachments.length > 0 && (
+                <div className="space-y-2 border-t border-border px-4 py-4">
+                  {visibleAttachments.filter(isImageAttachment).map((a) => (
+                    <ImageAttachment key={a.id} messageId={detail.id} attachment={a} />
+                  ))}
+                  {visibleAttachments.some((a) => !isImageAttachment(a)) && (
+                    <div className="flex flex-wrap gap-2">
+                      {visibleAttachments
+                        .filter((a) => !isImageAttachment(a))
+                        .map((a) => (
+                          <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="h-12" />
+            </article>
+          ) : null}
+        </div>
       </main>
 
       <ConfirmDialog

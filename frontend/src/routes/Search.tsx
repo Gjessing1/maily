@@ -7,6 +7,7 @@
  * string into the canonical IR and compiles it to FTS5 + SQL (`search/query.ts`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LIST_COLUMN } from '../ui/layout';
 import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
@@ -354,169 +355,171 @@ export function Search() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        {selectionMode ? (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={clearSelect}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Cancel selection"
-            >
-              <CloseIcon />
-            </button>
-            <h1 className="flex-1 truncate text-lg font-semibold tabular-nums">
-              {selectedIds.size}
-            </h1>
-            <button
-              onClick={() => bulkMarkRead(true)}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Mark as read"
-            >
-              <MailOpenIcon />
-            </button>
-            <button
-              onClick={() => bulkMarkRead(false)}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Mark as unread"
-            >
-              <MailIcon />
-            </button>
-            <button
-              onClick={bulkArchive}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Archive"
-            >
-              <ArchiveIcon />
-            </button>
-            <button
-              onClick={bulkDelete}
-              className="rounded-full p-2 text-fg active:bg-surface-2"
-              aria-label="Delete"
-            >
-              <TrashIcon />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate(-1)}
-              className="rounded-full p-2 active:bg-surface-2"
-              aria-label="Back"
-            >
-              <BackIcon />
-            </button>
-            <div className="flex flex-1 items-center gap-2 rounded-full bg-surface px-3 py-2">
-              <SearchIcon className="size-4 text-faint" />
-              <input
-                autoFocus
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search mail"
-                autoCapitalize="off"
-                className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
-              />
-              {busy && <Spinner className="size-4" />}
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowFilters((s) => !s)}
-              aria-expanded={showFilters}
-              className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-2 text-sm font-medium active:bg-surface-2 ${
-                filtersActive ? 'text-accent' : 'text-muted'
-              }`}
-            >
-              Filters
-              <ChevronDownIcon
-                className={`size-4 transition-transform ${showFilters ? 'rotate-180' : ''}`}
-              />
-            </button>
-          </div>
-        )}
-
-        {!selectionMode && showFilters && (
-          <div className="mx-auto mt-2 flex max-w-2xl flex-col gap-2 rounded-xl border border-border bg-surface p-3">
-            <FilterField
-              label="From"
-              value={filters.from}
-              onChange={(v) => set('from', v)}
-              placeholder="name or address"
-            />
-            <FilterField
-              label="To"
-              value={filters.to}
-              onChange={(v) => set('to', v)}
-              placeholder="name or address"
-            />
-            <FilterField
-              label="Subject"
-              value={filters.subject}
-              onChange={(v) => set('subject', v)}
-              placeholder="words in the subject"
-            />
-            <FilterField
-              label="Since"
-              type="date"
-              value={filters.since}
-              onChange={(v) => set('since', v)}
-            />
-            <FilterField
-              label="Before"
-              type="date"
-              value={filters.before}
-              onChange={(v) => set('before', v)}
-            />
-            <FilterField
-              label="Attachment"
-              value={filters.filename}
-              onChange={(v) => set('filename', v)}
-              placeholder="filename contains…"
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <span className="w-24 shrink-0 text-muted">Larger than</span>
-              <select
-                value={filters.larger}
-                onChange={(e) => set('larger', e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-fg outline-none"
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${LIST_COLUMN} px-2 py-2`}>
+          {selectionMode ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={clearSelect}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Cancel selection"
               >
-                <option value="">Any size</option>
-                <option value="1M">1 MB</option>
-                <option value="5M">5 MB</option>
-                <option value="10M">10 MB</option>
-                <option value="25M">25 MB</option>
-              </select>
-            </label>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <FilterChip
-                label="Has attachment"
-                checked={filters.hasAttachment}
-                onChange={(v) => set('hasAttachment', v)}
-              />
-              <FilterChip
-                label="Unread"
-                checked={filters.unread}
-                onChange={(v) => set('unread', v)}
-              />
-              <FilterChip
-                label="Flagged"
-                checked={filters.flagged}
-                onChange={(v) => set('flagged', v)}
-              />
+                <CloseIcon />
+              </button>
+              <h1 className="flex-1 truncate text-lg font-semibold tabular-nums">
+                {selectedIds.size}
+              </h1>
+              <button
+                onClick={() => bulkMarkRead(true)}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Mark as read"
+              >
+                <MailOpenIcon />
+              </button>
+              <button
+                onClick={() => bulkMarkRead(false)}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Mark as unread"
+              >
+                <MailIcon />
+              </button>
+              <button
+                onClick={bulkArchive}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Archive"
+              >
+                <ArchiveIcon />
+              </button>
+              <button
+                onClick={bulkDelete}
+                className="rounded-full p-2 text-fg active:bg-surface-2"
+                aria-label="Delete"
+              >
+                <TrashIcon />
+              </button>
             </div>
-            {filtersActive && (
-              <div className="flex items-center justify-between gap-2 pt-1">
-                {/* Show the composed operator query — the form teaches the syntax. */}
-                <code className="min-w-0 flex-1 truncate text-xs text-faint">{query}</code>
-                <button
-                  type="button"
-                  onClick={() => setFilters(EMPTY_FILTERS)}
-                  className="shrink-0 text-xs font-medium text-accent active:opacity-80"
-                >
-                  Clear filters
-                </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate(-1)}
+                className="rounded-full p-2 active:bg-surface-2"
+                aria-label="Back"
+              >
+                <BackIcon />
+              </button>
+              <div className="flex flex-1 items-center gap-2 rounded-full bg-surface px-3 py-2">
+                <SearchIcon className="size-4 text-faint" />
+                <input
+                  autoFocus
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search mail"
+                  autoCapitalize="off"
+                  className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
+                />
+                {busy && <Spinner className="size-4" />}
               </div>
-            )}
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={() => setShowFilters((s) => !s)}
+                aria-expanded={showFilters}
+                className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-2 text-sm font-medium active:bg-surface-2 ${
+                  filtersActive ? 'text-accent' : 'text-muted'
+                }`}
+              >
+                Filters
+                <ChevronDownIcon
+                  className={`size-4 transition-transform ${showFilters ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </div>
+          )}
+
+          {!selectionMode && showFilters && (
+            <div className="mx-auto mt-2 flex max-w-2xl flex-col gap-2 rounded-xl border border-border bg-surface p-3">
+              <FilterField
+                label="From"
+                value={filters.from}
+                onChange={(v) => set('from', v)}
+                placeholder="name or address"
+              />
+              <FilterField
+                label="To"
+                value={filters.to}
+                onChange={(v) => set('to', v)}
+                placeholder="name or address"
+              />
+              <FilterField
+                label="Subject"
+                value={filters.subject}
+                onChange={(v) => set('subject', v)}
+                placeholder="words in the subject"
+              />
+              <FilterField
+                label="Since"
+                type="date"
+                value={filters.since}
+                onChange={(v) => set('since', v)}
+              />
+              <FilterField
+                label="Before"
+                type="date"
+                value={filters.before}
+                onChange={(v) => set('before', v)}
+              />
+              <FilterField
+                label="Attachment"
+                value={filters.filename}
+                onChange={(v) => set('filename', v)}
+                placeholder="filename contains…"
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <span className="w-24 shrink-0 text-muted">Larger than</span>
+                <select
+                  value={filters.larger}
+                  onChange={(e) => set('larger', e.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-fg outline-none"
+                >
+                  <option value="">Any size</option>
+                  <option value="1M">1 MB</option>
+                  <option value="5M">5 MB</option>
+                  <option value="10M">10 MB</option>
+                  <option value="25M">25 MB</option>
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <FilterChip
+                  label="Has attachment"
+                  checked={filters.hasAttachment}
+                  onChange={(v) => set('hasAttachment', v)}
+                />
+                <FilterChip
+                  label="Unread"
+                  checked={filters.unread}
+                  onChange={(v) => set('unread', v)}
+                />
+                <FilterChip
+                  label="Flagged"
+                  checked={filters.flagged}
+                  onChange={(v) => set('flagged', v)}
+                />
+              </div>
+              {filtersActive && (
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  {/* Show the composed operator query — the form teaches the syntax. */}
+                  <code className="min-w-0 flex-1 truncate text-xs text-faint">{query}</code>
+                  <button
+                    type="button"
+                    onClick={() => setFilters(EMPTY_FILTERS)}
+                    className="shrink-0 text-xs font-medium text-accent active:opacity-80"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </header>
 
       <main
@@ -524,53 +527,56 @@ export function Search() {
         onClickCapture={onListClickCapture}
         className="flex-1 overflow-y-auto no-scrollbar"
       >
-        {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}
-        {results === null ? (
-          <div className="px-6 py-16 text-center text-faint">
-            <p>Search subjects, senders, and bodies — or open Filters above.</p>
-            <p className="mt-3 text-xs leading-relaxed">
-              Operators: <code className="text-muted">from:</code>{' '}
-              <code className="text-muted">to:</code> <code className="text-muted">subject:</code>{' '}
-              <code className="text-muted">since:</code> <code className="text-muted">before:</code>{' '}
-              <code className="text-muted">has:attachment</code>{' '}
-              <code className="text-muted">filename:</code>{' '}
-              <code className="text-muted">larger:1M</code>{' '}
-              <code className="text-muted">is:unread</code>{' '}
-              <code className="text-muted">is:flagged</code>{' '}
-              <code className="text-muted">in:trash</code>
-            </p>
-          </div>
-        ) : conversations.length === 0 && !busy ? (
-          <p className="px-4 py-16 text-center text-faint">No matches.</p>
-        ) : (
-          conversations.map((c) => {
-            const m = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
-            const displayName =
-              c.count > 1 && c.participants.length > 1
-                ? c.participants.join(', ')
-                : c.count > 1
-                  ? senderName(c.latest.fromName, c.latest.fromAddress)
-                  : undefined;
-            return (
-              <MessageRow
-                key={m.id}
-                message={m}
-                onDelete={handleDelete}
-                onToggleRead={handleToggleRead}
-                onToggleFlag={handleToggleFlag}
-                isWide={isWide}
-                swipeRight={prefs.swipeRight}
-                swipeLeft={prefs.swipeLeft}
-                selectionMode={selectionMode}
-                checked={selectedIds.has(m.id)}
-                onEnterSelect={enterSelect}
-                onToggleSelect={toggleSelect}
-                threadCount={c.count}
-                displayName={displayName}
-              />
-            );
-          })
-        )}
+        <div className={LIST_COLUMN}>
+          {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}
+          {results === null ? (
+            <div className="px-6 py-16 text-center text-faint">
+              <p>Search subjects, senders, and bodies — or open Filters above.</p>
+              <p className="mt-3 text-xs leading-relaxed">
+                Operators: <code className="text-muted">from:</code>{' '}
+                <code className="text-muted">to:</code> <code className="text-muted">subject:</code>{' '}
+                <code className="text-muted">since:</code>{' '}
+                <code className="text-muted">before:</code>{' '}
+                <code className="text-muted">has:attachment</code>{' '}
+                <code className="text-muted">filename:</code>{' '}
+                <code className="text-muted">larger:1M</code>{' '}
+                <code className="text-muted">is:unread</code>{' '}
+                <code className="text-muted">is:flagged</code>{' '}
+                <code className="text-muted">in:trash</code>
+              </p>
+            </div>
+          ) : conversations.length === 0 && !busy ? (
+            <p className="px-4 py-16 text-center text-faint">No matches.</p>
+          ) : (
+            conversations.map((c) => {
+              const m = { ...c.latest, seen: !c.anyUnread, flagged: c.anyFlagged };
+              const displayName =
+                c.count > 1 && c.participants.length > 1
+                  ? c.participants.join(', ')
+                  : c.count > 1
+                    ? senderName(c.latest.fromName, c.latest.fromAddress)
+                    : undefined;
+              return (
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  onDelete={handleDelete}
+                  onToggleRead={handleToggleRead}
+                  onToggleFlag={handleToggleFlag}
+                  isWide={isWide}
+                  swipeRight={prefs.swipeRight}
+                  swipeLeft={prefs.swipeLeft}
+                  selectionMode={selectionMode}
+                  checked={selectedIds.has(m.id)}
+                  onEnterSelect={enterSelect}
+                  onToggleSelect={toggleSelect}
+                  threadCount={c.count}
+                  displayName={displayName}
+                />
+              );
+            })
+          )}
+        </div>
       </main>
     </div>
   );

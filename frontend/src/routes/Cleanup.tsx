@@ -18,6 +18,7 @@
  * queue drains.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { NARROW_COLUMN } from '../ui/layout';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
   CleanupDashboardDto,
@@ -1335,15 +1336,17 @@ export function Cleanup() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-1 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-full p-2 text-fg active:bg-surface-2"
-          aria-label="Back"
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 truncate px-2 text-lg font-semibold">Cleanup</h1>
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${NARROW_COLUMN} flex items-center gap-1 px-2 py-2`}>
+          <button
+            onClick={() => navigate(-1)}
+            className="rounded-full p-2 text-fg active:bg-surface-2"
+            aria-label="Back"
+          >
+            <BackIcon />
+          </button>
+          <h1 className="flex-1 truncate px-2 text-lg font-semibold">Cleanup</h1>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
