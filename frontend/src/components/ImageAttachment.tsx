@@ -2,17 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { AttachmentDto } from '@maily/shared';
 import { fetchAttachmentBlob } from '../api/client';
 import { isNativeAndroid } from '../nativeAndroid';
-import {
-  canShareAttachment,
-  imageTabUrl,
-  openAttachment,
-  saveAttachment,
-  shareAttachment,
-} from '../ui/openAttachment';
-import { showNotice } from '../state/undo';
+import { imageTabUrl } from '../ui/openAttachment';
+import { useAttachmentActions } from '../ui/useAttachmentActions';
 import { Spinner } from '../ui/Spinner';
 import { DownloadIcon, NewWindowIcon, ShareIcon } from '../ui/icons';
-import { useOnlineStatus } from '../state/connectivity';
 
 function humanSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -58,15 +51,15 @@ export function ImageAttachment({
   messageId: string;
   attachment: AttachmentDto;
 }) {
-  const online = useOnlineStatus();
   const [url, setUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
+  const actions = useAttachmentActions(messageId, attachment, blob);
+  const { online, canShare } = actions;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const objectUrl = useRef<string | null>(null);
   const filename = attachment.filename || 'image';
   const native = isNativeAndroid();
-  const canShare = canShareAttachment(attachment);
 
   async function load() {
     if (!online || busy || objectUrl.current) return;
@@ -94,16 +87,6 @@ export function ImageAttachment({
     // so the auto-load + object-URL cleanup runs once for this attachment's lifetime.
   }, []);
 
-  /** Run one platform action, turning a failure into a visible message. */
-  async function run(action: () => Promise<void>, failure: string): Promise<void> {
-    if (!online) return;
-    try {
-      await action();
-    } catch (e) {
-      showNotice((e as Error).message || failure);
-    }
-  }
-
   /** Where a browser tab should go to show the image; null in the Android app. */
   const tabUrl = native ? null : imageTabUrl(messageId, attachment, url);
 
@@ -122,19 +105,7 @@ export function ImageAttachment({
         return;
       }
     }
-    void run(() => openAttachment(messageId, attachment, blob), 'Couldn’t open this image');
-  }
-
-  function share() {
-    void run(() => shareAttachment(messageId, attachment, blob), 'Couldn’t share this image');
-  }
-
-  function download() {
-    void run(async () => {
-      const outcome = await saveAttachment(messageId, attachment, blob);
-      // A browser shows its own download UI; the Android save is otherwise silent.
-      if (outcome.kind === 'saved') showNotice(`Saved to Downloads as ${outcome.name}`);
-    }, 'Couldn’t download this image');
+    void actions.open();
   }
 
   return (
@@ -198,7 +169,7 @@ export function ImageAttachment({
         {canShare && (
           <button
             type="button"
-            onClick={share}
+            onClick={() => void actions.share()}
             disabled={!online}
             aria-label="Share"
             title="Share"
@@ -209,7 +180,7 @@ export function ImageAttachment({
         )}
         <button
           type="button"
-          onClick={download}
+          onClick={() => void actions.download()}
           disabled={!online}
           aria-label="Download"
           title="Download"

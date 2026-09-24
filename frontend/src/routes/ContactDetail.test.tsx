@@ -106,7 +106,7 @@ describe('ContactDetail email intelligence', () => {
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('Recent attachments')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /project.pdf/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^project\.pdf/i })).toBeInTheDocument();
     expect(screen.getByText('Communication timeline')).toBeInTheDocument();
     expect(screen.getAllByText('Project update').length).toBeGreaterThan(0);
   });
