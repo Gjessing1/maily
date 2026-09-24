@@ -48,6 +48,9 @@ import {
   grantOfflineAccess,
   hasOfflineAccess,
   isOnline,
+  isServerReachable,
+  markServerReachable,
+  markServerUnreachable,
   OFFLINE_READ_ONLY_MESSAGE,
   revokeOfflineAccess,
 } from '../state/connectivity';
@@ -101,6 +104,11 @@ function gatewayRelogin(): boolean {
   return true;
 }
 
+/** Whether an external auth gateway is known to front this deployment (see above). */
+export function isGatewayFronted(): boolean {
+  return externalAuthGateway;
+}
+
 export function getToken(): string | null {
   return token;
 }
@@ -142,6 +150,88 @@ const REQUEST_TIMEOUT_MS = 25_000;
 const AUTH_CONFIG_TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 750;
 
+/** What a request that never reached maily is reported as. */
+export const SERVER_UNREACHABLE_MESSAGE = 'Can’t reach the server';
+
+/**
+ * True when a response came from something in front of maily rather than maily itself:
+ * a tunnel or reverse proxy answering for a server that is down (Cloudflare's 52x/530,
+ * Caddy's 502), a captive portal, or anything else serving an HTML page where the API
+ * serves JSON. Maily's own errors — including its 502/503 for an upstream IMAP failure —
+ * are always JSON, so the content type is what tells the two apart.
+ */
+function isGatewayResponse(res: Response): boolean {
+  // An auth gateway's login challenge is an auth answer, handled as one by the caller.
+  if (res.status === 401 || res.status === 403) return false;
+  const type = (res.headers.get('content-type') ?? '').toLowerCase();
+  if (type.includes('application/json')) return false;
+  if (type.includes('text/html')) return true;
+  return res.status === 502 || res.status === 503 || res.status === 504 || res.status >= 520;
+}
+
+/** An error body fit to show a person: never a proxy's HTML page. */
+function errorDetail(res: Response, body: string): string {
+  if (!body || /^\s*</.test(body))
+    return `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`;
+  return body;
+}
+
+const PROBE_INTERVAL_MS = 15_000;
+let probeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * The server stopped answering: go read-only on cached mail and keep asking, cheaply,
+ * until it answers again. The public auth-config probe is the question — tiny, no token,
+ * and served by maily itself — and it also notices a gateway session that expired while
+ * the server was away. A real request that succeeds in the meantime ends the loop too.
+ */
+function serverUnreachable(): void {
+  markServerUnreachable();
+  if (probeTimer !== undefined) return;
+  const probe = async () => {
+    probeTimer = undefined;
+    if (isServerReachable()) return;
+    if (isOnline() && (await probeServer())) return;
+    probeTimer = setTimeout(() => void probe(), PROBE_INTERVAL_MS);
+  };
+  probeTimer = setTimeout(() => void probe(), PROBE_INTERVAL_MS);
+}
+
+/** One reachability check. Resolves true once the server (or its gateway) answered. */
+async function probeServer(): Promise<boolean> {
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `${API_BASE}/api/auth/config`,
+      { redirect: 'manual', cache: 'no-store' },
+      AUTH_CONFIG_TIMEOUT_MS,
+    );
+  } catch {
+    return false;
+  }
+  if (res.ok && !isGatewayResponse(res)) {
+    markServerReachable();
+    return true;
+  }
+  // The gateway is up and asking for a login: the session expired while we were away.
+  if (res.type === 'opaqueredirect' || res.status === 401 || res.status === 403) {
+    markServerReachable();
+    if (externalAuthGateway) gatewayRelogin();
+    return true;
+  }
+  return false;
+}
+
+// Coming back to the foreground is the moment someone is looking — ask right away
+// instead of waiting out the interval.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !isServerReachable() && isOnline()) {
+      void probeServer();
+    }
+  });
+}
+
 function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -177,10 +267,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     try {
       res = await fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers });
-    } catch (err2) {
-      throw new ApiError(0, err2 instanceof DOMException ? 'request timed out' : 'network error');
+    } catch {
+      // Two failures in a row with the device online: the server is not there.
+      serverUnreachable();
+      throw new ApiError(0, SERVER_UNREACHABLE_MESSAGE);
     }
   }
+
+  if (isGatewayResponse(res)) {
+    serverUnreachable();
+    throw new ApiError(res.status, SERVER_UNREACHABLE_MESSAGE);
+  }
+  markServerReachable();
 
   if (res.status === 401) {
     // Gateway-fronted deployment: the 401 is the external gateway, not maily.
@@ -195,7 +293,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new ApiError(res.status, detail || res.statusText);
+    throw new ApiError(res.status, errorDetail(res, detail));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -260,7 +358,20 @@ export const api = {
     // browser's offline error page.
     if (!isOnline()) return { authRequired: !hasOfflineAccess() };
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/auth/config`, {}, AUTH_CONFIG_TIMEOUT_MS);
+      // `redirect: 'manual'` makes a gateway's login redirect visible as an
+      // `opaqueredirect` instead of a thrown CORS error — so a throw below can only
+      // mean the server is unreachable, and must never navigate through the gateway.
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/auth/config`,
+        { redirect: 'manual' },
+        AUTH_CONFIG_TIMEOUT_MS,
+      );
+      if (isGatewayResponse(res)) {
+        // A proxy answering for a server that is down. Open the cached mail.
+        serverUnreachable();
+        return { authRequired: !(externalAuthGateway || hasOfflineAccess()) };
+      }
+      markServerReachable();
       if (res.ok) {
         const cfg = (await res.json()) as { authRequired: boolean };
         setExternalAuthGateway(!cfg.authRequired);
@@ -272,22 +383,19 @@ export const api = {
       // session expired at the gateway: bounce through it rather than show maily's
       // login. Other failures (5xx) fall through to the maily-login fallback, which
       // also avoids a redirect loop when the backend itself is down.
-      if (res.status === 401 || res.status === 403 || res.redirected) {
+      if (res.status === 401 || res.status === 403 || res.type === 'opaqueredirect') {
         setExternalAuthGateway(true);
         gatewayRelogin();
         return { authRequired: false }; // navigating away; the value is moot
       }
     } catch {
-      // Network/CORS error. The most common cause on a gateway-fronted deployment is
-      // exactly the logged-out case: the gateway answers the probe with a redirect to
-      // its own cross-origin login page, which the browser blocks (no CORS), throwing
-      // here. If we already know this deployment sits behind a gateway, treat that as
-      // an expired session and bounce back through it — never fall through to maily's
-      // disabled login screen. The relogin loop guard keeps a persistently-failing
-      // gateway (or a genuine offline) from machine-gunning reloads.
-      if (isOnline() && externalAuthGateway && gatewayRelogin()) {
-        return { authRequired: false }; // navigating away; the value is moot
-      }
+      // A network failure or timeout — the gateway's login redirect no longer lands
+      // here (see `redirect: 'manual'` above). The server is unreachable, so this must
+      // NOT navigate through the gateway: that route is network-only, and on a down
+      // server it replaces the cached app with the browser's (or the Android shell's)
+      // connection-error page. Open the cached mail read-only instead.
+      serverUnreachable();
+      return { authRequired: !(externalAuthGateway || hasOfflineAccess()) };
     }
     // Only reached on a true ambiguity (no prior gateway knowledge, or the loop guard
     // suppressed a bounce): when we DO know a gateway fronts us, stay out of the login

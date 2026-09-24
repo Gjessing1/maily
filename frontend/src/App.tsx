@@ -3,13 +3,15 @@ import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { onSocketReconnect } from './api/socket';
 import { useAuth } from './state/auth';
 import { useAndroidBackButton } from './state/androidBack';
+// Side effect: its popstate listener must be registered before React Router's.
+import './state/webBack';
 import { useSignals } from './state/signals';
 import { useTheme } from './state/theme';
 import { hydratePrefs } from './state/prefs';
 import { hydrateServerSettings } from './state/serverSettings';
 import { isPopout, onWindowMessage, sweepHandoffs } from './ui/popout';
 import { showNotice, stageSend } from './state/undo';
-import { useOnlineStatus } from './state/connectivity';
+import { useConnectivity, useOnlineStatus } from './state/connectivity';
 import { SyncBar } from './components/SyncBar';
 import { UndoSnackbar } from './components/UndoSnackbar';
 import { Login } from './routes/Login';
@@ -62,9 +64,12 @@ function LoadingShell() {
 }
 
 function OfflineUnavailable({ signedOut = false }: { signedOut?: boolean }) {
+  const unreachable = useConnectivity() === 'unreachable';
   return (
     <div className="safe-top safe-bottom flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <h1 className="text-xl font-semibold">You’re offline</h1>
+      <h1 className="text-xl font-semibold">
+        {unreachable ? 'Can’t reach the server' : 'You’re offline'}
+      </h1>
       <p className="max-w-sm text-sm text-muted">
         {signedOut
           ? 'Connect once to unlock maily before using its cached mail offline.'
@@ -79,9 +84,37 @@ function OfflineUnavailable({ signedOut = false }: { signedOut?: boolean }) {
   );
 }
 
-function OnlineOnly({ children }: { children: ReactNode }) {
-  const online = useOnlineStatus();
-  return online ? children : <OfflineUnavailable />;
+/**
+ * A route that needs the server. `whileUnreachable` keeps it mounted when the device is
+ * online but the server is not answering — the composer, so a flaky server can never
+ * throw away what is being written (its send simply fails with an error to retry).
+ */
+function OnlineOnly({
+  children,
+  whileUnreachable = false,
+}: {
+  children: ReactNode;
+  whileUnreachable?: boolean;
+}) {
+  const state = useConnectivity();
+  if (state === 'online' || (whileUnreachable && state === 'unreachable')) return children;
+  return <OfflineUnavailable />;
+}
+
+/** The read-only strip shown while the app is running on its cached mail. */
+function ConnectivityBanner() {
+  const state = useConnectivity();
+  if (state === 'online') return null;
+  return (
+    <div
+      role="status"
+      className="shrink-0 bg-accent-soft px-3 py-1.5 text-center text-xs font-medium text-accent"
+    >
+      {state === 'offline'
+        ? 'Offline · cached mail is read-only'
+        : 'Can’t reach the server · showing mail saved on this device'}
+    </div>
+  );
 }
 
 export function App() {
@@ -202,11 +235,7 @@ export function App() {
       <div className="fixed inset-x-0 top-0 z-50">
         <SyncBar progress={progress} />
       </div>
-      {!online && (
-        <div className="shrink-0 bg-accent-soft px-3 py-1.5 text-center text-xs font-medium text-accent">
-          Offline · cached mail is read-only
-        </div>
-      )}
+      <ConnectivityBanner />
       <div className="min-h-0 flex-1">
         <Suspense fallback={<LoadingShell />}>
           <Routes>
@@ -215,7 +244,7 @@ export function App() {
             <Route
               path="/compose"
               element={
-                <OnlineOnly>
+                <OnlineOnly whileUnreachable>
                   <Compose />
                 </OnlineOnly>
               }

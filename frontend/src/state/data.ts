@@ -24,14 +24,18 @@ import {
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
 import { isStarredView, starredAccountId } from './starred';
 import { isUnifiedView, unifiedRole } from './unified';
-import { isOnline } from './connectivity';
+import { isConnected, onReconnect } from './connectivity';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
 }
 
-/** How many of the top list rows to warm the body cache for (see prefetch below). */
-const PREFETCH_BODIES = 8;
+/**
+ * How many of the top list rows to warm the body cache for (see prefetch below). Sized
+ * for offline reading as much as for instant opens: a body that was never fetched cannot
+ * be read when the server is unreachable, however long the device keeps its cache.
+ */
+const PREFETCH_BODIES = 25;
 
 /**
  * Page size for the dedicated unread fetch (`?unread=1`) and cap for the unread section
@@ -73,10 +77,10 @@ export function useFolders(accountId: string | undefined): FolderDto[] | undefin
     const onVisible = () => {
       if (document.visibilityState === 'visible') load();
     };
-    window.addEventListener('online', load);
+    const offReconnect = onReconnect(load);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('online', load);
+      offReconnect();
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [accountId]);
@@ -364,7 +368,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         }
       })
       .catch((e: Error) => {
-        if (viewRef.current === view && isOnline()) setError(e.message);
+        if (viewRef.current === view && isConnected()) setError(e.message);
       })
       .finally(() => {
         if (refreshingViewRef.current === view) refreshingViewRef.current = null;
@@ -396,7 +400,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         }
       })
       .catch((e: Error) => {
-        if (viewRef.current === view && isOnline()) setError(e.message);
+        if (viewRef.current === view && isConnected()) setError(e.message);
       })
       .finally(() => {
         loadingMoreRef.current = false;
@@ -419,7 +423,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     const onVisible = () => {
       if (document.visibilityState === 'visible') refresh();
     };
-    window.addEventListener('online', refresh);
+    const offOnline = onReconnect(refresh);
     document.addEventListener('visibilitychange', onVisible);
     const offReconnect = onSocketReconnect(refresh);
     // A folder synced by the non-INBOX cron (Drafts, Sent, mail filtered past IDLE)
@@ -430,7 +434,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       if (signal.type === 'mail:folder') refresh();
     });
     return () => {
-      window.removeEventListener('online', refresh);
+      offOnline();
       document.removeEventListener('visibilitychange', onVisible);
       offReconnect();
       offFolder();

@@ -12,7 +12,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, getToken, onUnauthorized, setToken } from '../api/client';
+import { api, getToken, isGatewayFronted, onUnauthorized, setToken } from '../api/client';
 import { connectSocket, disconnectSocket } from '../api/socket';
 import { hasOfflineAccess, isOnline, useOnlineStatus } from './connectivity';
 
@@ -28,10 +28,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
   const online = useOnlineStatus();
+  // Open straight onto the cached mail whenever this device has been signed in before
+  // and nothing on it can be verified first: offline, or behind the SSO gateway (where
+  // the probe below is the only check and the gateway re-authenticates on its own if the
+  // session lapsed). Waiting on the probe instead held a phone on a skeleton for the
+  // full probe timeout whenever the server was down — the case offline mail exists for.
   const [authed, setAuthed] = useState<boolean>(
-    () => Boolean(getToken()) || (!isOnline() && hasOfflineAccess()),
+    () => Boolean(getToken()) || (hasOfflineAccess() && (!isOnline() || isGatewayFronted())),
   );
-  const [ready, setReady] = useState<boolean>(() => Boolean(getToken()) || !isOnline());
+  const [ready, setReady] = useState<boolean>(
+    () => Boolean(getToken()) || !isOnline() || (hasOfflineAccess() && isGatewayFronted()),
+  );
 
   // Ask the backend whether in-app login is required. When it's disabled
   // (external SSO fronts the site), treat the session as authed with no token —
