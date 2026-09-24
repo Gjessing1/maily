@@ -252,7 +252,8 @@ describe('handing an attachment to the platform', () => {
     native = true;
     const { saveAttachment } = await import('./openAttachment');
 
-    await saveAttachment('msg-1', PDF);
+    // Reported as a fallback, so the Download button can say why a viewer opened.
+    await expect(saveAttachment('msg-1', PDF)).resolves.toEqual({ kind: 'viewer-fallback' });
 
     expect(openFile).toHaveBeenCalledTimes(1);
     expect(fetchAttachmentBlob).not.toHaveBeenCalled();

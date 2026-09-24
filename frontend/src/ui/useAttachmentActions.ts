@@ -55,6 +55,10 @@ export function useAttachmentActions(
         const outcome = await saveAttachment(messageId, attachment, cached);
         // A browser shows its own download UI; the Android save is otherwise silent.
         if (outcome.kind === 'saved') showNotice(`Saved to Downloads as ${outcome.name}`);
+        // Otherwise Download looks like it did the same as a tap, with no hint why.
+        else if (outcome.kind === 'viewer-fallback') {
+          showNotice('Update the Maily app (Settings → System) to save to Downloads');
+        }
       }),
   };
 }

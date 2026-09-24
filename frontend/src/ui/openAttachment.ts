@@ -193,7 +193,7 @@ export async function saveAttachment(
     }
     // An APK older than saveFile: its "open or save" handoff is all it has — and one
     // older still has neither, so it falls through to the browser download below.
-    if (await handToAndroid(messageId, attachment)) return { kind: 'handed-off' };
+    if (await handToAndroid(messageId, attachment)) return { kind: 'viewer-fallback' };
   }
   saveBlob(cached ?? (await fetchAttachmentBlob(messageId, attachment.id)), filename);
   return { kind: 'downloaded' };
@@ -206,7 +206,9 @@ export async function saveAttachment(
 export type SaveOutcome =
   | { kind: 'saved'; name: string }
   | { kind: 'downloaded' }
-  | { kind: 'handed-off' };
+  | { kind: 'handed-off' }
+  /** An APK older than 0.5.0 could only open it in a viewer, not save it. */
+  | { kind: 'viewer-fallback' };
 
 /** A throwaway file to ask the Web Share API whether it takes files of this type. */
 function probeFile(attachment: AttachmentDto): File {
