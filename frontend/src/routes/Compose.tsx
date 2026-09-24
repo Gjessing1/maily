@@ -6,7 +6,9 @@ import { deleteDraft, getDraft, saveDraft } from '../db/cache';
 import { useAccounts } from '../state/data';
 import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { useBackHandler } from '../state/backButton';
+import { runBackHandler, useBackHandler } from '../state/backButton';
+import { armWebBackGuard, webBackSteps } from '../state/webBack';
+import { READING_COLUMN } from '../ui/layout';
 import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor, type InlineImage } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
@@ -142,7 +144,8 @@ export function Compose() {
   function leave() {
     leaving.current = true;
     if (popout) closePopout();
-    else navigate(-1);
+    // Past the web Back guard's extra entry too, when it is on top (state/webBack).
+    else navigate(-webBackSteps());
   }
   const accounts = useAccounts();
   const { signature, signatureEnabled } = usePrefs();
@@ -202,6 +205,11 @@ export function Compose() {
       navigate('.', { replace: true, state: rest });
     }
   }, []);
+
+  // Browser Back closes the innermost sheet (add-contact, save/discard, send later) or
+  // runs the ✕ button's unsaved-work check — never silently leaves the draft. Armed
+  // after the `fresh` rewrite above, so the guard entry copies the rewritten state.
+  useEffect(() => armWebBackGuard(() => void runBackHandler(), !popout), []);
 
   // Restore an autosaved draft after a reload (non-fresh mount with a saved record).
   useEffect(() => {
@@ -545,188 +553,180 @@ export function Compose() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <button
-          onClick={cancel}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Cancel"
-        >
-          <BackIcon />
-        </button>
-        <h1 className="flex-1 text-lg font-semibold">New message</h1>
-        <input ref={fileInputRef} type="file" multiple onChange={onPickFiles} className="hidden" />
-        {/* Detach the composer so the rest of the mailbox stays browsable while writing. */}
-        {canPopout && (
+      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
+        <div className={`${READING_COLUMN} flex items-center gap-2 px-2 py-2`}>
           <button
-            onClick={detach}
+            onClick={cancel}
             className="rounded-full p-2 active:bg-surface-2"
-            aria-label="Open in new window"
-            title="Open in new window"
-            type="button"
+            aria-label="Cancel"
           >
-            <NewWindowIcon />
+            <BackIcon />
           </button>
-        )}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="rounded-full p-2 active:bg-surface-2"
-          aria-label="Attach files"
-          type="button"
-        >
-          <PaperclipIcon />
-        </button>
-        <div className="relative flex items-center">
-          <button
-            onClick={() => void send()}
-            disabled={!canSend}
-            className="flex items-center gap-2 rounded-l-full bg-accent px-4 py-2 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
-          >
-            {sending ? (
-              <Spinner className="border-white/70 size-4" />
-            ) : (
-              <SendIcon className="size-4" />
-            )}
-            Send
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setScheduleAt((v) => v || toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
-              setScheduleOpen((o) => !o);
-            }}
-            disabled={!canSend}
-            aria-label="Send later"
-            className="flex items-center rounded-r-full border-l border-white/25 bg-accent px-2 py-2 text-white transition active:scale-95 disabled:opacity-40"
-          >
-            <ClockIcon className="size-4" />
-          </button>
-          {scheduleOpen && (
-            <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-surface-2 p-3 shadow-lg">
-              <p className="mb-2 text-sm font-medium text-fg">Send later</p>
-              <input
-                type="datetime-local"
-                value={scheduleAt}
-                min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
-                onChange={(e) => setScheduleAt(e.target.value)}
-                className="w-full rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none"
-              />
-              <div className="mt-3 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setScheduleOpen(false)}
-                  className="rounded-full px-3 py-1.5 text-sm text-faint active:bg-surface-3"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const ms = new Date(scheduleAt).getTime();
-                    if (!Number.isFinite(ms) || ms <= Date.now()) {
-                      setError('Pick a time in the future.');
-                      return;
-                    }
-                    setScheduleOpen(false);
-                    void send(ms);
-                  }}
-                  className="rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-white active:scale-95"
-                >
-                  Schedule
-                </button>
-              </div>
-            </div>
+          <h1 className="flex-1 text-lg font-semibold">New message</h1>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={onPickFiles}
+            className="hidden"
+          />
+          {/* Detach the composer so the rest of the mailbox stays browsable while writing. */}
+          {canPopout && (
+            <button
+              onClick={detach}
+              className="rounded-full p-2 active:bg-surface-2"
+              aria-label="Open in new window"
+              title="Open in new window"
+              type="button"
+            >
+              <NewWindowIcon />
+            </button>
           )}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-full p-2 active:bg-surface-2"
+            aria-label="Attach files"
+            type="button"
+          >
+            <PaperclipIcon />
+          </button>
+          <div className="relative flex items-center">
+            <button
+              onClick={() => void send()}
+              disabled={!canSend}
+              className="flex items-center gap-2 rounded-l-full bg-accent px-4 py-2 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
+            >
+              {sending ? (
+                <Spinner className="border-white/70 size-4" />
+              ) : (
+                <SendIcon className="size-4" />
+              )}
+              Send
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setScheduleAt((v) => v || toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
+                setScheduleOpen((o) => !o);
+              }}
+              disabled={!canSend}
+              aria-label="Send later"
+              className="flex items-center rounded-r-full border-l border-white/25 bg-accent px-2 py-2 text-white transition active:scale-95 disabled:opacity-40"
+            >
+              <ClockIcon className="size-4" />
+            </button>
+            {scheduleOpen && (
+              <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-surface-2 p-3 shadow-lg">
+                <p className="mb-2 text-sm font-medium text-fg">Send later</p>
+                <input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm outline-none"
+                />
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleOpen(false)}
+                    className="rounded-full px-3 py-1.5 text-sm text-faint active:bg-surface-3"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ms = new Date(scheduleAt).getTime();
+                      if (!Number.isFinite(ms) || ms <= Date.now()) {
+                        setError('Pick a time in the future.');
+                        return;
+                      }
+                      setScheduleOpen(false);
+                      void send(ms);
+                    }}
+                    className="rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-white active:scale-95"
+                  >
+                    Schedule
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
-        {error && <p className="px-4 pt-3 text-sm text-danger">{error}</p>}
+        <div className={READING_COLUMN}>
+          {error && <p className="px-4 pt-3 text-sm text-danger">{error}</p>}
 
-        {(accounts?.length ?? 0) > 1 && (
-          <label className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-            <span className="w-12 text-sm text-faint">From</span>
-            <select
-              value={fromAccount?.id ?? ''}
-              onChange={(e) => setAccountId(e.target.value)}
-              className="flex-1 bg-transparent text-[15px] outline-none"
-            >
-              {accounts?.map((a) => (
-                <option key={a.id} value={a.id} className="bg-surface">
-                  {a.displayName || a.email}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
-          <span className="w-12 pt-1 text-sm text-faint">To</span>
-          <RecipientInput
-            value={to}
-            onChange={setTo}
-            ariaLabel="To"
-            placeholder="recipient@example.com"
-          />
-          {!showCc && (
-            <button
-              onClick={() => setShowCc(true)}
-              className="pt-1 text-xs text-accent"
-              type="button"
-            >
-              Cc
-            </button>
-          )}
-        </div>
-
-        {showCc && (
-          <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
-            <span className="w-12 pt-1 text-sm text-faint">Cc</span>
-            <RecipientInput value={cc} onChange={setCc} ariaLabel="Cc" />
-          </div>
-        )}
-
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-          <span className="w-12 text-sm text-faint">Subject</span>
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className="flex-1 bg-transparent text-[15px] outline-none"
-          />
-        </div>
-
-        {(attachments.length > 0 || uploads.some((u) => !u.isInline) || uploading > 0) && (
-          <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
-            {attachments.map((a) => (
-              <span
-                key={a.attachmentId}
-                className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
+          {(accounts?.length ?? 0) > 1 && (
+            <label className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+              <span className="w-12 text-sm text-faint">From</span>
+              <select
+                value={fromAccount?.id ?? ''}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="flex-1 bg-transparent text-[15px] outline-none"
               >
-                <PaperclipIcon className="size-3.5 text-faint" />
-                <span className="max-w-[40vw] truncate">{a.filename || 'attachment'}</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAttachments((prev) => prev.filter((x) => x.attachmentId !== a.attachmentId))
-                  }
-                  className="text-faint active:text-fg"
-                  aria-label="Remove attachment"
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-            {uploads
-              .filter((u) => !u.isInline)
-              .map((u) => (
+                {accounts?.map((a) => (
+                  <option key={a.id} value={a.id} className="bg-surface">
+                    {a.displayName || a.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
+            <span className="w-12 pt-1 text-sm text-faint">To</span>
+            <RecipientInput
+              value={to}
+              onChange={setTo}
+              ariaLabel="To"
+              placeholder="recipient@example.com"
+            />
+            {!showCc && (
+              <button
+                onClick={() => setShowCc(true)}
+                className="pt-1 text-xs text-accent"
+                type="button"
+              >
+                Cc
+              </button>
+            )}
+          </div>
+
+          {showCc && (
+            <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
+              <span className="w-12 pt-1 text-sm text-faint">Cc</span>
+              <RecipientInput value={cc} onChange={setCc} ariaLabel="Cc" />
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+            <span className="w-12 text-sm text-faint">Subject</span>
+            <input
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="flex-1 bg-transparent text-[15px] outline-none"
+            />
+          </div>
+
+          {(attachments.length > 0 || uploads.some((u) => !u.isInline) || uploading > 0) && (
+            <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
+              {attachments.map((a) => (
                 <span
-                  key={u.uploadId}
+                  key={a.attachmentId}
                   className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
                 >
                   <PaperclipIcon className="size-3.5 text-faint" />
-                  <span className="max-w-[40vw] truncate">{u.filename}</span>
+                  <span className="max-w-[40vw] truncate">{a.filename || 'attachment'}</span>
                   <button
                     type="button"
-                    onClick={() => removeUpload(u.uploadId)}
+                    onClick={() =>
+                      setAttachments((prev) =>
+                        prev.filter((x) => x.attachmentId !== a.attachmentId),
+                      )
+                    }
                     className="text-faint active:text-fg"
                     aria-label="Remove attachment"
                   >
@@ -734,23 +734,43 @@ export function Compose() {
                   </button>
                 </span>
               ))}
-            {uploading > 0 && (
-              <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">
-                <Spinner className="size-3.5" />
-                Uploading…
-              </span>
-            )}
-          </div>
-        )}
+              {uploads
+                .filter((u) => !u.isInline)
+                .map((u) => (
+                  <span
+                    key={u.uploadId}
+                    className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs"
+                  >
+                    <PaperclipIcon className="size-3.5 text-faint" />
+                    <span className="max-w-[40vw] truncate">{u.filename}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeUpload(u.uploadId)}
+                      className="text-faint active:text-fg"
+                      aria-label="Remove attachment"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              {uploading > 0 && (
+                <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">
+                  <Spinner className="size-3.5" />
+                  Uploading…
+                </span>
+              )}
+            </div>
+          )}
 
-        <RichTextEditor
-          initialHtml={editorSeed}
-          resetKey={seedKey}
-          onChange={setBodyHtml}
-          placeholder="Write your message…"
-          className="min-h-[40vh] px-4 py-3"
-          onInlineImages={uploadInlineImages}
-        />
+          <RichTextEditor
+            initialHtml={editorSeed}
+            resetKey={seedKey}
+            onChange={setBodyHtml}
+            placeholder="Write your message…"
+            className="min-h-[40vh] px-4 py-3"
+            onInlineImages={uploadInlineImages}
+          />
+        </div>
       </main>
 
       <ConfirmDialog

@@ -115,6 +115,17 @@ export function ContactEditor({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Escape cancels, like the confirm dialog — except while that dialog is up over this
+  // sheet, where Escape belongs to it alone.
+  useEffect(() => {
+    if (confirmDelete) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmDelete, onClose]);
+
   // ── Address book (create only) ──────────────────────────────────────────────
   // Every *discovered* book is a legal target, not just the active ones: "active"
   // only governs composer autocomplete, so a book excluded from search is still
