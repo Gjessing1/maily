@@ -552,9 +552,11 @@ export function Compose() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${READING_COLUMN} flex items-center gap-2 px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${READING_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg`}
+      >
+        <div className="flex items-center gap-2 px-2 py-2">
           <button
             onClick={cancel}
             className="rounded-full p-2 active:bg-surface-2"
@@ -655,7 +657,7 @@ export function Compose() {
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar`}>
         <div className={`${READING_COLUMN} ${PAGE}`}>
           {error && <p className="px-4 pt-3 text-sm text-danger">{error}</p>}
 

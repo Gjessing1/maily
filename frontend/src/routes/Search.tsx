@@ -354,9 +354,9 @@ export function Search() {
   }, [selectedIds, expandIds, clearSelect]);
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${LIST_COLUMN} px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header className={`${LIST_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg`}>
+        <div className="px-2 py-2">
           {selectionMode ? (
             <div className="flex items-center gap-1">
               <button
@@ -525,7 +525,7 @@ export function Search() {
       <main
         ref={listRef}
         onClickCapture={onListClickCapture}
-        className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}
+        className={`flex-1 overflow-y-auto no-scrollbar`}
       >
         <div className={`${LIST_COLUMN} ${PAGE}`}>
           {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}

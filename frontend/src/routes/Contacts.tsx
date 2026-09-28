@@ -229,9 +229,11 @@ export function Contacts() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 px-2 py-2 backdrop-blur">
-        <div className={`${column} flex items-center gap-1`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${column} safe-top sticky top-0 z-10 border-b border-border bg-bg px-2 py-2`}
+      >
+        <div className="flex items-center gap-1">
           <button
             onClick={() => navigate(-1)}
             className="rounded-full p-2 active:bg-surface-2"
@@ -276,8 +278,8 @@ export function Contacts() {
       </header>
 
       {notice && (
-        <div className="border-b border-border bg-surface-2 px-4 py-2 text-sm text-fg">
-          <div className={`${column} flex items-center gap-2`}>
+        <div className={`${column} border-b border-border bg-surface-2 px-4 py-2 text-sm text-fg`}>
+          <div className="flex items-center gap-2">
             <span className="flex-1">{notice}</span>
             <button
               onClick={() => setNotice(null)}
@@ -291,8 +293,8 @@ export function Contacts() {
       )}
 
       {duplicates.length > 0 && (
-        <div className="border-b border-border px-3 py-2">
-          <div className={column}>
+        <div className={`${column} border-b border-border bg-bg px-3 py-2`}>
+          <div>
             <button
               onClick={() => setShowDuplicates((v) => !v)}
               aria-expanded={showDuplicates}
@@ -338,8 +340,8 @@ export function Contacts() {
         </div>
       )}
 
-      <div className="border-b border-border px-3 py-2">
-        <div className={`${column} flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2`}>
+      <div className={`${column} border-b border-border bg-bg px-3 py-2`}>
+        <div className={`flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2`}>
           <SearchIcon className="size-4 shrink-0 text-faint" />
           <input
             value={query}
@@ -360,7 +362,7 @@ export function Contacts() {
         </div>
 
         {allCategories.length > 0 && (
-          <div className={`${column} mt-2 flex gap-1.5 overflow-x-auto no-scrollbar`}>
+          <div className={`mt-2 flex gap-1.5 overflow-x-auto no-scrollbar`}>
             <CategoryChip
               label="All"
               selected={activeCategory === null}
@@ -378,68 +380,64 @@ export function Contacts() {
         )}
       </div>
 
-      <div className={`flex min-h-0 flex-1 ${GUTTER}`}>
-        <main className={`flex-1 overflow-y-auto no-scrollbar bg-bg ${column}`}>
-          {error && (
-            <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>
-          )}
+      <main className={`flex-1 overflow-y-auto no-scrollbar bg-bg ${column}`}>
+        {error && <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>}
 
-          {cards === null && !error ? (
-            <div className="flex justify-center py-16">
-              <Spinner />
+        {cards === null && !error ? (
+          <div className="flex justify-center py-16">
+            <Spinner />
+          </div>
+        ) : cards && cards.length === 0 ? (
+          !error && (
+            <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
+              <p>No contacts yet.</p>
+              <button
+                onClick={() => setCreating({ addressbook: createTarget })}
+                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
+              >
+                Add a contact
+              </button>
             </div>
-          ) : cards && cards.length === 0 ? (
-            !error && (
-              <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
-                <p>No contacts yet.</p>
-                <button
-                  onClick={() => setCreating({ addressbook: createTarget })}
-                  className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
-                >
-                  Add a contact
-                </button>
-              </div>
-            )
-          ) : filtering && totalVisible === 0 ? (
-            !error && (
-              <div className="py-20 text-center text-muted">
-                <p>
-                  No contacts match{searching ? ` “${query.trim()}”` : ''}
-                  {activeCategory ? ` in “${activeCategory}”` : ''}.
-                </p>
-              </div>
-            )
-          ) : (
-            <>
-              {favoriteCards.length > 0 && (
-                <BookSection
-                  group={{
-                    href: null,
-                    displayName: 'Favourites',
-                    active: true,
-                    isDefault: false,
-                    cards: favoriteCards,
-                  }}
-                  collapsed={false}
-                  onToggle={() => undefined}
-                  favorites={favorites}
-                  onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
-                />
-              )}
-              {sections.map((g) => (
-                <BookSection
-                  key={g.href ?? '__other__'}
-                  group={g}
-                  collapsed={!filtering && g.href !== null && hidden.includes(g.href)}
-                  onToggle={() => toggleHidden(g.href)}
-                  favorites={favorites}
-                  onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
-                />
-              ))}
-            </>
-          )}
-        </main>
-      </div>
+          )
+        ) : filtering && totalVisible === 0 ? (
+          !error && (
+            <div className="py-20 text-center text-muted">
+              <p>
+                No contacts match{searching ? ` “${query.trim()}”` : ''}
+                {activeCategory ? ` in “${activeCategory}”` : ''}.
+              </p>
+            </div>
+          )
+        ) : (
+          <>
+            {favoriteCards.length > 0 && (
+              <BookSection
+                group={{
+                  href: null,
+                  displayName: 'Favourites',
+                  active: true,
+                  isDefault: false,
+                  cards: favoriteCards,
+                }}
+                collapsed={false}
+                onToggle={() => undefined}
+                favorites={favorites}
+                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+              />
+            )}
+            {sections.map((g) => (
+              <BookSection
+                key={g.href ?? '__other__'}
+                group={g}
+                collapsed={!filtering && g.href !== null && hidden.includes(g.href)}
+                onToggle={() => toggleHidden(g.href)}
+                favorites={favorites}
+                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+              />
+            ))}
+          </>
+        )}
+      </main>
 
       {merging && (
         <MergeContactsDialog

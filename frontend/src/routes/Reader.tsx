@@ -305,9 +305,11 @@ export function ReaderView({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${READING_COLUMN} flex items-center gap-1 px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${READING_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg`}
+      >
+        <div className="flex items-center gap-1 px-2 py-2">
           {!embedded && (
             <button
               onClick={onClose}
@@ -448,7 +450,7 @@ export function ReaderView({
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar`}>
         <div className={`${READING_COLUMN} ${PAGE}`}>
           {loading ? (
             <div className="flex justify-center py-16">

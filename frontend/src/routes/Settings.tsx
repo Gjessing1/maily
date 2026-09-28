@@ -1316,9 +1316,11 @@ export function Settings() {
   useBackHandler(drilled, () => setSection(null));
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${SETTINGS_COLUMN} flex items-center gap-1 px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${SETTINGS_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg ${wide ? 'min-[72rem]:border-x' : ''}`}
+      >
+        <div className="flex items-center gap-1 px-2 py-2">
           <button
             onClick={() => (drilled ? setSection(null) : navigate(-1))}
             className="rounded-full p-2 active:bg-surface-2"
@@ -1332,55 +1334,53 @@ export function Settings() {
         </div>
       </header>
 
-      <div className={`flex min-h-0 flex-1 ${GUTTER}`}>
-        <div
-          className={`${SETTINGS_COLUMN} flex min-h-0 flex-1 bg-bg ${wide ? 'min-[72rem]:border-x min-[72rem]:border-border' : ''}`}
-        >
-          {!drilled && (
-            <nav
-              aria-label="Settings sections"
-              className={`overflow-y-auto no-scrollbar ${
-                wide ? 'w-72 shrink-0 border-r border-border py-2' : 'flex-1 py-2'
-              }`}
-            >
-              {SETTINGS_SECTIONS.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setSection(s.id)}
-                  aria-current={current?.id === s.id ? 'page' : undefined}
-                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-2 ${
-                    wide && current?.id === s.id ? 'bg-surface-2' : ''
-                  }`}
-                >
-                  <span className="min-w-0">
-                    <span className="block text-[15px]">{s.label}</span>
-                    <span className="mt-0.5 block text-xs text-faint">{s.hint}</span>
-                  </span>
-                  {!wide && <ChevronRightIcon className="size-5 shrink-0 text-faint" />}
-                </button>
-              ))}
-            </nav>
-          )}
+      <div
+        className={`${SETTINGS_COLUMN} flex min-h-0 flex-1 bg-bg ${wide ? 'min-[72rem]:border-x min-[72rem]:border-border' : ''}`}
+      >
+        {!drilled && (
+          <nav
+            aria-label="Settings sections"
+            className={`overflow-y-auto no-scrollbar ${
+              wide ? 'w-72 shrink-0 border-r border-border py-2' : 'flex-1 py-2'
+            }`}
+          >
+            {SETTINGS_SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                aria-current={current?.id === s.id ? 'page' : undefined}
+                className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-2 ${
+                  wide && current?.id === s.id ? 'bg-surface-2' : ''
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-[15px]">{s.label}</span>
+                  <span className="mt-0.5 block text-xs text-faint">{s.hint}</span>
+                </span>
+                {!wide && <ChevronRightIcon className="size-5 shrink-0 text-faint" />}
+              </button>
+            ))}
+          </nav>
+        )}
 
-          {current && (wide || drilled) && (
-            <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
-              {/* Capped so a wide window doesn't stretch rows and hint text across the
+        {current && (wide || drilled) && (
+          <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
+            {/* Capped so a wide window doesn't stretch rows and hint text across the
                 whole pane; a no-op at phone widths. */}
-              <div className={NARROW_COLUMN}>
-                {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
-                {current.id === 'appearance' && <AppearanceSection />}
-                {current.id === 'list' && <ListSection />}
-                {current.id === 'reading' && <ReadingSection />}
-                {current.id === 'composing' && <ComposingSection accounts={accounts} />}
-                {current.id === 'contacts' && <ContactsSection />}
-                {current.id === 'notifications' && <NotificationsSection />}
-                {current.id === 'sync' && <SyncSection />}
-                {current.id === 'storage' && <StorageSection accounts={accounts} config={config} />}
-                {current.id === 'system' && <SystemSection config={config} />}
-              </div>
-            </main>
-          )}
-        </div>
+            <div className={NARROW_COLUMN}>
+              {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
+              {current.id === 'appearance' && <AppearanceSection />}
+              {current.id === 'list' && <ListSection />}
+              {current.id === 'reading' && <ReadingSection />}
+              {current.id === 'composing' && <ComposingSection accounts={accounts} />}
+              {current.id === 'contacts' && <ContactsSection />}
+              {current.id === 'notifications' && <NotificationsSection />}
+              {current.id === 'sync' && <SyncSection />}
+              {current.id === 'storage' && <StorageSection accounts={accounts} config={config} />}
+              {current.id === 'system' && <SystemSection config={config} />}
+            </div>
+          </main>
+        )}
       </div>
     </div>
   );

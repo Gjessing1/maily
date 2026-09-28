@@ -2,15 +2,12 @@
  * Content columns shared by every route, so a wide or ultrawide window centres each
  * view at a width that suits what it shows instead of stretching rows edge to edge.
  *
- * The pattern (Contacts started it): the sticky header and the scrolling `<main>` stay
- * full-bleed — the header's border and blur span the window, and a wheel over the side
- * gutters still scrolls the page — while an inner element carrying one of these classes
- * holds the content. Every class is a no-op below its max width, so phones are
- * unaffected.
- *
- * Past the max width the full-bleed area shows `GUTTER` either side of the column, and
- * the column holding the body adds `PAGE` to paint itself in the content background,
- * so the content is visibly set apart from the empty margins.
+ * The pattern: the view's root carries `GUTTER`, so the margins either side of the
+ * column are a shade off the content background. The sticky header (and any bottom
+ * bar) is itself the column, so its border stops at the column's edge. The scrolling
+ * `<main>` stays full-bleed — a wheel over the gutters still scrolls the page — while
+ * an inner element with the column class plus `PAGE` holds and paints the content.
+ * Every class is a no-op below its max width, so phones are unaffected.
  */
 
 /** Message lists: Home without the split pane, Search results, the Outbox. */
@@ -28,7 +25,7 @@ export const SETTINGS_COLUMN = 'mx-auto w-full max-w-6xl';
 /** List and reading pane side by side: wide, but not the whole of an ultrawide. */
 export const SPLIT_FRAME = 'mx-auto w-full max-w-[120rem]';
 
-/** The full-bleed area a column sits in: a shade off the content background. */
+/** A view's root: the margins around its column, a shade off the content background. */
 export const GUTTER = 'bg-gutter';
 
 /** Added to a view's body column: content background, down to the bottom of the scroller. */

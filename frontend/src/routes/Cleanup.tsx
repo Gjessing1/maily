@@ -1335,9 +1335,11 @@ export function Cleanup() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${NARROW_COLUMN} flex items-center gap-1 px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${NARROW_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg`}
+      >
+        <div className="flex items-center gap-1 px-2 py-2">
           <button
             onClick={() => navigate(-1)}
             className="rounded-full p-2 text-fg active:bg-surface-2"
@@ -1349,7 +1351,7 @@ export function Cleanup() {
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar`}>
         <div className={`${NARROW_COLUMN} ${PAGE}`}>
           {error && !dash ? (
             <p className="px-4 py-8 text-center text-danger">Couldn’t load cleanup analytics.</p>

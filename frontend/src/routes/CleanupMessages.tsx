@@ -311,9 +311,11 @@ export function CleanupMessages() {
   const showActionBar = actionable && !loading && messages.length > 0 && exec !== 'done';
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="safe-top sticky top-0 z-10 border-b border-border bg-bg/85 backdrop-blur">
-        <div className={`${NARROW_COLUMN} flex items-center gap-1 px-2 py-2`}>
+    <div className={`flex h-full flex-col ${GUTTER}`}>
+      <header
+        className={`${NARROW_COLUMN} safe-top sticky top-0 z-10 border-b border-border bg-bg`}
+      >
+        <div className="flex items-center gap-1 px-2 py-2">
           <button
             onClick={() => navigate(-1)}
             className="rounded-full p-2 text-fg active:bg-surface-2"
@@ -340,7 +342,7 @@ export function CleanupMessages() {
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar`}>
         <div className={`${NARROW_COLUMN} ${PAGE}`}>
           {/* Outside the list conditional so the input survives (and keeps focus through) refetches. */}
           {exec !== 'done' && (
@@ -453,7 +455,9 @@ export function CleanupMessages() {
 
       {/* Sticky action bar — selection-driven trashing for delete-eligible slices. */}
       {showActionBar && (
-        <div className="safe-bottom sticky bottom-0 z-10 border-t border-border bg-bg/90 px-3 py-3 backdrop-blur">
+        <div
+          className={`${NARROW_COLUMN} safe-bottom sticky bottom-0 z-10 border-t border-border bg-bg px-3 py-3`}
+        >
           <div className="mx-auto max-w-2xl">
             {exec === 'running' ? (
               <div className="flex items-center justify-center gap-3 text-sm text-fg">
