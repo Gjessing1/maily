@@ -18,7 +18,7 @@
  * queue drains.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NARROW_COLUMN } from '../ui/layout';
+import { GUTTER, NARROW_COLUMN, PAGE } from '../ui/layout';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
   CleanupDashboardDto,
@@ -1349,137 +1349,142 @@ export function Cleanup() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        {error && !dash ? (
-          <p className="px-4 py-8 text-center text-danger">Couldn’t load cleanup analytics.</p>
-        ) : (
-          <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
-            {error && (
-              <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
-                Couldn’t refresh — showing the last known figures.
-              </p>
-            )}
-            {draining && (
-              <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-fg">
-                <Spinner />
-                <span>
-                  Moving {pending.toLocaleString()} message{pending === 1 ? '' : 's'} to Trash in
-                  the background…
-                </span>
-              </div>
-            )}
-            {/* Headline storage figures. */}
-            <section className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-2 text-accent">
-                <SparklesIcon className="size-6" />
-              </span>
-              {summary === null ? (
-                <Spinner />
-              ) : (
-                <div className="min-w-0 text-sm">
-                  <p className="text-fg">
-                    <span className="font-semibold">{summary.totalMessages.toLocaleString()}</span>{' '}
-                    messages ·{' '}
-                    <span className="font-semibold">{formatBytes(summary.totalBytes)}</span> cached
-                  </p>
-                  <p className="text-muted">
-                    {summary.protectedMessages.toLocaleString()} protected from cleanup (financial,
-                    security, legal, medical)
-                  </p>
-                  {summary.trashedMessages > 0 && (
-                    <p className="text-muted">
-                      Cleanup has freed{' '}
-                      <span className="font-medium text-fg">
-                        {formatBytes(summary.trashedBytes)}
-                      </span>{' '}
-                      so far ({summary.trashedMessages.toLocaleString()} messages moved to Trash)
-                    </p>
-                  )}
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+        <div className={`${NARROW_COLUMN} ${PAGE}`}>
+          {error && !dash ? (
+            <p className="px-4 py-8 text-center text-danger">Couldn’t load cleanup analytics.</p>
+          ) : (
+            <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
+              {error && (
+                <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+                  Couldn’t refresh — showing the last known figures.
+                </p>
+              )}
+              {draining && (
+                <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-fg">
+                  <Spinner />
+                  <span>
+                    Moving {pending.toLocaleString()} message{pending === 1 ? '' : 's'} to Trash in
+                    the background…
+                  </span>
                 </div>
               )}
-            </section>
+              {/* Headline storage figures. */}
+              <section className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-2 text-accent">
+                  <SparklesIcon className="size-6" />
+                </span>
+                {summary === null ? (
+                  <Spinner />
+                ) : (
+                  <div className="min-w-0 text-sm">
+                    <p className="text-fg">
+                      <span className="font-semibold">
+                        {summary.totalMessages.toLocaleString()}
+                      </span>{' '}
+                      messages ·{' '}
+                      <span className="font-semibold">{formatBytes(summary.totalBytes)}</span>{' '}
+                      cached
+                    </p>
+                    <p className="text-muted">
+                      {summary.protectedMessages.toLocaleString()} protected from cleanup
+                      (financial, security, legal, medical)
+                    </p>
+                    {summary.trashedMessages > 0 && (
+                      <p className="text-muted">
+                        Cleanup has freed{' '}
+                        <span className="font-medium text-fg">
+                          {formatBytes(summary.trashedBytes)}
+                        </span>{' '}
+                        so far ({summary.trashedMessages.toLocaleString()} messages moved to Trash)
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
 
-            {/* Per-slice config — pick which angles to surface and tune their thresholds. */}
-            <SliceConfigCard prefs={prefs} />
+              {/* Per-slice config — pick which angles to surface and tune their thresholds. */}
+              <SliceConfigCard prefs={prefs} />
 
-            {/* Protected mail — the HARD safety gate, extendable with your own words. */}
-            <section className="rounded-xl border border-border bg-surface p-4">
-              <h2 className="text-base font-semibold text-fg">Protected mail</h2>
-              <p className="mt-1 text-sm text-muted">
-                Mail whose body contains one of these words is never offered for cleanup. Add your
-                own, or remove any you don’t want — removing a word lets that mail be cleaned.
-              </p>
-              <KeywordEditor
-                title="Protected words"
-                hint="The full safety gate — edit freely. Reset restores the built-in list."
-                defaults={PROTECTED_BUILTINS}
-                value={serverSettings.cleanupProtectedKeywords}
-                onChange={(list) => applyKeywords('cleanupProtectedKeywords', list)}
+              {/* Protected mail — the HARD safety gate, extendable with your own words. */}
+              <section className="rounded-xl border border-border bg-surface p-4">
+                <h2 className="text-base font-semibold text-fg">Protected mail</h2>
+                <p className="mt-1 text-sm text-muted">
+                  Mail whose body contains one of these words is never offered for cleanup. Add your
+                  own, or remove any you don’t want — removing a word lets that mail be cleaned.
+                </p>
+                <KeywordEditor
+                  title="Protected words"
+                  hint="The full safety gate — edit freely. Reset restores the built-in list."
+                  defaults={PROTECTED_BUILTINS}
+                  value={serverSettings.cleanupProtectedKeywords}
+                  onChange={(list) => applyKeywords('cleanupProtectedKeywords', list)}
+                />
+              </section>
+
+              {/* Guarded mail — manually shielded messages, with a one-tap release. */}
+              {(summary?.keptMessages ?? 0) > 0 && (
+                <GuardedMailSection count={summary!.keptMessages} onChanged={refresh} />
+              )}
+
+              <InfoSliceCard
+                title="Storage by sender"
+                description="Which senders take up the most space — personal-mail providers (gmail, hotmail, …) are split per address. Tick senders to trash the lot; there's no safety gate here, but Keep-flagged mail is spared and everything stays recoverable in Trash."
+                slice={storage}
+                onExecuted={refresh}
               />
-            </section>
+              {renderAction(
+                'large',
+                'Large messages',
+                `Messages over ${largeMinMb} MB still on your mail provider — usually big attachments. Mail already detached to this server doesn't count (trashing it wouldn't free provider space).`,
+                large,
+                { minMb: largeMinMb },
+              )}
+              {renderAction(
+                'newsletters',
+                'Newsletters & bulk mail',
+                'Mail carrying an unsubscribe link — newsletters, promotions and other bulk sends.',
+                newsletters,
+                undefined,
+                <KeywordEditor
+                  title="Words that flag bulk mail"
+                  hint="Mail whose body contains one of these is treated as a newsletter."
+                  defaults={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
+                  value={serverSettings.cleanupNewsletterKeywords}
+                  onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
+                />,
+              )}
+              {renderAction(
+                'cold-storage',
+                'Cold storage',
+                `Mail older than ${coldYears} year${coldYears === 1 ? '' : 's'} with no invoice, tax or contract — safe to let go.`,
+                cold,
+                { years: coldYears },
+                <KeywordEditor
+                  title="Words that keep mail"
+                  hint="An old message whose body contains one of these is spared from this slice."
+                  defaults={[
+                    'invoice',
+                    'faktura',
+                    'tax',
+                    'skatt',
+                    'mva',
+                    'contract',
+                    'kontrakt',
+                    'avtale',
+                  ]}
+                  value={serverSettings.cleanupColdKeepKeywords}
+                  onChange={(list) => applyKeywords('cleanupColdKeepKeywords', list)}
+                />,
+              )}
 
-            {/* Guarded mail — manually shielded messages, with a one-tap release. */}
-            {(summary?.keptMessages ?? 0) > 0 && (
-              <GuardedMailSection count={summary!.keptMessages} onChanged={refresh} />
-            )}
-
-            <InfoSliceCard
-              title="Storage by sender"
-              description="Which senders take up the most space — personal-mail providers (gmail, hotmail, …) are split per address. Tick senders to trash the lot; there's no safety gate here, but Keep-flagged mail is spared and everything stays recoverable in Trash."
-              slice={storage}
-              onExecuted={refresh}
-            />
-            {renderAction(
-              'large',
-              'Large messages',
-              `Messages over ${largeMinMb} MB still on your mail provider — usually big attachments. Mail already detached to this server doesn't count (trashing it wouldn't free provider space).`,
-              large,
-              { minMb: largeMinMb },
-            )}
-            {renderAction(
-              'newsletters',
-              'Newsletters & bulk mail',
-              'Mail carrying an unsubscribe link — newsletters, promotions and other bulk sends.',
-              newsletters,
-              undefined,
-              <KeywordEditor
-                title="Words that flag bulk mail"
-                hint="Mail whose body contains one of these is treated as a newsletter."
-                defaults={['unsubscribe', 'newsletter', 'avmeld', 'nyhetsbrev', 'meld deg av']}
-                value={serverSettings.cleanupNewsletterKeywords}
-                onChange={(list) => applyKeywords('cleanupNewsletterKeywords', list)}
-              />,
-            )}
-            {renderAction(
-              'cold-storage',
-              'Cold storage',
-              `Mail older than ${coldYears} year${coldYears === 1 ? '' : 's'} with no invoice, tax or contract — safe to let go.`,
-              cold,
-              { years: coldYears },
-              <KeywordEditor
-                title="Words that keep mail"
-                hint="An old message whose body contains one of these is spared from this slice."
-                defaults={[
-                  'invoice',
-                  'faktura',
-                  'tax',
-                  'skatt',
-                  'mva',
-                  'contract',
-                  'kontrakt',
-                  'avtale',
-                ]}
-                value={serverSettings.cleanupColdKeepKeywords}
-                onChange={(list) => applyKeywords('cleanupColdKeepKeywords', list)}
-              />,
-            )}
-
-            <p className="px-1 pb-4 text-center text-xs text-faint">
-              Reach for this when you want to — nothing here is a task. Cleanup moves mail to Trash
-              (recoverable), never a permanent delete.
-            </p>
-          </div>
-        )}
+              <p className="px-1 pb-4 text-center text-xs text-faint">
+                Reach for this when you want to — nothing here is a task. Cleanup moves mail to
+                Trash (recoverable), never a permanent delete.
+              </p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );

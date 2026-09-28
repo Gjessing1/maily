@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { NARROW_COLUMN, SETTINGS_COLUMN } from '../ui/layout';
+import { GUTTER, NARROW_COLUMN, SETTINGS_COLUMN } from '../ui/layout';
 import { useNavigate } from 'react-router-dom';
 import type {
   AccountDto,
@@ -1332,53 +1332,55 @@ export function Settings() {
         </div>
       </header>
 
-      <div
-        className={`${SETTINGS_COLUMN} flex min-h-0 flex-1 ${wide ? 'min-[72rem]:border-x min-[72rem]:border-border' : ''}`}
-      >
-        {!drilled && (
-          <nav
-            aria-label="Settings sections"
-            className={`overflow-y-auto no-scrollbar ${
-              wide ? 'w-72 shrink-0 border-r border-border py-2' : 'flex-1 py-2'
-            }`}
-          >
-            {SETTINGS_SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSection(s.id)}
-                aria-current={current?.id === s.id ? 'page' : undefined}
-                className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-2 ${
-                  wide && current?.id === s.id ? 'bg-surface-2' : ''
-                }`}
-              >
-                <span className="min-w-0">
-                  <span className="block text-[15px]">{s.label}</span>
-                  <span className="mt-0.5 block text-xs text-faint">{s.hint}</span>
-                </span>
-                {!wide && <ChevronRightIcon className="size-5 shrink-0 text-faint" />}
-              </button>
-            ))}
-          </nav>
-        )}
+      <div className={`flex min-h-0 flex-1 ${GUTTER}`}>
+        <div
+          className={`${SETTINGS_COLUMN} flex min-h-0 flex-1 bg-bg ${wide ? 'min-[72rem]:border-x min-[72rem]:border-border' : ''}`}
+        >
+          {!drilled && (
+            <nav
+              aria-label="Settings sections"
+              className={`overflow-y-auto no-scrollbar ${
+                wide ? 'w-72 shrink-0 border-r border-border py-2' : 'flex-1 py-2'
+              }`}
+            >
+              {SETTINGS_SECTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSection(s.id)}
+                  aria-current={current?.id === s.id ? 'page' : undefined}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-2 ${
+                    wide && current?.id === s.id ? 'bg-surface-2' : ''
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-[15px]">{s.label}</span>
+                    <span className="mt-0.5 block text-xs text-faint">{s.hint}</span>
+                  </span>
+                  {!wide && <ChevronRightIcon className="size-5 shrink-0 text-faint" />}
+                </button>
+              ))}
+            </nav>
+          )}
 
-        {current && (wide || drilled) && (
-          <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
-            {/* Capped so a wide window doesn't stretch rows and hint text across the
+          {current && (wide || drilled) && (
+            <main className="min-w-0 flex-1 overflow-y-auto no-scrollbar pb-10">
+              {/* Capped so a wide window doesn't stretch rows and hint text across the
                 whole pane; a no-op at phone widths. */}
-            <div className={NARROW_COLUMN}>
-              {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
-              {current.id === 'appearance' && <AppearanceSection />}
-              {current.id === 'list' && <ListSection />}
-              {current.id === 'reading' && <ReadingSection />}
-              {current.id === 'composing' && <ComposingSection accounts={accounts} />}
-              {current.id === 'contacts' && <ContactsSection />}
-              {current.id === 'notifications' && <NotificationsSection />}
-              {current.id === 'sync' && <SyncSection />}
-              {current.id === 'storage' && <StorageSection accounts={accounts} config={config} />}
-              {current.id === 'system' && <SystemSection config={config} />}
-            </div>
-          </main>
-        )}
+              <div className={NARROW_COLUMN}>
+                {current.id === 'accounts' && <AccountsSection accounts={accounts} />}
+                {current.id === 'appearance' && <AppearanceSection />}
+                {current.id === 'list' && <ListSection />}
+                {current.id === 'reading' && <ReadingSection />}
+                {current.id === 'composing' && <ComposingSection accounts={accounts} />}
+                {current.id === 'contacts' && <ContactsSection />}
+                {current.id === 'notifications' && <NotificationsSection />}
+                {current.id === 'sync' && <SyncSection />}
+                {current.id === 'storage' && <StorageSection accounts={accounts} config={config} />}
+                {current.id === 'system' && <SystemSection config={config} />}
+              </div>
+            </main>
+          )}
+        </div>
       </div>
     </div>
   );

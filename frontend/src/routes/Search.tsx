@@ -7,7 +7,7 @@
  * string into the canonical IR and compiles it to FTS5 + SQL (`search/query.ts`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LIST_COLUMN } from '../ui/layout';
+import { GUTTER, LIST_COLUMN, PAGE } from '../ui/layout';
 import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
@@ -525,9 +525,9 @@ export function Search() {
       <main
         ref={listRef}
         onClickCapture={onListClickCapture}
-        className="flex-1 overflow-y-auto no-scrollbar"
+        className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}
       >
-        <div className={LIST_COLUMN}>
+        <div className={`${LIST_COLUMN} ${PAGE}`}>
           {error && <p className="px-4 py-2 text-sm text-danger">{error}</p>}
           {results === null ? (
             <div className="px-6 py-16 text-center text-faint">

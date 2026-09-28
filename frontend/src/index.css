@@ -6,6 +6,9 @@
  */
 @theme {
   --color-bg: #0b0b0f;
+  /* Margins around a centred content column on a wide window: a shade off --color-bg
+     so the column reads as a page without adding chrome. */
+  --color-gutter: #050507;
   --color-surface: #15151c;
   --color-surface-2: #1d1d27;
   --color-border: #26262f;
@@ -40,6 +43,7 @@
 :root[data-theme='light'] {
   color-scheme: light;
   --color-bg: #ffffff;
+  --color-gutter: #f1f1f5;
   --color-surface: #f5f5f8;
   --color-surface-2: #ececf2;
   --color-border: #e3e3ea;

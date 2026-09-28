@@ -31,6 +31,7 @@ import {
   SendIcon,
   StarIcon,
 } from '../ui/icons';
+import { GUTTER } from '../ui/layout';
 
 /** Width cap for the detail column — see the same constant in `Contacts` (ROADMAP §A1). */
 const column = 'mx-auto w-full max-w-2xl';
@@ -128,157 +129,159 @@ export function ContactDetail() {
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${column}`}>
-        {card === undefined ? (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        ) : card === null ? (
-          <p className="px-4 py-6 text-center text-sm text-danger">
-            {error ? `Couldn’t load contact: ${error}` : 'Contact not found.'}
-          </p>
-        ) : (
-          <>
-            <section className="flex flex-col items-center gap-3 px-4 py-6 text-center">
-              {card.photo ? (
-                <img src={card.photo} alt="" className="size-24 rounded-full object-cover" />
-              ) : (
-                <span
-                  className="flex size-24 items-center justify-center rounded-full text-2xl font-semibold text-white"
-                  style={{
-                    backgroundColor: `hsl(${avatarHue(card.emails[0] ?? card.name ?? '')} 45% 42%)`,
-                  }}
-                >
-                  {initials(card.name, card.emails[0] ?? null)}
-                </span>
-              )}
-              <div>
-                <h2 className="text-xl font-semibold text-fg">
-                  {card.name || card.emails[0] || '(no name)'}
-                </h2>
-                {card.nickname && <p className="text-sm text-faint">“{card.nickname}”</p>}
-                {(card.title || card.org) && (
-                  <p className="mt-0.5 text-sm text-muted">
-                    {[card.title, card.org].filter(Boolean).join(' · ')}
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {duplicate && (
-              <div className="mx-4 mb-2 flex items-center gap-3 rounded-lg bg-surface px-3 py-2 text-xs">
-                <span className="min-w-0 flex-1 text-muted">
-                  Also filed as{' '}
-                  {duplicate.cards
-                    .filter((c) => c.uid !== uid)
-                    .map(
-                      (c) =>
-                        `${c.name || c.emails[0] || 'a card'} in ${c.addressbookName ?? 'another book'}`,
-                    )
-                    .join(', ')}
-                  .
-                </span>
-                <button
-                  onClick={() => setMerging(true)}
-                  className="shrink-0 font-medium text-accent active:opacity-70"
-                >
-                  Merge…
-                </button>
-              </div>
-            )}
-
-            <div className="px-2 pb-10">
-              {card.emails.map((e) => (
-                <ActionRow
-                  key={`e-${e}`}
-                  label="email"
-                  value={e}
-                  onClick={() => compose(e)}
-                  trailing={<CopyButton value={e} label="email address" />}
-                >
-                  <MailIcon className="size-5 text-faint" />
-                </ActionRow>
-              ))}
-
-              {card.phones.map((p, i) => (
-                <ActionRow
-                  key={`p-${i}`}
-                  label={p.type ?? 'phone'}
-                  value={p.value}
-                  href={`tel:${p.value.replace(/\s+/g, '')}`}
-                >
-                  <PhoneGlyph />
-                </ActionRow>
-              ))}
-
-              {card.urls.map((u, i) => (
-                <ActionRow
-                  key={`u-${i}`}
-                  label={u.type ?? 'website'}
-                  value={u.value}
-                  href={/^https?:\/\//i.test(u.value) ? u.value : `https://${u.value}`}
-                  external
-                >
-                  <LinkIcon className="size-5 text-faint" />
-                </ActionRow>
-              ))}
-
-              {card.addresses.map((a, i) => {
-                const lines = addressLines(a);
-                const q = encodeURIComponent(lines.join(', '));
-                return (
-                  <ActionRow
-                    key={`a-${i}`}
-                    label={a.type ?? 'address'}
-                    value={lines.join('\n')}
-                    href={`https://maps.google.com/?q=${q}`}
-                    external
-                    multiline
+      <div className={`flex min-h-0 flex-1 ${GUTTER}`}>
+        <main className={`flex-1 overflow-y-auto no-scrollbar bg-bg ${column}`}>
+          {card === undefined ? (
+            <div className="flex justify-center py-16">
+              <Spinner />
+            </div>
+          ) : card === null ? (
+            <p className="px-4 py-6 text-center text-sm text-danger">
+              {error ? `Couldn’t load contact: ${error}` : 'Contact not found.'}
+            </p>
+          ) : (
+            <>
+              <section className="flex flex-col items-center gap-3 px-4 py-6 text-center">
+                {card.photo ? (
+                  <img src={card.photo} alt="" className="size-24 rounded-full object-cover" />
+                ) : (
+                  <span
+                    className="flex size-24 items-center justify-center rounded-full text-2xl font-semibold text-white"
+                    style={{
+                      backgroundColor: `hsl(${avatarHue(card.emails[0] ?? card.name ?? '')} 45% 42%)`,
+                    }}
                   >
-                    <PinGlyph />
-                  </ActionRow>
-                );
-              })}
+                    {initials(card.name, card.emails[0] ?? null)}
+                  </span>
+                )}
+                <div>
+                  <h2 className="text-xl font-semibold text-fg">
+                    {card.name || card.emails[0] || '(no name)'}
+                  </h2>
+                  {card.nickname && <p className="text-sm text-faint">“{card.nickname}”</p>}
+                  {(card.title || card.org) && (
+                    <p className="mt-0.5 text-sm text-muted">
+                      {[card.title, card.org].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              </section>
 
-              {card.birthday && (
-                <InfoRow label="birthday" value={formatBirthday(card.birthday)}>
-                  <CakeGlyph />
-                </InfoRow>
-              )}
-
-              {card.note && (
-                <InfoRow label="notes" value={card.note} multiline>
-                  <NoteGlyph />
-                </InfoRow>
-              )}
-
-              {card.categories.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-2 pt-3">
-                  {card.categories.map((c) => (
-                    <span
-                      key={c}
-                      className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-faint"
-                    >
-                      {c}
-                    </span>
-                  ))}
+              {duplicate && (
+                <div className="mx-4 mb-2 flex items-center gap-3 rounded-lg bg-surface px-3 py-2 text-xs">
+                  <span className="min-w-0 flex-1 text-muted">
+                    Also filed as{' '}
+                    {duplicate.cards
+                      .filter((c) => c.uid !== uid)
+                      .map(
+                        (c) =>
+                          `${c.name || c.emails[0] || 'a card'} in ${c.addressbookName ?? 'another book'}`,
+                      )
+                      .join(', ')}
+                    .
+                  </span>
+                  <button
+                    onClick={() => setMerging(true)}
+                    className="shrink-0 font-medium text-accent active:opacity-70"
+                  >
+                    Merge…
+                  </button>
                 </div>
               )}
 
-              <EmailIntelligence
-                value={intelligence}
-                emails={card.emails}
-                onCompose={() => card.emails[0] && compose(card.emails[0])}
-                onOpenAll={() => {
-                  const query = `contact:${card.emails.join(',')}`;
-                  navigate(`/search?q=${encodeURIComponent(query)}`);
-                }}
-                onOpenMessage={(messageId) => navigate(`/m/${messageId}`)}
-              />
-            </div>
-          </>
-        )}
-      </main>
+              <div className="px-2 pb-10">
+                {card.emails.map((e) => (
+                  <ActionRow
+                    key={`e-${e}`}
+                    label="email"
+                    value={e}
+                    onClick={() => compose(e)}
+                    trailing={<CopyButton value={e} label="email address" />}
+                  >
+                    <MailIcon className="size-5 text-faint" />
+                  </ActionRow>
+                ))}
+
+                {card.phones.map((p, i) => (
+                  <ActionRow
+                    key={`p-${i}`}
+                    label={p.type ?? 'phone'}
+                    value={p.value}
+                    href={`tel:${p.value.replace(/\s+/g, '')}`}
+                  >
+                    <PhoneGlyph />
+                  </ActionRow>
+                ))}
+
+                {card.urls.map((u, i) => (
+                  <ActionRow
+                    key={`u-${i}`}
+                    label={u.type ?? 'website'}
+                    value={u.value}
+                    href={/^https?:\/\//i.test(u.value) ? u.value : `https://${u.value}`}
+                    external
+                  >
+                    <LinkIcon className="size-5 text-faint" />
+                  </ActionRow>
+                ))}
+
+                {card.addresses.map((a, i) => {
+                  const lines = addressLines(a);
+                  const q = encodeURIComponent(lines.join(', '));
+                  return (
+                    <ActionRow
+                      key={`a-${i}`}
+                      label={a.type ?? 'address'}
+                      value={lines.join('\n')}
+                      href={`https://maps.google.com/?q=${q}`}
+                      external
+                      multiline
+                    >
+                      <PinGlyph />
+                    </ActionRow>
+                  );
+                })}
+
+                {card.birthday && (
+                  <InfoRow label="birthday" value={formatBirthday(card.birthday)}>
+                    <CakeGlyph />
+                  </InfoRow>
+                )}
+
+                {card.note && (
+                  <InfoRow label="notes" value={card.note} multiline>
+                    <NoteGlyph />
+                  </InfoRow>
+                )}
+
+                {card.categories.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 px-2 pt-3">
+                    {card.categories.map((c) => (
+                      <span
+                        key={c}
+                        className="rounded-full bg-surface-2 px-2.5 py-1 text-xs text-faint"
+                      >
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <EmailIntelligence
+                  value={intelligence}
+                  emails={card.emails}
+                  onCompose={() => card.emails[0] && compose(card.emails[0])}
+                  onOpenAll={() => {
+                    const query = `contact:${card.emails.join(',')}`;
+                    navigate(`/search?q=${encodeURIComponent(query)}`);
+                  }}
+                  onOpenMessage={(messageId) => navigate(`/m/${messageId}`)}
+                />
+              </div>
+            </>
+          )}
+        </main>
+      </div>
 
       {merging && duplicate && (
         <MergeContactsDialog

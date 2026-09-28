@@ -30,6 +30,7 @@ import {
   StarIcon,
   UploadIcon,
 } from '../ui/icons';
+import { GUTTER } from '../ui/layout';
 
 /**
  * Whole-card match: every whitespace-separated term must appear somewhere in the
@@ -377,64 +378,68 @@ export function Contacts() {
         )}
       </div>
 
-      <main className={`flex-1 overflow-y-auto no-scrollbar ${column}`}>
-        {error && <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>}
+      <div className={`flex min-h-0 flex-1 ${GUTTER}`}>
+        <main className={`flex-1 overflow-y-auto no-scrollbar bg-bg ${column}`}>
+          {error && (
+            <p className="px-4 py-3 text-sm text-danger">Couldn’t load contacts: {error}</p>
+          )}
 
-        {cards === null && !error ? (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        ) : cards && cards.length === 0 ? (
-          !error && (
-            <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
-              <p>No contacts yet.</p>
-              <button
-                onClick={() => setCreating({ addressbook: createTarget })}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
-              >
-                Add a contact
-              </button>
+          {cards === null && !error ? (
+            <div className="flex justify-center py-16">
+              <Spinner />
             </div>
-          )
-        ) : filtering && totalVisible === 0 ? (
-          !error && (
-            <div className="py-20 text-center text-muted">
-              <p>
-                No contacts match{searching ? ` “${query.trim()}”` : ''}
-                {activeCategory ? ` in “${activeCategory}”` : ''}.
-              </p>
-            </div>
-          )
-        ) : (
-          <>
-            {favoriteCards.length > 0 && (
-              <BookSection
-                group={{
-                  href: null,
-                  displayName: 'Favourites',
-                  active: true,
-                  isDefault: false,
-                  cards: favoriteCards,
-                }}
-                collapsed={false}
-                onToggle={() => undefined}
-                favorites={favorites}
-                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
-              />
-            )}
-            {sections.map((g) => (
-              <BookSection
-                key={g.href ?? '__other__'}
-                group={g}
-                collapsed={!filtering && g.href !== null && hidden.includes(g.href)}
-                onToggle={() => toggleHidden(g.href)}
-                favorites={favorites}
-                onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
-              />
-            ))}
-          </>
-        )}
-      </main>
+          ) : cards && cards.length === 0 ? (
+            !error && (
+              <div className="flex flex-col items-center gap-2 py-20 text-center text-muted">
+                <p>No contacts yet.</p>
+                <button
+                  onClick={() => setCreating({ addressbook: createTarget })}
+                  className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
+                >
+                  Add a contact
+                </button>
+              </div>
+            )
+          ) : filtering && totalVisible === 0 ? (
+            !error && (
+              <div className="py-20 text-center text-muted">
+                <p>
+                  No contacts match{searching ? ` “${query.trim()}”` : ''}
+                  {activeCategory ? ` in “${activeCategory}”` : ''}.
+                </p>
+              </div>
+            )
+          ) : (
+            <>
+              {favoriteCards.length > 0 && (
+                <BookSection
+                  group={{
+                    href: null,
+                    displayName: 'Favourites',
+                    active: true,
+                    isDefault: false,
+                    cards: favoriteCards,
+                  }}
+                  collapsed={false}
+                  onToggle={() => undefined}
+                  favorites={favorites}
+                  onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+                />
+              )}
+              {sections.map((g) => (
+                <BookSection
+                  key={g.href ?? '__other__'}
+                  group={g}
+                  collapsed={!filtering && g.href !== null && hidden.includes(g.href)}
+                  onToggle={() => toggleHidden(g.href)}
+                  favorites={favorites}
+                  onOpen={(uid) => navigate(`/contacts/${encodeURIComponent(uid)}`)}
+                />
+              ))}
+            </>
+          )}
+        </main>
+      </div>
 
       {merging && (
         <MergeContactsDialog

@@ -8,7 +8,7 @@ import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { runBackHandler, useBackHandler } from '../state/backButton';
 import { armWebBackGuard, webBackSteps } from '../state/webBack';
-import { READING_COLUMN } from '../ui/layout';
+import { GUTTER, PAGE, READING_COLUMN } from '../ui/layout';
 import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor, type InlineImage } from '../components/RichTextEditor';
 import { Spinner } from '../ui/Spinner';
@@ -655,8 +655,8 @@ export function Compose() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        <div className={READING_COLUMN}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+        <div className={`${READING_COLUMN} ${PAGE}`}>
           {error && <p className="px-4 pt-3 text-sm text-danger">{error}</p>}
 
           {(accounts?.length ?? 0) > 1 && (

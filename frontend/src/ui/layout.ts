@@ -7,6 +7,10 @@
  * gutters still scrolls the page — while an inner element carrying one of these classes
  * holds the content. Every class is a no-op below its max width, so phones are
  * unaffected.
+ *
+ * Past the max width the full-bleed area shows `GUTTER` either side of the column, and
+ * the column holding the body adds `PAGE` to paint itself in the content background,
+ * so the content is visibly set apart from the empty margins.
  */
 
 /** Message lists: Home without the split pane, Search results, the Outbox. */
@@ -23,6 +27,12 @@ export const SETTINGS_COLUMN = 'mx-auto w-full max-w-6xl';
 
 /** List and reading pane side by side: wide, but not the whole of an ultrawide. */
 export const SPLIT_FRAME = 'mx-auto w-full max-w-[120rem]';
+
+/** The full-bleed area a column sits in: a shade off the content background. */
+export const GUTTER = 'bg-gutter';
+
+/** Added to a view's body column: content background, down to the bottom of the scroller. */
+export const PAGE = 'min-h-full bg-bg';
 
 /**
  * `right` for a button pinned to the bottom-right of a centred column: the column's own

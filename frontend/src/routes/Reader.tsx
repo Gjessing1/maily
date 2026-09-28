@@ -45,7 +45,7 @@ import { fullDate, senderName } from '../ui/format';
 import { closePopout, isPopout, openPopout, usePopoutCapable } from '../ui/popout';
 import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
-import { READING_COLUMN } from '../ui/layout';
+import { GUTTER, PAGE, READING_COLUMN } from '../ui/layout';
 
 /**
  * Message reader body. Driven by an explicit `id` + `onClose` so it works both as
@@ -448,8 +448,8 @@ export function ReaderView({
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        <div className={READING_COLUMN}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+        <div className={`${READING_COLUMN} ${PAGE}`}>
           {loading ? (
             <div className="flex justify-center py-16">
               <Spinner />

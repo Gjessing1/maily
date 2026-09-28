@@ -10,7 +10,7 @@
  * and intersects them with whatever scope we send, so a stale/protected id is silently dropped.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NARROW_COLUMN } from '../ui/layout';
+import { GUTTER, NARROW_COLUMN, PAGE } from '../ui/layout';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { CleanupExecuteRequest, CleanupMessageDto } from '@maily/shared';
 import { api } from '../api/client';
@@ -340,92 +340,94 @@ export function CleanupMessages() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        {/* Outside the list conditional so the input survives (and keeps focus through) refetches. */}
-        {exec !== 'done' && (
-          <div className="mx-auto max-w-2xl px-3 pt-3">
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
-              <SearchIcon className="size-4 shrink-0 text-faint" />
-              <input
-                type="search"
-                inputMode="search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Filter by subject or sender…"
-                className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
-              />
-            </div>
-          </div>
-        )}
-        {exec === 'done' ? (
-          <div className="mx-auto max-w-2xl p-4 text-center">
-            <p className="rounded-xl bg-surface-2 px-4 py-6 text-sm text-fg">
-              Moved {queued.toLocaleString()} to Trash — recoverable there if you need them back.
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate(-1)}
-              className="mt-4 rounded-full bg-accent px-5 py-2 text-sm font-medium text-white active:opacity-80"
-            >
-              Back to Cleanup
-            </button>
-          </div>
-        ) : error && messages.length === 0 ? (
-          <p className="px-4 py-8 text-center text-danger">Couldn’t load messages.</p>
-        ) : loading ? (
-          <div className="flex justify-center py-10">
-            <Spinner />
-          </div>
-        ) : messages.length === 0 ? (
-          <p className="px-4 py-8 text-center text-muted">
-            {qDebounced ? 'No messages match the filter.' : 'No messages here.'}
-          </p>
-        ) : (
-          <div className="mx-auto max-w-2xl p-3 pb-28">
-            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
-              {messages.map((m) => (
-                <li key={m.id}>
-                  <CleanupMessageRow
-                    m={m}
-                    selectable={actionable && exec === 'idle'}
-                    selected={isChecked(m.id)}
-                    onToggle={() => toggle(m.id)}
-                    onKeep={actionable && exec === 'idle' ? () => keepMessage(m.id) : undefined}
-                  />
-                </li>
-              ))}
-            </ul>
-            <p className="px-1 pt-3 text-center text-xs text-faint">
-              Showing {messages.length.toLocaleString()} of {total.toLocaleString()}.
-            </p>
-            {hasMore && (
-              <div className="flex justify-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => void loadPage(messages.length)}
-                  disabled={loadingMore}
-                  className="flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg active:bg-surface-2 disabled:opacity-50"
-                >
-                  {loadingMore ? (
-                    <Spinner />
-                  ) : (
-                    `Load ${Math.min(PAGE_SIZE, total - messages.length)} more`
-                  )}
-                </button>
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+        <div className={`${NARROW_COLUMN} ${PAGE}`}>
+          {/* Outside the list conditional so the input survives (and keeps focus through) refetches. */}
+          {exec !== 'done' && (
+            <div className="mx-auto max-w-2xl px-3 pt-3">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+                <SearchIcon className="size-4 shrink-0 text-faint" />
+                <input
+                  type="search"
+                  inputMode="search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Filter by subject or sender…"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
+                />
               </div>
-            )}
-            {error && (
-              <p className="px-1 pt-3 text-center text-xs text-danger">
-                Couldn’t load more — try again.
+            </div>
+          )}
+          {exec === 'done' ? (
+            <div className="mx-auto max-w-2xl p-4 text-center">
+              <p className="rounded-xl bg-surface-2 px-4 py-6 text-sm text-fg">
+                Moved {queued.toLocaleString()} to Trash — recoverable there if you need them back.
               </p>
-            )}
-            {!actionable && (
-              <p className="px-1 pb-4 pt-3 text-center text-xs text-faint">
-                Tap a message to open it.
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="mt-4 rounded-full bg-accent px-5 py-2 text-sm font-medium text-white active:opacity-80"
+              >
+                Back to Cleanup
+              </button>
+            </div>
+          ) : error && messages.length === 0 ? (
+            <p className="px-4 py-8 text-center text-danger">Couldn’t load messages.</p>
+          ) : loading ? (
+            <div className="flex justify-center py-10">
+              <Spinner />
+            </div>
+          ) : messages.length === 0 ? (
+            <p className="px-4 py-8 text-center text-muted">
+              {qDebounced ? 'No messages match the filter.' : 'No messages here.'}
+            </p>
+          ) : (
+            <div className="mx-auto max-w-2xl p-3 pb-28">
+              <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
+                {messages.map((m) => (
+                  <li key={m.id}>
+                    <CleanupMessageRow
+                      m={m}
+                      selectable={actionable && exec === 'idle'}
+                      selected={isChecked(m.id)}
+                      onToggle={() => toggle(m.id)}
+                      onKeep={actionable && exec === 'idle' ? () => keepMessage(m.id) : undefined}
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className="px-1 pt-3 text-center text-xs text-faint">
+                Showing {messages.length.toLocaleString()} of {total.toLocaleString()}.
               </p>
-            )}
-          </div>
-        )}
+              {hasMore && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadPage(messages.length)}
+                    disabled={loadingMore}
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg active:bg-surface-2 disabled:opacity-50"
+                  >
+                    {loadingMore ? (
+                      <Spinner />
+                    ) : (
+                      `Load ${Math.min(PAGE_SIZE, total - messages.length)} more`
+                    )}
+                  </button>
+                </div>
+              )}
+              {error && (
+                <p className="px-1 pt-3 text-center text-xs text-danger">
+                  Couldn’t load more — try again.
+                </p>
+              )}
+              {!actionable && (
+                <p className="px-1 pb-4 pt-3 text-center text-xs text-faint">
+                  Tap a message to open it.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </main>
 
       {/* Undo window for the per-row "Keep" shield — a mistap is otherwise irreversible.

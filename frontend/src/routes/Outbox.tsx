@@ -6,7 +6,7 @@
  * (the runner claimed it first), in which case we just refresh the list.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { LIST_COLUMN } from '../ui/layout';
+import { GUTTER, LIST_COLUMN, PAGE } from '../ui/layout';
 import { useNavigate } from 'react-router-dom';
 import type { OutboxEntry } from '@maily/shared';
 import { api } from '../api/client';
@@ -71,8 +71,8 @@ export function Outbox() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
-        <div className={LIST_COLUMN}>
+      <main className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER}`}>
+        <div className={`${LIST_COLUMN} ${PAGE}`}>
           {entries === null ? (
             <div className="flex justify-center py-10">
               <Spinner className="size-5" />

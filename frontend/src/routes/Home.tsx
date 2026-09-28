@@ -20,7 +20,7 @@ import { useMediaQuery } from '../ui/useMediaQuery';
 import { usePullToRefresh } from '../ui/usePullToRefresh';
 import { PullToRefreshIndicator } from '../ui/PullToRefreshIndicator';
 import { Spinner } from '../ui/Spinner';
-import { LIST_COLUMN, pinnedRight, SPLIT_FRAME } from '../ui/layout';
+import { GUTTER, LIST_COLUMN, PAGE, pinnedRight, SPLIT_FRAME } from '../ui/layout';
 import { OFFLINE_READ_ONLY_MESSAGE, useOnlineStatus } from '../state/connectivity';
 import {
   ArchiveIcon,
@@ -407,7 +407,7 @@ export function Home() {
       </header>
 
       <main
-        className={`flex-1 overflow-y-auto no-scrollbar ${!isWide ? 'pb-16' : ''}`}
+        className={`flex-1 overflow-y-auto no-scrollbar ${GUTTER} ${!isWide ? 'pb-16' : ''}`}
         {...pull.handlers}
       >
         <PullToRefreshIndicator
@@ -416,7 +416,7 @@ export function Home() {
           refreshing={pull.refreshing}
           dragging={pull.dragging}
         />
-        <div className={LIST_COLUMN}>
+        <div className={`${LIST_COLUMN} ${PAGE}`}>
           {error && <p className="px-4 py-2 text-sm text-danger">Couldn’t refresh: {error}</p>}
 
           {loading ? (
@@ -481,10 +481,10 @@ export function Home() {
   );
 
   return (
-    <div className="h-full">
+    <div className={`h-full ${splitMode ? GUTTER : ''}`}>
       {splitMode ? (
         <div
-          className={`${SPLIT_FRAME} flex h-full ${
+          className={`${SPLIT_FRAME} flex h-full bg-bg ${
             prefs.readingPane === 'right' ? 'flex-row' : 'flex-col'
           } min-[120rem]:border-x min-[120rem]:border-border`}
         >
