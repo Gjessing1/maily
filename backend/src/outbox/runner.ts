@@ -15,13 +15,9 @@ import { and, asc, eq, lte, or, isNull, count } from 'drizzle-orm';
 import type { SendMessageRequest, OutboxEntry, OutboxKind } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { outbox } from '../db/schema.js';
-import {
-  folderByRole,
-  isMessageLocalOnly,
-  uidLocationForMessage,
-  uidLocationInFolder,
-} from '../db/queries.js';
-import { restoreMessageDeleted } from '../imap/store.js';
+import { folderByRole, folderIdsForMessage } from '../db/queries.js';
+import { serverPlacement, type ServerPlacement } from '../db/placement.js';
+import { relinkMessageToFolder, restoreMessageDeleted } from '../imap/store.js';
 import { moveToFolderOnServer } from '../imap/move.js';
 import { getEngine } from '../imap/registry.js';
 import { sendMessage } from '../mail/send.js';
@@ -270,10 +266,8 @@ function markFailed(row: DueRow, message: string, now: Date): void {
 
 /** Execute one claimed row. Throws on a retryable failure; returns normally when terminal/done. */
 async function execute(row: DueRow): Promise<void> {
-  const engine = getEngine(row.accountId);
-  if (!engine) throw new Error(`no engine for account ${row.accountId} (not ready yet)`);
-
   if (row.kind === 'send') {
+    const engine = requireEngine(row.accountId);
     if (!row.payload) {
       markDone(row.id); // malformed/empty — nothing to send
       return;
@@ -295,38 +289,57 @@ async function execute(row: DueRow): Promise<void> {
     return;
   }
 
-  // A detached (local_only) message has no server copy to move — its UID is stale, so an
-  // IMAP MOVE would fail and retry forever. Delete/archive of such a message is a pure
-  // local action: the route already applied the local tombstone/relink, so just finish.
-  if (isMessageLocalOnly(row.messageId)) {
-    markDone(row.id);
-    return;
-  }
-
   if (row.kind === 'delete') {
     const trash = folderByRole(row.accountId, 'trash');
-    const loc = uidLocationForMessage(row.messageId);
-    if (!trash || !loc || loc.folderPath === trash.path) {
-      // No trash folder, or nothing to move / already in Trash — the local tombstone stands.
-      markDone(row.id);
-      return;
-    }
-    await moveToFolderOnServer(engine.accountConfig, row.messageId, loc, trash);
+    // No trash folder — the local tombstone stands.
+    if (trash) await moveOrRelink(row, row.messageId, serverPlacement(row.messageId), trash);
     markDone(row.id);
     return;
   }
 
-  // archive
+  // archive — only the inbox copy moves; anything not in the inbox is already archived/elsewhere.
   const archive = folderByRole(row.accountId, 'archive');
   const inbox = folderByRole(row.accountId, 'inbox');
-  const loc = inbox ? uidLocationInFolder(row.messageId, inbox.id) : undefined;
-  if (!archive || !loc || loc.folderPath === archive.path) {
-    // No archive folder, or not in the inbox (already archived/elsewhere) — nothing to do.
-    markDone(row.id);
-    return;
+  if (archive && inbox && folderIdsForMessage(row.messageId).includes(inbox.id)) {
+    await moveOrRelink(row, row.messageId, serverPlacement(row.messageId, inbox.id), archive);
   }
-  await moveToFolderOnServer(engine.accountConfig, row.messageId, loc, archive);
   markDone(row.id);
+}
+
+/**
+ * Put a message in `dest`. A server copy is MOVEd (which relinks locally). A detached message
+ * has no server copy, so the local relink IS the action — the same purely local move the cleanup
+ * trash queue gives it — and nothing will reconcile it later, so announce the destination here.
+ */
+async function moveOrRelink(
+  row: DueRow,
+  messageId: string,
+  placement: ServerPlacement,
+  dest: { id: string; path: string },
+): Promise<void> {
+  switch (placement.kind) {
+    case 'server':
+      if (placement.folderPath === dest.path) return;
+      await moveToFolderOnServer(
+        requireEngine(row.accountId).accountConfig,
+        messageId,
+        placement,
+        dest,
+      );
+      return;
+    case 'local-only':
+      relinkMessageToFolder(messageId, dest.id, null);
+      emitSignal({ type: 'mail:folder', accountId: row.accountId, folderId: dest.id });
+      return;
+    case 'unplaced':
+      return; // nothing on the server to move
+  }
+}
+
+function requireEngine(accountId: string): NonNullable<ReturnType<typeof getEngine>> {
+  const engine = getEngine(accountId);
+  if (!engine) throw new Error(`no engine for account ${accountId} (not ready yet)`);
+  return engine;
 }
 
 /**

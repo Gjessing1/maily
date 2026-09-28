@@ -26,6 +26,7 @@ import type {
   CleanupSummaryDto,
 } from '@maily/shared';
 import { db } from '../db/client.js';
+import { visibleRaw } from '../db/visibility.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
 import { effectiveKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
 import { SENDER_KEY } from './senders.js';
@@ -162,7 +163,7 @@ function totalsFor(where: SQL): { totalMessages: number; totalBytes: number } {
   return { totalMessages: row.totalMessages, totalBytes: row.totalBytes };
 }
 
-const LIVE = sql`m.deleted_at IS NULL`;
+const LIVE = visibleRaw();
 
 /**
  * The base predicate of every DELETE-ELIGIBLE slice: live and not user-preserved.
@@ -174,7 +175,7 @@ const LIVE = sql`m.deleted_at IS NULL`;
  * local bytes are reclaimed by a later Trash purge. The informational storage audit and
  * the summary totals stay on {@link LIVE} (preserved mail still occupies local bytes).
  */
-const ELIGIBLE = sql`m.deleted_at IS NULL AND m.cleanup_keep = 0`;
+const ELIGIBLE = sql`${LIVE} AND m.cleanup_keep = 0`;
 
 /**
  * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice

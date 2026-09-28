@@ -218,6 +218,13 @@
       "when": 1789420000000,
       "tag": "0030_server_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1789506400000,
+      "tag": "0031_trash_stranded_detached_deletes",
+      "breakpoints": true
     }
   ]
 }

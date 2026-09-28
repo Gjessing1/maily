@@ -18,7 +18,8 @@
  */
 import { existsSync } from 'node:fs';
 import type { DetachPreviewDto, DetachRequest, DetachStatusDto } from '@maily/shared';
-import { folderByRole, listDetachCandidates, uidLocationForMessage } from '../db/queries.js';
+import { folderByRole, listDetachCandidates } from '../db/queries.js';
+import { serverPlacement } from '../db/placement.js';
 import { markMessageLocalOnly } from '../imap/store.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
@@ -185,8 +186,8 @@ async function runDetach(
     // Group by the source folder we'll move FROM (skip any already in Trash → just flag).
     const byFolder = new Map<string, { id: string; uid: number }[]>();
     for (const id of messageIds) {
-      const loc = uidLocationForMessage(id);
-      if (!loc || loc.folderPath === trash.path) {
+      const loc = serverPlacement(id);
+      if (loc.kind !== 'server' || loc.folderPath === trash.path) {
         // No live server location (or already trashed) — nothing to move; flag locally.
         markMessageLocalOnly(id);
         job.processed += 1;

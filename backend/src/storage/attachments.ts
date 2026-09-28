@@ -11,11 +11,8 @@ import { pipeline } from 'node:stream/promises';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import type { AttachmentRow } from '../db/queries.js';
-import {
-  accountIdForMessage,
-  markAttachmentDownloaded,
-  uidLocationForMessage,
-} from '../db/queries.js';
+import { accountIdForMessage, markAttachmentDownloaded } from '../db/queries.js';
+import { serverPlacement } from '../db/placement.js';
 import { sourcePathForMessage } from '../imap/store.js';
 import { extractPartFromSource } from '../imap/source-extract.js';
 import { withTransientConnection } from '../imap/connection.js';
@@ -69,7 +66,7 @@ function materialisePathFor(att: AttachmentRow): string {
  *      connection by its BODYSTRUCTURE part id.
  * Returns null if no path can serve the bytes. Once a message is archived, step 2
  * resolves with no IMAP at all, so an archived message stays fetchable even after
- * every `(folder, uid)` mapping is gone — `uidLocationForMessage` only gates step 3.
+ * every `(folder, uid)` mapping is gone — `serverPlacement` only gates step 3.
  */
 export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string | null> {
   // 1. Already on disk.
@@ -110,9 +107,10 @@ export async function ensureAttachmentOnDisk(att: AttachmentRow): Promise<string
   }
 
   // 3. Fetch from IMAP — the message isn't archived (or the part didn't resolve).
-  const loc = uidLocationForMessage(att.messageId);
-  const engine = loc ? getEngine(loc.accountId) : undefined;
-  if (!loc || !engine || !att.imapPartId) return null;
+  // A detached message's mapped UID is stale — there is no server copy to fetch from.
+  const loc = serverPlacement(att.messageId);
+  const engine = loc.kind === 'server' ? getEngine(loc.accountId) : undefined;
+  if (loc.kind !== 'server' || !engine || !att.imapPartId) return null;
 
   await mkdir(dirname(path), { recursive: true });
   const fetched = await withTransientConnection(engine.accountConfig, async (client) => {

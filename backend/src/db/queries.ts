@@ -18,6 +18,7 @@ import {
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { db } from './client.js';
+import { scopeForFolder, scopeForRole, visible } from './visibility.js';
 import {
   accounts,
   attachments,
@@ -39,33 +40,13 @@ export function listFolders(accountId: string): (typeof folders.$inferSelect)[] 
   return db.select().from(folders).where(eq(folders.accountId, accountId)).all();
 }
 
-/**
- * Tombstoned messages (§13) are hidden everywhere EXCEPT trash-role folders: a delete/cleanup
- * tombstones the row and MOVEs it to Trash, so in Trash the tombstone IS the expected content —
- * hiding it there would make the move look like a hard delete (nothing ever "arrives" in Trash).
- * Purged shells (`purged_at`, migration 0023) are the exception even in Trash: their heavy data is
- * gone and only a no-resync tombstone remains, so the trash branches swap the `deleted_at` filter
- * for `isNull(purged_at)` rather than dropping the filter entirely.
- */
-function isTrashFolder(folderId: string): boolean {
-  return (
-    db.select({ role: folders.role }).from(folders).where(eq(folders.id, folderId)).get()?.role ===
-    'trash'
-  );
-}
-
-/** Count of messages currently mapped into a folder (cached count). Tombstones hidden (§13) except in trash. */
+/** Count of visible messages mapped into a folder (cached count). */
 export function folderMessageCount(folderId: string): number {
   const row = db
     .select({ n: sql<number>`count(*)` })
     .from(messageFolders)
     .innerJoin(messages, eq(messageFolders.messageId, messages.id))
-    .where(
-      and(
-        eq(messageFolders.folderId, folderId),
-        isTrashFolder(folderId) ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
-      ),
-    )
+    .where(and(eq(messageFolders.folderId, folderId), visible(scopeForFolder(folderId))))
     .get();
   return row?.n ?? 0;
 }
@@ -86,13 +67,6 @@ export function getMessage(id: string): MessageRow | undefined {
   return db.select().from(messages).where(eq(messages.id, id)).get();
 }
 
-/** Whether a message has been detached to local-only (no server copy; inert to sync). */
-export function isMessageLocalOnly(id: string): boolean {
-  return (
-    db.select({ l: messages.localOnly }).from(messages).where(eq(messages.id, id)).get()?.l === true
-  );
-}
-
 /**
  * Unread-only filter for the list queries (`?unread=1`). MUST stay a literal `= 0`, not a
  * bound parameter: the `messages_unseen_received_idx` partial index (migration 0024) only
@@ -100,7 +74,7 @@ export function isMessageLocalOnly(id: string): boolean {
  */
 const unseen = sql`${messages.seen} = 0`;
 
-/** Messages in a folder, newest first, keyset-paginated by receivedAt. Tombstones hidden (§13) except in trash. */
+/** Visible messages in a folder, newest first, keyset-paginated by receivedAt. */
 export function listMessages(
   folderId: string,
   limit: number,
@@ -109,7 +83,7 @@ export function listMessages(
 ): MessageRow[] {
   const where = and(
     eq(messageFolders.folderId, folderId),
-    isTrashFolder(folderId) ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
+    visible(scopeForFolder(folderId)),
     beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
     unseenOnly ? unseen : undefined,
   );
@@ -135,13 +109,7 @@ export function listThread(accountId: string, threadId: string): MessageRow[] {
   return db
     .select()
     .from(messages)
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        eq(messages.threadId, threadId),
-        isNull(messages.deletedAt),
-      ),
-    )
+    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, threadId), visible()))
     .orderBy(messages.receivedAt)
     .all();
 }
@@ -152,7 +120,7 @@ export type UnifiedRole = 'inbox' | 'drafts' | 'sent' | 'junk' | 'trash';
 /**
  * Virtual unified view: every account's folder of a given role merged into one
  * newest-first stream ("All inboxes", "All sent", …). Same keyset pagination as
- * `listMessages`; tombstones hidden (§13). A message lives in exactly one account's
+ * `listMessages`; visibility follows the role (Trash shows its tombstones). A message lives in exactly one account's
  * folder per role, so no cross-account de-dup is needed.
  */
 export function listUnifiedByRole(
@@ -169,9 +137,7 @@ export function listUnifiedByRole(
     .where(
       and(
         eq(folders.role, role),
-        // In the unified Trash, tombstones mapped into a trash folder are the content itself;
-        // only purged shells (heavy data reclaimed) are hidden there.
-        role === 'trash' ? isNull(messages.purgedAt) : isNull(messages.deletedAt),
+        visible(scopeForRole(role)),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
         unseenOnly ? unseen : undefined,
       ),
@@ -217,7 +183,7 @@ export function listArchived(
       and(
         eq(messages.accountId, accountId),
         eq(folders.role, 'archive'),
-        isNull(messages.deletedAt),
+        visible(),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
         unseenOnly ? unseen : undefined,
         notExists(
@@ -254,7 +220,7 @@ export function listStarred(
       and(
         eq(messages.accountId, accountId),
         eq(messages.flagged, true),
-        isNull(messages.deletedAt),
+        visible(),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
         unseenOnly ? unseen : undefined,
       ),
@@ -310,7 +276,7 @@ function computeAccountContentBytes(accountId: string): number {
       ), 0)`,
     })
     .from(messages)
-    .where(and(eq(messages.accountId, accountId), isNull(messages.deletedAt)))
+    .where(and(eq(messages.accountId, accountId), visible()))
     .get();
 
   const atts = db
@@ -355,7 +321,7 @@ export function listDetachCandidates(
     .where(
       and(
         eq(messages.accountId, accountId),
-        isNull(messages.deletedAt),
+        visible(),
         eq(messages.localOnly, false),
         beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
         afterMs ? gte(messages.receivedAt, new Date(afterMs)) : undefined,
@@ -441,62 +407,6 @@ export function markAttachmentDownloaded(id: string, storagePath: string, sizeBy
     .set({ storagePath, sizeBytes, downloadedAt: new Date() })
     .where(eq(attachments.id, id))
     .run();
-}
-
-/**
- * A folder location (path + UID) for a message — used to fetch bytes on demand and
- * to target IMAP moves/stores.
- *
- * A message is mapped into many folders (ARCHITECTURE §7), so this has to *choose*.
- * The ordering is deliberate, not incidental: Gmail's `[Gmail]/Starred` (and
- * `[Gmail]/Important`) are virtual views whose UIDs go stale the moment the label is
- * cleared, and an unordered `.get()` was picking exactly those — yielding a UID the
- * server no longer knows, so attachment fetches came back empty.
- *
- * So role-bearing mailboxes (the ones a message durably lives in) outrank `custom`
- * ones. Deliberately no ordering *among* the role-bearing folders: callers that need a
- * specific mailbox — restore-from-Trash MOVEs out of `loc` — depend on the mapping they
- * actually have, and ranking one role over another would silently retarget them.
- */
-const UID_LOCATION_ROLE_RANK = sql`CASE WHEN ${folders.role} = 'custom' THEN 1 ELSE 0 END`;
-
-export function uidLocationForMessage(
-  messageId: string,
-): { accountId: string; folderPath: string; uid: number } | undefined {
-  const row = db
-    .select({
-      accountId: messages.accountId,
-      folderPath: folders.path,
-      uid: messageFolders.uid,
-    })
-    .from(messageFolders)
-    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
-    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
-    .where(and(eq(messageFolders.messageId, messageId), isNotNull(messageFolders.uid)))
-    // Tie-break on path so the pick is stable across runs rather than storage-order dependent.
-    .orderBy(UID_LOCATION_ROLE_RANK, folders.path)
-    .get();
-  return row && row.uid !== null ? { ...row, uid: row.uid } : undefined;
-}
-
-/** A message's (path + UID) within ONE specific folder, if mapped there (for moves). */
-export function uidLocationInFolder(
-  messageId: string,
-  folderId: string,
-): { folderPath: string; uid: number } | undefined {
-  const row = db
-    .select({ folderPath: folders.path, uid: messageFolders.uid })
-    .from(messageFolders)
-    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
-    .where(
-      and(
-        eq(messageFolders.messageId, messageId),
-        eq(messageFolders.folderId, folderId),
-        isNotNull(messageFolders.uid),
-      ),
-    )
-    .get();
-  return row && row.uid !== null ? { folderPath: row.folderPath, uid: row.uid } : undefined;
 }
 
 /**

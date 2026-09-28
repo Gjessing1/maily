@@ -15,8 +15,9 @@
  */
 import { and, count, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { db, withWriteRetry } from '../db/client.js';
-import { cleanupQueue, messages } from '../db/schema.js';
-import { folderByRole, uidLocationForMessage } from '../db/queries.js';
+import { cleanupQueue } from '../db/schema.js';
+import { folderByRole } from '../db/queries.js';
+import { serverPlacement } from '../db/placement.js';
 import { moveBatchToFolderOnServer, type MoveItem } from '../imap/move.js';
 import { getEngine } from '../imap/registry.js';
 import { relinkMessageToFolder } from '../imap/store.js';
@@ -140,26 +141,6 @@ export async function runTrashQueueOnce(): Promise<number> {
   const due = claimDue(now, BATCH);
   if (due.length === 0) return 0;
 
-  // Detached (local_only) mail has no server copy to MOVE — its "move to Trash" is purely
-  // local: relink the row into the account's trash folder (uid null) so it surfaces there,
-  // recoverable until a Trash purge. No engine needed, so it works for offline accounts too.
-  const localOnly = new Set(
-    db
-      .select({ id: messages.id })
-      .from(messages)
-      .where(
-        and(
-          inArray(
-            messages.id,
-            due.map((r) => r.messageId),
-          ),
-          eq(messages.localOnly, true),
-        ),
-      )
-      .all()
-      .map((r) => r.id),
-  );
-
   // Bucket by (account, source folder); resolve each message's current UID location and the
   // account's trash folder. Rows with no movable location (unmapped) or no trash folder /
   // engine are handled out-of-band below.
@@ -170,7 +151,11 @@ export async function runTrashQueueOnce(): Promise<number> {
 
   for (const row of due) {
     const trash = folderByRole(row.accountId, 'trash');
-    if (localOnly.has(row.messageId)) {
+    const loc = serverPlacement(row.messageId);
+    // Detached (local_only) mail has no server copy to MOVE — its "move to Trash" is purely
+    // local: relink the row into the account's trash folder (uid null) so it surfaces there,
+    // recoverable until a Trash purge. No engine needed, so it works for offline accounts too.
+    if (loc.kind === 'local-only') {
       if (!trash) {
         noTarget.push(row);
         continue;
@@ -185,8 +170,7 @@ export async function runTrashQueueOnce(): Promise<number> {
       noTarget.push(row);
       continue;
     }
-    const loc = uidLocationForMessage(row.messageId);
-    if (!loc || loc.folderPath === trash.path) {
+    if (loc.kind === 'unplaced' || loc.folderPath === trash.path) {
       // Unmapped (nothing to MOVE) or already in Trash — the local tombstone stands; done.
       alreadyDone.push(row.id);
       continue;

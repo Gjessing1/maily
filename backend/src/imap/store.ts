@@ -12,9 +12,11 @@
  * arrival orders so out-of-order delivery is back-fillable.
  */
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, isNull, ne, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import type { FolderRole } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
+import { isMessageLocalOnly, trackedMapping } from '../db/placement.js';
+import { visible } from '../db/visibility.js';
 import { attachments, messageFolders, messages } from '../db/schema.js';
 import type { MessageFlags, ParsedMessage } from './types.js';
 import type { RebuiltContent } from './source-parse.js';
@@ -127,14 +129,6 @@ function mergeOrphanReplies(accountId: string, newId: string, parsed: ParsedMess
 }
 
 /** Insert-or-update message<->folder mapping carrying the per-folder IMAP UID. */
-/** Whether a message has been detached to local-only (inert to IMAP reconciliation). */
-function isLocalOnly(messageId: string): boolean {
-  return (
-    db.select({ l: messages.localOnly }).from(messages).where(eq(messages.id, messageId)).get()
-      ?.l === true
-  );
-}
-
 function linkFolder(messageId: string, folderId: string, uid: number | null): void {
   db.insert(messageFolders)
     .values({ messageId, folderId, uid })
@@ -162,19 +156,27 @@ export function touchKnownMessage(
   // A detached (local_only) message is inert to sync: it has no live server copy we
   // track, so a transient re-sight — e.g. when the move-to-Trash copy surfaces during a
   // Trash reconcile — must NOT re-link it into a new folder or touch its frozen state.
-  if (isLocalOnly(messageId)) return;
+  if (isMessageLocalOnly(messageId)) return;
   const set: Partial<typeof messages.$inferInsert> = {
     seen: flags.seen,
     flagged: flags.flagged,
     answered: flags.answered,
     draft: flags.draft,
   };
+  db.update(messages).set(set).where(eq(messages.id, messageId)).run();
   // Re-sighting a message in a non-trash folder un-tombstones it: it clearly still
   // exists on the server (undelete, or a move-race that briefly orphaned it). A
   // re-sight in Trash must NOT clear the tombstone — trashed mail stays hidden from
-  // every list/search view (ARCHITECTURE §13).
-  if (folderRole !== 'trash') set.deletedAt = null;
-  db.update(messages).set(set).where(eq(messages.id, messageId)).run();
+  // every list/search view (ARCHITECTURE §13). Nor may any re-sight revive a purged
+  // shell: its body is gone, and db/visibility.ts relies on purged ⇒ tombstoned.
+  if (folderRole !== 'trash') {
+    db.update(messages)
+      .set({ deletedAt: null })
+      .where(
+        and(eq(messages.id, messageId), isNotNull(messages.deletedAt), isNull(messages.purgedAt)),
+      )
+      .run();
+  }
   linkFolder(messageId, folderId, uid);
 }
 
@@ -309,7 +311,7 @@ export function setCleanupKeep(messageIds: string[], keep: boolean): number {
  * Used after an interactive MOVE-to-Trash: on Gmail the server strips every other
  * label, on generic IMAP the one source folder is vacated — either way the local
  * mapping converges to just the destination. Keeping one `(folder, uid)` mapping
- * leaves the message's attachments fetchable via `uidLocationForMessage`.
+ * leaves the message's attachments fetchable via `serverPlacement`.
  */
 export function relinkMessageToFolder(
   messageId: string,
@@ -424,13 +426,7 @@ export function missingSourceRefs(accountId: string): MissingSourceRef[] {
     })
     .from(messageFolders)
     .innerJoin(messages, eq(messages.id, messageFolders.messageId))
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        isNull(messages.sourcePath),
-        isNull(messages.deletedAt),
-      ),
-    )
+    .where(and(eq(messages.accountId, accountId), isNull(messages.sourcePath), visible()))
     .all();
   // A mapping without a UID (mid-move bookkeeping) can't be fetched — skip it; the
   // message's other mappings (or a later pass) cover it.
@@ -473,8 +469,7 @@ export function reconcilableUids(folderId: string): number[] {
   return db
     .select({ uid: messageFolders.uid })
     .from(messageFolders)
-    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
-    .where(and(eq(messageFolders.folderId, folderId), eq(messages.localOnly, false)))
+    .where(and(eq(messageFolders.folderId, folderId), trackedMapping))
     .all()
     .map((r) => r.uid)
     .filter((u): u is number => u !== null);
@@ -492,16 +487,20 @@ export function reconcilableUids(folderId: string): number[] {
 export function unlinkUids(folderId: string, uids: number[]): void {
   if (uids.length === 0) return;
   db.transaction(() => {
-    const affected = db
-      .select({ id: messageFolders.messageId, localOnly: messages.localOnly })
-      .from(messageFolders)
-      .innerJoin(messages, eq(messages.id, messageFolders.messageId))
-      .where(and(eq(messageFolders.folderId, folderId), inArray(messageFolders.uid, uids)))
-      .all();
-
     // Detached (local_only) messages are inert: their mapping is frozen, so neither
     // unlink nor tombstone them when their now-stale server UID disappears.
-    const dropIds = affected.filter((r) => !r.localOnly).map((r) => r.id);
+    const dropIds = db
+      .select({ id: messageFolders.messageId })
+      .from(messageFolders)
+      .where(
+        and(
+          eq(messageFolders.folderId, folderId),
+          inArray(messageFolders.uid, uids),
+          trackedMapping,
+        ),
+      )
+      .all()
+      .map((r) => r.id);
     if (dropIds.length === 0) return;
 
     db.delete(messageFolders)
@@ -532,20 +531,7 @@ export function unlinkUids(folderId: string, uids: number[]): void {
  * tracks a live server UID, so a UIDVALIDITY rebuild must not orphan them.
  */
 export function clearFolderUids(folderId: string): void {
-  const localOnlyIds = db
-    .select({ id: messageFolders.messageId })
-    .from(messageFolders)
-    .innerJoin(messages, eq(messages.id, messageFolders.messageId))
-    .where(and(eq(messageFolders.folderId, folderId), eq(messages.localOnly, true)))
-    .all()
-    .map((r) => r.id);
-
   db.delete(messageFolders)
-    .where(
-      and(
-        eq(messageFolders.folderId, folderId),
-        localOnlyIds.length ? notInArray(messageFolders.messageId, localOnlyIds) : undefined,
-      ),
-    )
+    .where(and(eq(messageFolders.folderId, folderId), trackedMapping))
     .run();
 }

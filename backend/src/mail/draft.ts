@@ -14,7 +14,8 @@ import { createLogger } from '../logger.js';
 import { emitSignal } from '../events.js';
 import { withTransientConnection } from '../imap/connection.js';
 import { markMessageDeleted } from '../imap/store.js';
-import { getMessage, uidLocationForMessage } from '../db/queries.js';
+import { getMessage } from '../db/queries.js';
+import { serverPlacement } from '../db/placement.js';
 import { deleteUpload } from '../storage/uploads.js';
 import { buildMime } from './compose.js';
 
@@ -70,20 +71,23 @@ export async function saveDraft(
  */
 export async function removeDraft(config: AccountConfig, messageId: string): Promise<void> {
   const msg = getMessage(messageId);
-  const loc = uidLocationForMessage(messageId);
-  if (!msg || !loc) return;
+  const loc = serverPlacement(messageId);
+  if (!msg || loc.kind === 'unplaced') return;
 
-  try {
-    await withTransientConnection(config, async (client) => {
-      const lock = await client.getMailboxLock(loc.folderPath);
-      try {
-        await client.messageDelete(String(loc.uid), { uid: true });
-      } finally {
-        lock.release();
-      }
-    });
-  } catch (err) {
-    log.warn(`failed to expunge old draft ${messageId}: ${(err as Error).message}`);
+  // A detached draft has no server copy — dropping it locally is the whole removal.
+  if (loc.kind === 'server') {
+    try {
+      await withTransientConnection(config, async (client) => {
+        const lock = await client.getMailboxLock(loc.folderPath);
+        try {
+          await client.messageDelete(String(loc.uid), { uid: true });
+        } finally {
+          lock.release();
+        }
+      });
+    } catch (err) {
+      log.warn(`failed to expunge old draft ${messageId}: ${(err as Error).message}`);
+    }
   }
 
   // Drop it locally regardless: the server copy is gone (or will reconcile away).

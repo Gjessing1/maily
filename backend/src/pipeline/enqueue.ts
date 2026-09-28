@@ -13,8 +13,9 @@
  * enricher's own `applies()` gate is evaluated later, at RUN time, so enqueue stays
  * cheap (needs only the received date, never the full body).
  */
-import { and, desc, eq, gte, isNull, notExists } from 'drizzle-orm';
+import { and, desc, eq, gte, notExists } from 'drizzle-orm';
 import { db, withWriteRetry } from '../db/client.js';
+import { visible } from '../db/visibility.js';
 import { enrichments, messages } from '../db/schema.js';
 import { env } from '../env.js';
 import { allEnrichers, enrichersForTier } from './registry.js';
@@ -67,7 +68,7 @@ export function backfillPending(limit: number, now: Date = new Date()): number {
     .from(messages)
     .where(
       and(
-        isNull(messages.deletedAt),
+        visible(),
         notExists(
           db
             .select({ one: enrichments.id })
@@ -110,7 +111,7 @@ export function backfillEnricherCoverage(limit: number, now: Date = new Date()):
         .from(messages)
         .where(
           and(
-            isNull(messages.deletedAt),
+            visible(),
             // Operational side effects are horizon-gated — never backfilled onto old mail.
             e.kind === 'operational' ? gte(messages.receivedAt, cutoff) : undefined,
             notExists(

@@ -10,13 +10,8 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { emitSignal } from '../../events.js';
-import {
-  folderByRole,
-  getMessage,
-  isMessageLocalOnly,
-  uidLocationForMessage,
-  uidLocationInFolder,
-} from '../../db/queries.js';
+import { folderByRole, getMessage } from '../../db/queries.js';
+import { serverPlacement } from '../../db/placement.js';
 import {
   markMessageDeleted,
   relinkMessageToFolder,
@@ -49,9 +44,10 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
       // must NOT block the HTTP response on this transient connection — under a heavy
       // background sweep it can be slow, and a client-side timeout would bounce the
       // optimistic UI update back. The next folder resync reconciles if it fails.
-      const loc = uidLocationForMessage(m.id);
-      const engine = loc ? getEngine(loc.accountId) : undefined;
-      if (loc && engine) {
+      // Detached mail has no server copy: the local write above is the whole action.
+      const loc = serverPlacement(m.id);
+      const engine = loc.kind === 'server' ? getEngine(loc.accountId) : undefined;
+      if (loc.kind === 'server' && engine) {
         void (async () => {
           try {
             await withTransientConnection(engine.accountConfig, async (client) => {
@@ -114,11 +110,11 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     const inbox = folderByRole(m.accountId, 'inbox');
     if (!inbox) return reply.code(409).send({ error: 'no inbox folder' });
 
-    if (isMessageLocalOnly(m.id)) {
+    const loc = serverPlacement(m.id);
+    if (loc.kind === 'unplaced') return reply.code(409).send({ error: 'no server location' });
+    if (loc.kind === 'local-only') {
       relinkMessageToFolder(m.id, inbox.id, null);
     } else {
-      const loc = uidLocationForMessage(m.id);
-      if (!loc) return reply.code(409).send({ error: 'no server location' });
       const engine = getEngine(m.accountId);
       if (!engine) return reply.code(503).send({ error: 'account offline' });
 
@@ -151,9 +147,9 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     if (!m) return reply.code(404).send({ error: 'not found' });
 
     const trash = folderByRole(m.accountId, 'trash');
-    const loc = trash ? uidLocationInFolder(m.id, trash.id) : undefined;
-    if (!isMessageLocalOnly(m.id)) {
-      if (!trash || !loc) return reply.code(409).send({ error: 'message is not in Trash' });
+    const loc = trash ? serverPlacement(m.id, trash.id) : undefined;
+    if (loc?.kind !== 'local-only') {
+      if (loc?.kind !== 'server') return reply.code(409).send({ error: 'message is not in Trash' });
       const engine = getEngine(m.accountId);
       if (!engine) return reply.code(503).send({ error: 'account offline' });
       try {

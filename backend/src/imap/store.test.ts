@@ -497,6 +497,27 @@ test('re-sight in a NON-trash folder clears an existing tombstone; a trash re-si
   assert.equal(row?.deletedAt, null, 'non-trash re-sight un-tombstones');
 });
 
+test('a re-sight outside Trash never revives a purged shell (purged ⇒ tombstoned)', () => {
+  const { accountId, folder } = seedAccount(['inbox', 'trash']);
+  const parsed = makeParsed({ gmMsgId: 'gm-purged' });
+  const r = store.upsertMessage(accountId, folder('trash'), 5, parsed, 'trash');
+  const purgedAt = new Date();
+  rawDb
+    .update(schema.messages)
+    .set({ deletedAt: purgedAt, purgedAt })
+    .where(eq(schema.messages.id, r.id))
+    .run();
+
+  // The provider copy is restored to the inbox after this server reclaimed the body.
+  store.upsertMessage(accountId, folder('inbox'), 1, parsed, 'inbox');
+  const row = rawDb
+    .select({ deletedAt: schema.messages.deletedAt })
+    .from(schema.messages)
+    .where(eq(schema.messages.id, r.id))
+    .get();
+  assert.notEqual(row?.deletedAt, null, 'the body-less shell stays hidden from normal views');
+});
+
 test('relinkMessageToFolder replaces ALL mappings with the single destination', () => {
   const { accountId, folder } = seedAccount(['inbox', 'archive', 'trash']);
   const parsed = makeParsed({ gmMsgId: 'gm-move' });

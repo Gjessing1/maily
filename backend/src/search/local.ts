@@ -7,8 +7,9 @@
  * the local-index query compiler, lifted out of `db/queries.ts` so the read layer
  * stays generic and the search logic lives with the rest of `search/`.
  */
-import { and, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, inArray, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/client.js';
+import { visible, visibleRaw } from '../db/visibility.js';
 import { messages } from '../db/schema.js';
 import type { MessageRow } from '../db/queries.js';
 import { isEmptyQuery, parseQuery, type QueryIR } from './query.js';
@@ -116,14 +117,11 @@ function irPredicates(ir: QueryIR): SQL[] {
 /** Hydrate ordered message ids back to rows, preserving the id order. */
 function hydrate(ids: string[], inTrash: boolean): MessageRow[] {
   if (ids.length === 0) return [];
-  // In-trash results are tombstoned by design; only purged shells stay hidden there
-  // (same visibility rule as the Trash views in db/queries.ts).
-  const visible = inTrash ? isNull(messages.purgedAt) : isNull(messages.deletedAt);
   const byId = new Map(
     db
       .select()
       .from(messages)
-      .where(and(inArray(messages.id, ids), visible))
+      .where(and(inArray(messages.id, ids), visible(inTrash ? 'trash' : 'normal')))
       .all()
       .map((m) => [m.id, m]),
   );
@@ -142,14 +140,13 @@ export function searchLocalIR(ir: QueryIR, limit: number): MessageRow[] {
   const match = toFtsMatch(ir.terms);
   const preds = irPredicates(ir);
   const predSql = preds.length ? sql` AND ${sql.join(preds, sql` AND `)}` : sql``;
-  // Base visibility: normal searches hide tombstones; `in:trash` flips the scope to
-  // messages mapped into a trash-role folder, where the tombstone IS the content and
-  // only purged shells stay hidden (mirrors the Trash views in db/queries.ts).
+  // `in:trash` narrows to messages mapped into a trash-role folder and switches to the trash
+  // visibility scope, where the tombstone IS the content (db/visibility.ts).
   const visibleSql = ir.inTrash
-    ? sql`m.purged_at IS NULL AND EXISTS (
+    ? sql`${visibleRaw('trash')} AND EXISTS (
             SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
             WHERE mf.message_id = m.id AND f.role = 'trash')`
-    : sql`m.deleted_at IS NULL`;
+    : visibleRaw();
 
   let ids: string[];
   if (match) {

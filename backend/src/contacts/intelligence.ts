@@ -9,6 +9,7 @@ import type {
   ContactEmailIntelligenceDto,
 } from '@maily/shared';
 import { db } from '../db/client.js';
+import { visibleRaw } from '../db/visibility.js';
 
 const TIMELINE_LIMIT = 40;
 const ATTACHMENT_LIMIT = 12;
@@ -114,7 +115,7 @@ export function contactEmailIntelligence(addresses: string[]): ContactEmailIntel
     };
   }
 
-  const visible = sql`m.deleted_at IS NULL AND m.purged_at IS NULL`;
+  const visible = visibleRaw();
   const occurred = sql`CASE
     WHEN ${predicates.inbound} THEN coalesce(m.received_at, m.sent_at)
     ELSE coalesce(m.sent_at, m.received_at)
