@@ -77,7 +77,6 @@ function persistSuccess(
   enricher: Enricher,
   out: EnricherResult,
   durationMs: number,
-  now: Date,
 ): void {
   withWriteRetry('pipeline.persistSuccess', () =>
     db
@@ -89,7 +88,10 @@ function persistSuccess(
         error: null,
         durationMs,
         nextAttemptAt: null,
-        updatedAt: now,
+        // The write time, not the batch's `now`: an LLM row can hold a batch open for
+        // minutes, and the billing export feed pages on `updated_at` (billing-export.ts),
+        // so a stamp older than the commit would slip behind a consumer's cursor.
+        updatedAt: new Date(),
       })
       .where(eq(enrichments.id, row.id))
       .run(),
@@ -97,7 +99,7 @@ function persistSuccess(
 }
 
 /** Persist a no-op success (enricher's `applies()` gate declined the message). */
-function persistSkipped(row: EnrichmentRow, enricher: Enricher, now: Date): void {
+function persistSkipped(row: EnrichmentRow, enricher: Enricher): void {
   withWriteRetry('pipeline.persistSkipped', () =>
     db
       .update(enrichments)
@@ -108,7 +110,7 @@ function persistSkipped(row: EnrichmentRow, enricher: Enricher, now: Date): void
         error: null,
         durationMs: 0,
         nextAttemptAt: null,
-        updatedAt: now,
+        updatedAt: new Date(),
       })
       .where(eq(enrichments.id, row.id))
       .run(),
@@ -167,7 +169,7 @@ async function processRow(
   }
 
   if (enricher.applies && !enricher.applies(message)) {
-    persistSkipped(row, enricher, now);
+    persistSkipped(row, enricher);
     return 'ok';
   }
 
@@ -186,7 +188,7 @@ async function processRow(
   try {
     const out = await enricher.run({ message, tier });
     const durationMs = Date.now() - started;
-    persistSuccess(row, enricher, out, durationMs, now);
+    persistSuccess(row, enricher, out, durationMs);
     indexStage(message, out);
     return 'ok';
   } catch (err) {

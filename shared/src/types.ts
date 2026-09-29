@@ -116,6 +116,53 @@ export interface BillingDocumentDto {
   kind: BillingKind;
 }
 
+/** A billing document attachment as the export feed describes it. */
+export interface BillingExportDocumentDto {
+  attachmentId: string;
+  kind: BillingKind;
+  filename: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+}
+
+/**
+ * One invoice or receipt in the billing export feed (`GET /api/export/billing`), the
+ * read-only contract another app on the host (Moneta) imports from. Payment facts are
+ * the enricher's raw lists for either kind; a receipt's KID is history, and the
+ * consumer decides what to show.
+ */
+export interface BillingExportItemDto {
+  messageId: string;
+  accountId: string;
+  kind: BillingKind;
+  subject: string | null;
+  from: EmailAddress | null;
+  /** ISO 8601 UTC, or null when the server gave no date. */
+  receivedAt: string | null;
+  /** ISO 8601 UTC: when maily last (re)classified the message. */
+  classifiedAt: string;
+  /** Fetch bytes from `GET /api/messages/:messageId/attachments/:attachmentId`. */
+  documents: BillingExportDocumentDto[];
+  kids: string[];
+  accounts: string[];
+  ibans: string[];
+  amount: { value: number; currency: string } | null;
+  /** YYYY-MM-DD. */
+  dueDate: string | null;
+}
+
+/** One page of the billing export feed. */
+export interface BillingExportPageDto {
+  items: BillingExportItemDto[];
+  /**
+   * Pass back as `after` to continue. It only moves forward, and it repeats the one
+   * sent when nothing new has settled; null only while the feed has never had an item.
+   */
+  cursor: string | null;
+  /** True when another page is ready right now. */
+  hasMore: boolean;
+}
+
 /** Enricher-extracted facts about one message, as the reader shows them. */
 export interface MessageFactsDto {
   /**

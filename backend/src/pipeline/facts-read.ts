@@ -41,7 +41,7 @@ function readIcs(r: unknown): IcsFacts | null {
 function readTravel(r: unknown): TravelReservation[] {
   return isObj(r) && Array.isArray(r.reservations) ? (r.reservations as TravelReservation[]) : [];
 }
-function readInvoice(r: unknown): InvoiceFacts | null {
+export function readInvoice(r: unknown): InvoiceFacts | null {
   if (!isObj(r) || !isObj(r.invoice)) return null;
   const inv = r.invoice;
   const lists = [inv.kids, inv.ibans, inv.accounts, inv.documents].every(Array.isArray);
