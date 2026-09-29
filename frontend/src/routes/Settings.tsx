@@ -385,6 +385,7 @@ function AddressBooks() {
 function Calendars() {
   const [state, setState] = useState<CalendarSettingsDto | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -398,12 +399,40 @@ function Calendars() {
     };
   }, []);
 
+  // Rediscover on the server — calendars added or restored in Radicale since the
+  // last discovery only show up after this (or once the server's cached list ages out).
+  const refresh = async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      setState(await api.calendars(true));
+    } catch (e) {
+      setError((e as Error).message || 'Couldn’t refresh the calendar list.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const refreshRow = (
+    <button
+      onClick={() => void refresh()}
+      disabled={refreshing}
+      className="w-full px-4 py-3 text-left text-[15px] text-accent active:bg-surface-2 disabled:opacity-50"
+    >
+      {refreshing ? 'Refreshing…' : 'Refresh calendar list'}
+    </button>
+  );
+
   if (!state) return <p className="px-4 py-3 text-sm text-faint">Loading…</p>;
   if (state.calendars.length === 0) {
     return (
-      <p className="px-4 py-3 text-sm text-faint">
-        No calendars found. Configure CalDAV on the server to add events from mail.
-      </p>
+      <>
+        <p className="px-4 py-3 text-sm text-faint">
+          No calendars found. Configure CalDAV on the server to add events from mail.
+        </p>
+        {refreshRow}
+        {error && <p className="px-4 pb-3 text-sm text-danger">{error}</p>}
+      </>
     );
   }
 
@@ -434,7 +463,7 @@ function Calendars() {
             <span className="min-w-0 truncate text-[15px]">{c.displayName}</span>
             <button
               onClick={() => setDefault(c.href)}
-              disabled={busy || isDefault}
+              disabled={busy || refreshing || isDefault}
               aria-pressed={isDefault}
               className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${
                 isDefault ? 'bg-accent text-white' : 'bg-surface-2 text-faint active:bg-surface-3'
@@ -445,6 +474,7 @@ function Calendars() {
           </div>
         );
       })}
+      {refreshRow}
       {error && <p className="px-4 pb-3 text-sm text-danger">{error}</p>}
     </>
   );

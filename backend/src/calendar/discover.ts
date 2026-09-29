@@ -78,6 +78,8 @@ function hrefInside(xml: string, sectionRe: RegExp, base: string): string | null
   return href ? resolve(base, decodeXml(href)) : null;
 }
 
+const PROPFIND_TIMEOUT_MS = 10_000;
+
 async function propfind(
   cfg: DiscoverConfig,
   url: string,
@@ -93,6 +95,8 @@ async function propfind(
         'Content-Type': 'application/xml; charset=utf-8',
       },
       body,
+      // Bounded so a hung server fails the Settings "Refresh" rather than spinning it.
+      signal: AbortSignal.timeout(PROPFIND_TIMEOUT_MS),
     });
     if (!res.ok) {
       log.warn(`PROPFIND ${url} -> ${res.status} ${res.statusText}`);

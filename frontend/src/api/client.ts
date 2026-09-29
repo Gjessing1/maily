@@ -613,8 +613,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  /** Discovered CalDAV calendars + the default event target. */
-  calendars: () => request<CalendarSettingsDto>('/api/calendar/calendars'),
+  /** Discovered CalDAV calendars + the default event target; `refresh` rediscovers now. */
+  calendars: (refresh = false) =>
+    request<CalendarSettingsDto>(`/api/calendar/calendars${refresh ? '?refresh=1' : ''}`),
 
   /** Set the default calendar for new events; returns the new state. */
   setDefaultCalendar: (def: string | null) =>

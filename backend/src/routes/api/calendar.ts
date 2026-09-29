@@ -13,6 +13,7 @@ import {
   effectiveDefault,
   getCalendarState,
   getDiscovered,
+  refreshCalendars,
   setDefaultCalendar,
 } from '../../calendar/calendars.js';
 import { eventDraftsForMessage } from '../../calendar/drafts.js';
@@ -33,10 +34,15 @@ function eventId(messageId: string, draft: CalendarEventDraft): string {
 
 export async function calendarRoutes(app: FastifyInstance): Promise<void> {
   // Discovered calendars + the default event target (empty when CalDAV is unset).
-  app.get('/api/calendar/calendars', async (): Promise<CalendarSettingsDto> => {
-    await ensureCalendarsDiscovered();
-    return getCalendarState();
-  });
+  // `?refresh=1` rediscovers now instead of trusting a recent result.
+  app.get<{ Querystring: { refresh?: string } }>(
+    '/api/calendar/calendars',
+    async (req): Promise<CalendarSettingsDto> => {
+      if (req.query.refresh === '1') await refreshCalendars();
+      else await ensureCalendarsDiscovered();
+      return getCalendarState();
+    },
+  );
 
   // Set the default target for new events.
   app.put<{ Body: { default?: string | null } }>('/api/calendar/calendars', async (req) => {
