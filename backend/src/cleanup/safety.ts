@@ -9,9 +9,14 @@
  * terms match with or without diacritics. We prefix-match (`"term"*`) so plurals /
  * inflections (invoice→invoices, faktura→fakturaer) are caught too — over-protecting is
  * the safe direction for a delete filter.
+ *
+ * Keywords miss bills that never say "invoice" in a word the list knows, so a message
+ * the `invoice` enricher found a checksum-validated KID, account or IBAN in is protected
+ * too (`payableSql`) — a stronger signal than any keyword.
  */
 import { sql, type SQL } from 'drizzle-orm';
 import { getServerSettings, type KeywordListKey } from '../db/settings.js';
+import { payableSql } from '../pipeline/facts-read.js';
 import { PROTECTED_KEYWORDS } from './keywords.js';
 
 /** Build an FTS5 MATCH expression: prefix-match each term, OR-joined. */
@@ -46,12 +51,19 @@ export function protectedMatch(): string {
 }
 
 /**
- * SQL predicate excluding protected mail, for AND-ing into a slice query. `alias` is the
- * messages-table alias the slice uses (e.g. `m`). Implemented as a NOT IN against an FTS5
- * MATCH subquery so the keyword scan stays on the index.
+ * SQL predicate selecting protected mail: a protected keyword (an FTS5 MATCH subquery,
+ * so the keyword scan stays on the index) or a validated bill. `alias` is the
+ * messages-table alias the caller uses (e.g. `m`).
  */
+export function protectedSql(alias = 'm'): SQL {
+  const a = sql.raw(alias);
+  return sql`(${a}.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})
+    OR ${payableSql(alias)})`;
+}
+
+/** SQL predicate excluding protected mail, for AND-ing into a slice query. */
 export function notProtected(alias = 'm'): SQL {
-  return sql`${sql.raw(alias)}.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})`;
+  return sql`NOT ${protectedSql(alias)}`;
 }
 
 /** Normalize for diacritic-insensitive comparison (mirrors the FTS tokenizer). */
@@ -63,7 +75,8 @@ function fold(s: string): string {
 }
 
 /**
- * Pure per-message protected check (the JS counterpart of `notProtected` / `protectedMatch`).
+ * Pure per-message keyword check (the JS counterpart of `protectedMatch` — the validated-bill
+ * half of `protectedSql` lives in the ledger, not the text).
  * Tokenizes the message text and treats it as protected if any token *prefix-matches* a
  * protected keyword (built-in or user-added) — the same semantics as the FTS query. Used in
  * tests and available for future per-message decisions.

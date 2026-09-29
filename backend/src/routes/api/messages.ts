@@ -22,6 +22,7 @@ import {
 } from '../../db/queries.js';
 import { embedInlineImages } from '../../storage/attachments.js';
 import { toMessageDetailDto, toMessageDto } from '../../http/dto.js';
+import { messageFacts, toMessageFactsDto } from '../../pipeline/facts-read.js';
 import { searchMessages } from '../../search/search.js';
 
 const MAX_PAGE = 200;
@@ -123,6 +124,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     if (!m) return reply.code(404).send({ error: 'not found' });
     const atts = attachmentsForMessage(m.id);
     const dto = toMessageDetailDto(m, folderIdsForMessage(m.id), atts);
+    dto.facts = toMessageFactsDto(messageFacts(m.id));
     // Embed inline CID images as data: URIs so they render in the sandboxed,
     // null-origin reader iframe (ROADMAP §3.7.A). Inline parts that couldn't be
     // embedded (over the size cap, or unreferenced) surface in the attachments

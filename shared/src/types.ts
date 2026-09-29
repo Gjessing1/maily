@@ -74,6 +74,43 @@ export interface MessageDetailDto extends MessageDto {
   /** Original To/Cc recipients — drives reply-all (empty for older pre-migration mail). */
   to: EmailAddress[];
   cc: EmailAddress[];
+  /**
+   * What the enrichers extracted, for the reader's passive fact cards. Optional: bodies
+   * cached before this field existed have none, and the reader just shows no cards.
+   */
+  facts?: MessageFactsDto;
+}
+
+/**
+ * Payment details from an invoice or receipt. Only present when the mail carries at
+ * least one checksum-validated identifier (KID, account or IBAN); an amount alone is
+ * too common (any "kr" in a newsletter) to call a message a bill.
+ */
+export interface PaymentDetailsDto {
+  /** KID payment references, digits only (MOD-10 or MOD-11 validated). */
+  kids: string[];
+  /** Norwegian account numbers, formatted dddd.dd.ddddd (MOD-11 validated). */
+  accounts: string[];
+  /** IBANs, uppercase without spaces (MOD-97 validated). */
+  ibans: string[];
+  amount: { value: number; currency: string } | null;
+  /** Labelled due date, YYYY-MM-DD. */
+  dueDate: string | null;
+}
+
+/** One parcel shipment found in a shipping notice. */
+export interface ShipmentDto {
+  carrier: string;
+  trackingNumber: string;
+  trackingUrl: string | null;
+  /** ISO 8601 estimated delivery, when the sender supplied one. */
+  estimatedDelivery: string | null;
+}
+
+/** Enricher-extracted facts about one message, as the reader shows them. */
+export interface MessageFactsDto {
+  payment: PaymentDetailsDto | null;
+  shipments: ShipmentDto[];
 }
 
 /** Reference to an existing stored attachment, re-sent by the backend (e.g. on forward). */

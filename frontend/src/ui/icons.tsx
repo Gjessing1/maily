@@ -342,6 +342,13 @@ export const PackageIcon = (p: IconProps) => (
   </Base>
 );
 
+export const ReceiptIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2Z" />
+    <path d="M9 8h6M9 12h6M9 16h3" />
+  </Base>
+);
+
 export const ClockIcon = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="12" r="9" />

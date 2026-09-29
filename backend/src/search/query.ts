@@ -11,6 +11,8 @@
  *   contact:                     — exact direct correspondence with comma-separated addresses
  *   since:/after:  before:/until: — date bounds (YYYY-MM-DD or relative 7d/2w/3m/1y)
  *   has:attachment                — only messages with a non-inline attachment
+ *   is:invoice  has:kid  has:tracking — enricher facts: a bill with a validated payment
+ *                                   identifier, one with a KID, a parcel tracking number
  *   larger:/smaller:  (or size:>/<) — attachment-size bounds (e.g. 500k, 2M)
  *   is:unread/read  is:flagged/starred  is:answered — message-state filters
  *   filename:                     — substring match on an attachment filename
@@ -43,6 +45,12 @@ export interface QueryIR {
   answered?: boolean;
   /** Substring match on a (non-inline) attachment's filename. */
   filename?: string;
+  /** Only bills: an invoice with a validated KID, account or IBAN. */
+  invoice?: boolean;
+  /** Only mail with a validated KID payment reference. */
+  hasKid?: boolean;
+  /** Only mail with a parcel tracking number. */
+  hasTracking?: boolean;
   /**
    * Search the Trash instead of regular mail. Trashed messages are tombstoned
    * (`deleted_at`) and hidden from every normal view, so without this flag a search
@@ -149,6 +157,10 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
       }
       case 'has':
         if (/^attachments?$/i.test(value)) ir.hasAttachment = true;
+        else if (/^kid$/i.test(value)) ir.hasKid = true;
+        else if (/^tracking$/i.test(value)) ir.hasTracking = true;
+        // Unknown attribute → keep the whole token as a free-text term.
+        else ir.terms.push(token);
         break;
       case 'is':
         switch (value.toLowerCase()) {
@@ -165,6 +177,10 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
           case 'answered':
           case 'replied':
             ir.answered = true;
+            break;
+          case 'invoice':
+          case 'bill':
+            ir.invoice = true;
             break;
           default:
             // Unknown state → keep the whole token as a free-text term.
@@ -227,6 +243,9 @@ export function isEmptyQuery(ir: QueryIR): boolean {
     ir.flagged === undefined &&
     ir.answered === undefined &&
     ir.filename === undefined &&
+    ir.invoice === undefined &&
+    ir.hasKid === undefined &&
+    ir.hasTracking === undefined &&
     ir.inTrash === undefined
   );
 }

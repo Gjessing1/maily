@@ -28,7 +28,7 @@ import type {
 import { db } from '../db/client.js';
 import { visibleRaw } from '../db/visibility.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
-import { effectiveKeywords, ftsOrMatch, notProtected, protectedMatch } from './safety.js';
+import { effectiveKeywords, ftsOrMatch, notProtected, protectedSql } from './safety.js';
 import { SENDER_KEY } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
@@ -510,7 +510,7 @@ export function cleanupSummary(): CleanupSummaryDto {
   const prot = db.get(
     sql`SELECT COUNT(*) AS n FROM messages m
         WHERE ${LIVE}
-        AND m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})`,
+        AND ${protectedSql('m')}`,
   ) as { n: number };
   // "Freed so far" — messages the cleanup queue has finished moving to Trash. The local
   // tombstones persist, so this is a durable running tally of what cleanup achieved.

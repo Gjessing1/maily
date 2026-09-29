@@ -9,13 +9,11 @@
  *   2. `travel` enricher — JSON-LD flight/lodging/event reservations;
  *   3. the bare message  — subject as summary, no dates (the user fills them in).
  *
- * Reads the `enrichments` ledger (status='ok' result JSON); pure mapping helpers are
- * exported for tests.
+ * Reads the ledger through `messageFacts` (pipeline/facts-read.ts); pure mapping
+ * helpers are exported for tests.
  */
-import { and, eq, inArray } from 'drizzle-orm';
-import { db } from '../db/client.js';
-import { enrichments } from '../db/schema.js';
 import type { MessageRow } from '../db/queries.js';
+import { messageFacts } from '../pipeline/facts-read.js';
 import type { CalendarEventDraft, TravelReservation } from '../pipeline/enrichers/travel.js';
 import type { IcsFacts } from '../pipeline/enrichers/ics.js';
 
@@ -61,41 +59,15 @@ export function draftFromMessage(message: Pick<MessageRow, 'subject'>): Calendar
   };
 }
 
-/** Parse a ledger `result` JSON column defensively (a bad row must not 500 the route). */
-function parseResult<T>(raw: string | null): T | null {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * All draft suggestions for one message, best first. Always non-empty: the bare
  * message fallback closes the list, so the form opens pre-filled either way.
  */
 export function eventDraftsForMessage(message: MessageRow): CalendarEventDraft[] {
-  const rows = db
-    .select({ enricher: enrichments.enricher, result: enrichments.result })
-    .from(enrichments)
-    .where(
-      and(
-        eq(enrichments.messageId, message.id),
-        eq(enrichments.status, 'ok'),
-        inArray(enrichments.enricher, ['ics', 'travel']),
-      ),
-    )
-    .all();
-
+  const facts = messageFacts(message.id);
   const drafts: CalendarEventDraft[] = [];
-  const ics = parseResult<IcsFacts>(rows.find((r) => r.enricher === 'ics')?.result ?? null);
-  if (ics?.events) drafts.push(...draftsFromIcs(ics));
-  const travel = parseResult<{ reservations: TravelReservation[] }>(
-    rows.find((r) => r.enricher === 'travel')?.result ?? null,
-  );
-  if (travel?.reservations) drafts.push(...draftsFromTravel(travel.reservations));
-
+  if (facts.ics) drafts.push(...draftsFromIcs(facts.ics));
+  drafts.push(...draftsFromTravel(facts.travel));
   drafts.push(draftFromMessage(message));
   return drafts;
 }

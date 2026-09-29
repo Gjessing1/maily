@@ -44,6 +44,10 @@ interface Filters {
   larger: string;
   unread: boolean;
   flagged: boolean;
+  /** Bills: an invoice with a validated KID, account or IBAN (`is:invoice`). */
+  invoice: boolean;
+  /** Parcel shipping notices with a tracking number (`has:tracking`). */
+  tracking: boolean;
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -57,6 +61,8 @@ const EMPTY_FILTERS: Filters = {
   larger: '',
   unread: false,
   flagged: false,
+  invoice: false,
+  tracking: false,
 };
 
 /**
@@ -95,6 +101,8 @@ function buildQuery(text: string, f: Filters): string {
   if (f.larger) parts.push(`larger:${f.larger}`);
   if (f.unread) parts.push('is:unread');
   if (f.flagged) parts.push('is:flagged');
+  if (f.invoice) parts.push('is:invoice');
+  if (f.tracking) parts.push('has:tracking');
   return parts.join(' ');
 }
 
@@ -476,6 +484,16 @@ export function Search() {
                   checked={filters.flagged}
                   onChange={(v) => set('flagged', v)}
                 />
+                <FilterChip
+                  label="Bills"
+                  checked={filters.invoice}
+                  onChange={(v) => set('invoice', v)}
+                />
+                <FilterChip
+                  label="Parcels"
+                  checked={filters.tracking}
+                  onChange={(v) => set('tracking', v)}
+                />
               </div>
               {filtersActive && (
                 <div className="flex items-center justify-between gap-2 pt-1">
@@ -515,6 +533,9 @@ export function Search() {
                 <code className="text-muted">larger:1M</code>{' '}
                 <code className="text-muted">is:unread</code>{' '}
                 <code className="text-muted">is:flagged</code>{' '}
+                <code className="text-muted">is:invoice</code>{' '}
+                <code className="text-muted">has:kid</code>{' '}
+                <code className="text-muted">has:tracking</code>{' '}
                 <code className="text-muted">in:trash</code>
               </p>
             </div>

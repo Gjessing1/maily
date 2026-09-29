@@ -14,6 +14,7 @@ import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { ImageAttachment, isImageAttachment } from '../components/ImageAttachment';
 import { AddToCalendar } from '../components/AddToCalendar';
+import { FactCards } from '../components/FactCards';
 import {
   fmtAddr,
   joinAddrs,
@@ -515,6 +516,8 @@ export function ReaderView({
 
                 <AddSenderPrompt name={detail.fromName} address={detail.fromAddress} />
               </div>
+
+              <FactCards facts={detail.facts} />
 
               <div className="border-t border-border">
                 {imagesBlocked && (

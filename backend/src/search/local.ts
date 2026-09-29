@@ -14,6 +14,7 @@ import { messages } from '../db/schema.js';
 import type { MessageRow } from '../db/queries.js';
 import { isEmptyQuery, parseQuery, type QueryIR } from './query.js';
 import { rankCandidates, type RankCandidate } from './ranking.js';
+import { hasKidSql, hasTrackingSql, payableSql } from '../pipeline/facts-read.js';
 
 /**
  * How many FTS candidates to retrieve per requested result before reranking.
@@ -111,6 +112,9 @@ function irPredicates(ir: QueryIR): SQL[] {
       sql`EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.is_inline = 0 AND a.filename LIKE ${v} ESCAPE '\\')`,
     );
   }
+  if (ir.invoice) preds.push(payableSql());
+  if (ir.hasKid) preds.push(hasKidSql());
+  if (ir.hasTracking) preds.push(hasTrackingSql());
   return preds;
 }
 

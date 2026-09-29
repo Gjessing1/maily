@@ -17,6 +17,7 @@ import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { fullDate, senderName, shortDate } from '../ui/format';
+import { FactCards } from './FactCards';
 import { AddSenderPrompt, joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
 import { AttachmentChip } from './AttachmentChip';
@@ -183,6 +184,7 @@ function ConversationMessage({
             </div>
           ) : (
             <>
+              <FactCards facts={detail.facts} />
               {imagesBlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-surface px-4 py-2 text-sm">
                   <span className="text-muted">Remote images blocked for privacy.</span>

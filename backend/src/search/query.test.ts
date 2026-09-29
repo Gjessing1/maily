@@ -54,6 +54,16 @@ test('is: state filters — unread/read/flagged/starred/answered', () => {
   assert.deepEqual(parseQuery('is:blue').terms, ['is:blue']);
 });
 
+test('enricher-fact operators: is:invoice/bill, has:kid, has:tracking', () => {
+  assert.equal(parseQuery('is:invoice').invoice, true);
+  assert.equal(parseQuery('is:bill').invoice, true);
+  assert.equal(parseQuery('has:kid').hasKid, true);
+  assert.equal(parseQuery('has:tracking').hasTracking, true);
+  assert.equal(isEmptyQuery(parseQuery('has:tracking')), false);
+  // Unknown attribute degrades to a free-text term, like is:/in:.
+  assert.deepEqual(parseQuery('has:wings').terms, ['has:wings']);
+});
+
 test('in:trash scope operator; unknown scope stays free text', () => {
   const ir = parseQuery('invoice in:trash');
   assert.equal(ir.inTrash, true);
