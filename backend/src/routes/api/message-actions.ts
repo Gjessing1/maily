@@ -1,28 +1,25 @@
 /**
- * Message mutations: flag, delete (→ Trash), archive. Each follows the local-first
- * rule (ARCHITECTURE §2/§13): tombstone/flag/relink the local row + emit a signal
- * synchronously. Flags propagate to IMAP out-of-band over a transient connection.
+ * Message mutations: flag, delete (→ Trash), archive, restore, delete forever.
  *
- * Delete and archive defer their IMAP MOVE into the **server-owned outbox** (src/outbox) with a
- * short `dueAt` window, so the move is undoable *and* commits server-side even if the PWA closes
- * mid-window (the old undo timer lived on the client and could be lost). The response carries the
- * outbox id + dueAt so the client can mirror the window and cancel (undo) against it.
+ * Flag, delete and archive are mailbox intents in the **server-owned outbox** (src/outbox): the
+ * enqueue applies the local effect (flag / tombstone / leave the inbox) and signals, the runner
+ * pushes it to the provider, and if the provider never takes it the inverse is applied. Delete
+ * and archive get a short `dueAt` undo window; the response carries the outbox id + dueAt so the
+ * client can mirror the window and cancel (undo) against it. Flags are due at once.
+ *
+ * Restore and delete-forever are deliberate corrective actions, so they stay awaited: their
+ * failure is visible in the response, with nothing local changed.
  */
 import type { FastifyInstance } from 'fastify';
 import { emitSignal } from '../../events.js';
 import { folderByRole, getMessage } from '../../db/queries.js';
 import { serverPlacement } from '../../db/placement.js';
-import {
-  markMessageDeleted,
-  relinkMessageToFolder,
-  restoreMessageDeleted,
-  updateMessageFlags,
-} from '../../imap/store.js';
+import { relinkMessageToFolder, restoreMessageDeleted } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
 import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
 import { purgeMessage } from '../../cleanup/purge.js';
-import { enqueueDelete, enqueueArchive } from '../../outbox/runner.js';
+import { enqueueArchive, enqueueDelete, enqueueFlags } from '../../outbox/runner.js';
 
 /** Undo window (ms) for a deferred delete/archive — how long the move is cancelable. */
 const UNDO_WINDOW_MS = 5000;
@@ -34,64 +31,22 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
       const m = getMessage(req.params.id);
       if (!m) return reply.code(404).send({ error: 'not found' });
 
-      const seen = req.body.seen ?? m.seen;
-      const flagged = req.body.flagged ?? m.flagged;
-      updateMessageFlags(m.id, { seen, flagged, answered: m.answered, draft: m.draft });
-      emitSignal({ type: 'mail:flags', accountId: m.accountId, messageId: m.id, seen, flagged });
-
-      // Propagate to the IMAP server over a transient connection (don't disturb IDLE).
-      // Fire-and-forget: the local DB + signal above already reflect the change, so we
-      // must NOT block the HTTP response on this transient connection — under a heavy
-      // background sweep it can be slow, and a client-side timeout would bounce the
-      // optimistic UI update back. The next folder resync reconciles if it fails.
-      // Detached mail has no server copy: the local write above is the whole action.
-      const loc = serverPlacement(m.id);
-      const engine = loc.kind === 'server' ? getEngine(loc.accountId) : undefined;
-      if (loc.kind === 'server' && engine) {
-        void (async () => {
-          try {
-            await withTransientConnection(engine.accountConfig, async (client) => {
-              const lock = await client.getMailboxLock(loc.folderPath);
-              try {
-                const uid = String(loc.uid);
-                if (req.body.seen !== undefined) {
-                  const op = seen ? client.messageFlagsAdd : client.messageFlagsRemove;
-                  await op.call(client, uid, ['\\Seen'], { uid: true });
-                }
-                if (req.body.flagged !== undefined) {
-                  const op = flagged ? client.messageFlagsAdd : client.messageFlagsRemove;
-                  await op.call(client, uid, ['\\Flagged'], { uid: true });
-                }
-              } finally {
-                lock.release();
-              }
-            });
-          } catch (err) {
-            app.log.warn(`flag propagation failed: ${(err as Error).message}`);
-          }
-
-          // A star/unstar changes membership of a flag-derived folder (Gmail's
-          // [Gmail]/Starred). Kick an immediate non-INBOX reconcile so it shows in
-          // that folder right away instead of after the next cron pass.
-          if (req.body.flagged !== undefined) engine.reconcileFoldersNow();
-        })();
-      }
-
+      const set: { seen?: boolean; flagged?: boolean } = {};
+      if (typeof req.body.seen === 'boolean') set.seen = req.body.seen;
+      if (typeof req.body.flagged === 'boolean') set.flagged = req.body.flagged;
+      if (Object.keys(set).length === 0) return { ok: true, seen: m.seen, flagged: m.flagged };
+      const { seen, flagged } = enqueueFlags(m.accountId, m.id, set);
       return { ok: true, seen, flagged };
     },
   );
 
-  // Soft-delete → move to Trash. Tombstone locally first (instant, optimistic) + emit the
-  // signal, then queue the MOVE-to-Trash into the server-owned outbox with a short undo window
-  // (ARCHITECTURE §2/§13). The outbox runner performs the UID MOVE to the role='trash' folder
-  // at dueAt — a real trash on Gmail, a plain move on Dovecot; imapflow falls back to
-  // COPY+\Deleted+EXPUNGE where MOVE is unadvertised — and an Undo cancels it within the window.
+  // Soft-delete → move to Trash. The enqueue tombstones locally (instant) and signals; the
+  // outbox runner performs the UID MOVE to the role='trash' folder at dueAt — a real trash on
+  // Gmail, a plain move on Dovecot; imapflow falls back to COPY+\Deleted+EXPUNGE where MOVE is
+  // unadvertised — and an Undo cancels it within the window.
   app.delete<{ Params: { id: string } }>('/api/messages/:id', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
-
-    markMessageDeleted(m.id);
-    emitSignal({ type: 'mail:deleted', accountId: m.accountId, messageId: m.id });
 
     const dueAt = Date.now() + UNDO_WINDOW_MS;
     const outboxId = enqueueDelete(m.accountId, m.id, dueAt);
@@ -175,9 +130,9 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
 
   // Archive → move the inbox copy to the role='archive' folder (Gmail "All Mail"
   // strips the INBOX label; generic IMAP moves to Archive). Unlike delete this does
-  // NOT tombstone: the message stays live and listable, just out of the inbox. The MOVE is
-  // queued into the outbox with an undo window; the runner resolves the inbox location and
-  // performs the MOVE at dueAt (and skips it if the message is no longer in the inbox).
+  // NOT tombstone: the message stays live and listable, just out of the inbox. The enqueue
+  // swaps its inbox mapping for an archive one locally; the runner MOVEs the inbox copy at
+  // dueAt (nothing to move if it wasn't in the inbox).
   app.post<{ Params: { id: string } }>('/api/messages/:id/archive', async (req, reply) => {
     const m = getMessage(req.params.id);
     if (!m) return reply.code(404).send({ error: 'not found' });
@@ -185,10 +140,8 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     const archive = folderByRole(m.accountId, 'archive');
     if (!archive) return reply.code(409).send({ error: 'no archive folder' });
 
-    emitSignal({ type: 'mail:archived', accountId: m.accountId, messageId: m.id });
-
     const dueAt = Date.now() + UNDO_WINDOW_MS;
-    const outboxId = enqueueArchive(m.accountId, m.id, dueAt);
+    const outboxId = enqueueArchive(m.accountId, m.id, archive.id, dueAt);
     return { ok: true, outboxId, dueAt };
   });
 }

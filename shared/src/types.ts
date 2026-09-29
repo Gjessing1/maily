@@ -653,6 +653,18 @@ export type SocketSignal =
   | { type: 'mail:sent'; accountId: string; outboxId: string; messageId: string }
   | { type: 'mail:send-failed'; accountId: string; outboxId: string; error: string }
   /**
+   * A mailbox change never reached the provider (retries exhausted). Its local effect has
+   * already been taken back — `mail:restored` / `mail:flags` carry that — so this only tells
+   * the user why their change came undone.
+   */
+  | {
+      type: 'mail:action-failed';
+      accountId: string;
+      action: MailboxAction;
+      count: number;
+      error: string;
+    }
+  /**
    * A folder's contents changed during a sync pass (messages inserted, re-sighted or
    * expunged) with no per-message signal of its own — the non-INBOX cron path, where
    * mail lands in Drafts/Sent/Trash/… without `mail:new`. Foreground clients refetch
@@ -664,8 +676,11 @@ export type SocketSignal =
   /** Prefs or server settings were saved, possibly on another device; clients re-read them. */
   | { type: 'settings:changed' };
 
-/** The kind of deferred action staged in the server-side outbox. */
-export type OutboxKind = 'send' | 'delete' | 'archive';
+/** The kind of action queued in the server-side outbox. */
+export type OutboxKind = 'send' | 'delete' | 'archive' | 'flags';
+
+/** A user change to mailbox state that the server pushes to the provider. */
+export type MailboxAction = 'delete' | 'archive' | 'flags' | 'cleanup';
 
 /** A pending/queued outbox row, surfaced to the client (e.g. the Scheduled/Outbox view). */
 export interface OutboxEntry {

@@ -1,5 +1,5 @@
 /**
- * Cleanup trash queue (ROADMAP Phase 6b — execution path). A DB-backed, restart-safe,
+ * Cleanup trash queue — the execution path for bulk cleanup. A DB-backed, restart-safe,
  * rate-limited trickle of MOVE-to-Trash operations for bulk cleanup. The execute endpoint
  * tombstones the selected messages locally (instant UI hide) and `enqueueTrash`s them here;
  * a background runner then claims due rows in small batches and issues ONE IMAP MOVE per
@@ -11,16 +11,17 @@
  * hard-deleted in one step). Detached (local_only) mail is trashed WITHOUT IMAP — a local
  * relink into the trash folder — since it has no server copy to MOVE. Modelled on the
  * `enrichments`-as-queue pattern — a `pending` row with a `nextAttemptAt` backoff gate;
- * terminal failures park as `dead`.
+ * terminal failures park as `dead` and un-tombstone the message (see markFailed).
  */
 import { and, count, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { db, withWriteRetry } from '../db/client.js';
-import { cleanupQueue } from '../db/schema.js';
+import { cleanupQueue, messages } from '../db/schema.js';
 import { folderByRole } from '../db/queries.js';
 import { serverPlacement } from '../db/placement.js';
 import { moveBatchToFolderOnServer, type MoveItem } from '../imap/move.js';
 import { getEngine } from '../imap/registry.js';
 import { relinkMessageToFolder } from '../imap/store.js';
+import { emitSignal } from '../events.js';
 import { createLogger } from '../logger.js';
 import type { AccountConfig } from '../config/accounts.js';
 import type { CleanupMessageRef } from './slices.js';
@@ -102,24 +103,45 @@ function markDone(queueIds: string[]): void {
 /**
  * Record a failed batch: bump attempts and either re-arm with a linear backoff (stays
  * `pending`, re-claimed once the gate passes) or park as `dead` once the retry cap is hit.
+ *
+ * A dead row takes back its local effect — the same rule as the outbox's mailbox intents. The
+ * execute route tombstoned the message, but the provider still has it where it was, and resync
+ * never re-sights an old UID, so leaving the tombstone would hide mail the user still has.
  */
 function markFailed(rows: DueRow[], message: string, now: Date): void {
+  const restored = new Map<string, number>();
   for (const row of rows) {
     const attempts = row.attempts + 1;
     const terminal = attempts >= MAX_ATTEMPTS;
     withWriteRetry('trashQueue.markFailed', () =>
-      db
-        .update(cleanupQueue)
-        .set({
-          attempts,
-          error: message.slice(0, 500),
-          status: terminal ? 'dead' : 'pending',
-          nextAttemptAt: terminal ? null : new Date(now.getTime() + BACKOFF_MS * attempts),
-          updatedAt: now,
-        })
-        .where(eq(cleanupQueue.id, row.id))
-        .run(),
+      db.transaction(() => {
+        db.update(cleanupQueue)
+          .set({
+            attempts,
+            error: message.slice(0, 500),
+            status: terminal ? 'dead' : 'pending',
+            nextAttemptAt: terminal ? null : new Date(now.getTime() + BACKOFF_MS * attempts),
+            updatedAt: now,
+          })
+          .where(eq(cleanupQueue.id, row.id))
+          .run();
+        if (terminal) {
+          db.update(messages).set({ deletedAt: null }).where(eq(messages.id, row.messageId)).run();
+        }
+      }),
     );
+    if (!terminal) continue;
+    emitSignal({ type: 'mail:restored', accountId: row.accountId, messageId: row.messageId });
+    restored.set(row.accountId, (restored.get(row.accountId) ?? 0) + 1);
+  }
+  for (const [accountId, count] of restored) {
+    emitSignal({
+      type: 'mail:action-failed',
+      accountId,
+      action: 'cleanup',
+      count,
+      error: message.slice(0, 200),
+    });
   }
 }
 

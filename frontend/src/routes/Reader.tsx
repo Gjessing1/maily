@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { patchCachedFlags } from '../db/cache';
+import { mutateFlags } from '../state/mutate';
 import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
 import { useBackHandler } from '../state/backButton';
@@ -129,11 +129,12 @@ export function ReaderView({
     if (detailSeen) return; // already read on open — nothing to auto-mark
     if (markReadSeconds < 0) return; // "never"
 
-    const mark = () => {
-      setSeen(true);
-      void patchCachedFlags(detailId, { seen: true });
-      api.setFlags(detailId, { seen: true }).catch(() => undefined);
-    };
+    const mark = () =>
+      mutateFlags(
+        [detailId],
+        { seen: true },
+        { quiet: true, onApply: (_, f) => setSeen(!!f.seen) },
+      );
     if (markReadSeconds === 0) {
       mark();
       return;
@@ -149,31 +150,17 @@ export function ReaderView({
     document.title = detail.subject || '(no subject)';
   }, [popout, detail]);
 
-  async function toggleSeen() {
-    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+  function toggleSeen() {
     if (!detail) return;
     const next = !seen;
-    setSeen(next);
     // In a conversation, mark every message; otherwise just this one.
     const ids = threaded ? threadIds : [detail.id];
-    for (const mid of ids) {
-      void patchCachedFlags(mid, { seen: next });
-      api.setFlags(mid, { seen: next }).catch(() => void patchCachedFlags(mid, { seen: !next }));
-    }
+    mutateFlags(ids, { seen: next }, { onApply: (_, f) => setSeen(!!f.seen) });
   }
 
-  async function toggleStar() {
-    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+  function toggleStar() {
     if (!detail) return;
-    const next = !flagged;
-    setFlagged(next);
-    void patchCachedFlags(detail.id, { flagged: next });
-    try {
-      await api.setFlags(detail.id, { flagged: next });
-    } catch {
-      setFlagged(!next); // revert on failure
-      void patchCachedFlags(detail.id, { flagged: !next });
-    }
+    mutateFlags([detail.id], { flagged: !flagged }, { onApply: (_, f) => setFlagged(!!f.flagged) });
   }
 
   function reply() {

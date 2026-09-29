@@ -11,8 +11,8 @@ import { GUTTER, LIST_COLUMN, PAGE } from '../ui/layout';
 import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import type { MessageDto } from '@maily/shared';
 import { api } from '../api/client';
-import { patchCachedFlags } from '../db/cache';
-import { requestArchiveMany, requestDeleteMany, showNotice, useHiddenIds } from '../state/undo';
+import { mutateFlags } from '../state/mutate';
+import { requestArchiveMany, requestDeleteMany, useHiddenIds } from '../state/undo';
 import { usePrefs } from '../state/prefs';
 import { groupConversations } from '../state/threads';
 import { senderName } from '../ui/format';
@@ -279,29 +279,12 @@ export function Search() {
     [expandIds],
   );
   const handleToggleRead = useCallback(
-    (id: string, seen: boolean) => {
-      for (const mid of expandIds(id)) {
-        patchResult(mid, { seen });
-        void patchCachedFlags(mid, { seen });
-        api.setFlags(mid, { seen }).catch(() => {
-          patchResult(mid, { seen: !seen });
-          void patchCachedFlags(mid, { seen: !seen });
-          showNotice('Couldn’t update — reverted');
-        });
-      }
-    },
+    (id: string, seen: boolean) =>
+      void mutateFlags(expandIds(id), { seen }, { onApply: patchResult }),
     [expandIds, patchResult],
   );
   const handleToggleFlag = useCallback(
-    (id: string, flagged: boolean) => {
-      patchResult(id, { flagged });
-      void patchCachedFlags(id, { flagged });
-      api.setFlags(id, { flagged }).catch(() => {
-        patchResult(id, { flagged: !flagged });
-        void patchCachedFlags(id, { flagged: !flagged });
-        showNotice('Couldn’t update — reverted');
-      });
-    },
+    (id: string, flagged: boolean) => void mutateFlags([id], { flagged }, { onApply: patchResult }),
     [patchResult],
   );
 
@@ -328,18 +311,8 @@ export function Search() {
 
   const bulkMarkRead = useCallback(
     (seen: boolean) => {
-      for (const id of selectedIds) {
-        for (const mid of expandIds(id)) {
-          patchResult(mid, { seen });
-          void patchCachedFlags(mid, { seen });
-          api.setFlags(mid, { seen }).catch(() => {
-            patchResult(mid, { seen: !seen });
-            void patchCachedFlags(mid, { seen: !seen });
-            showNotice('Couldn’t update — reverted');
-          });
-        }
-      }
-      clearSelect();
+      const ids = [...selectedIds].flatMap(expandIds);
+      if (mutateFlags(ids, { seen }, { onApply: patchResult })) clearSelect();
     },
     [selectedIds, expandIds, patchResult, clearSelect],
   );

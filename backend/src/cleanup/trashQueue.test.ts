@@ -1,10 +1,11 @@
 /**
- * Cleanup trash-queue coverage (ROADMAP Phase 6b). Pins the parts that don't touch IMAP:
+ * Cleanup trash-queue coverage. Pins the parts that don't touch IMAP:
  *  - enqueue is idempotent (the unique index on message_id dedupes re-queues),
  *  - the runner's claim + backoff: with no engine registered a due batch can't be MOVEd, so
  *    rows stay pending with a future backoff gate and aren't immediately re-claimed,
  *  - local-only (detached) mail is trashed with a local relink into the trash folder — no
- *    engine/IMAP involved, so it works even for offline accounts.
+ *    engine/IMAP involved, so it works even for offline accounts,
+ *  - a row that exhausts its retries un-tombstones its message and says so.
  * The IMAP MOVE itself rides the shared, manually-verified imap/move.ts helper.
  *
  * Same throwaway-DB bootstrap as slices.test.ts (point MAILY_DATA_DIR before the dynamic
@@ -20,6 +21,8 @@ import test, { after, before, beforeEach } from 'node:test';
 import type * as SchemaNS from '../db/schema.js';
 import type * as DbClientNS from '../db/client.js';
 import type * as TrashQueueNS from './trashQueue.js';
+import type * as EventsNS from '../events.js';
+import type { SocketSignal } from '@maily/shared';
 
 const tmpRoot = mkdtempSync(join(tmpdir(), 'maily-trashq-test-'));
 process.env.MAILY_DATA_DIR = tmpRoot;
@@ -27,6 +30,7 @@ process.env.MAILY_DATA_DIR = tmpRoot;
 let db: (typeof DbClientNS)['db'];
 let schema: typeof SchemaNS;
 let Q: typeof TrashQueueNS;
+let onSignal: (typeof EventsNS)['onSignal'];
 
 before(async () => {
   const client = await import('../db/client.js');
@@ -35,6 +39,7 @@ before(async () => {
   db = client.db;
   schema = await import('../db/schema.js');
   Q = await import('./trashQueue.js');
+  ({ onSignal } = await import('../events.js'));
 });
 
 after(() => rmSync(tmpRoot, { recursive: true, force: true }));
@@ -140,4 +145,34 @@ test('runTrashQueueOnce: local-only mail with no trash folder backs off, not sil
     .get();
   assert.equal(row!.status, 'pending', 'stays pending (retryable)');
   assert.equal(row!.attempts, 1, 'attempt counted');
+});
+
+test('runTrashQueueOnce: a dead row un-tombstones its message and reports the failure', async () => {
+  const m = seedMessage();
+  const inbox = seedFolder(m.accountId, 'inbox');
+  seedFolder(m.accountId, 'trash');
+  db.insert(schema.messageFolders).values({ messageId: m.id, folderId: inbox, uid: 9 }).run();
+  // What the execute route does before enqueueing: hide it everywhere.
+  db.update(schema.messages)
+    .set({ deletedAt: new Date() })
+    .where(eq(schema.messages.id, m.id))
+    .run();
+  Q.enqueueTrash([m], 'cold-storage');
+  // One attempt left, and no engine to MOVE with.
+  db.update(schema.cleanupQueue).set({ attempts: 4 }).run();
+
+  const signals: SocketSignal[] = [];
+  const off = onSignal((s) => signals.push(s));
+  assert.equal(await Q.runTrashQueueOnce(), 0);
+  off();
+
+  const row = db.select().from(schema.cleanupQueue).get();
+  assert.equal(row!.status, 'dead');
+  const msg = db.select().from(schema.messages).where(eq(schema.messages.id, m.id)).get();
+  assert.equal(msg!.deletedAt, null, 'still in the provider inbox — visible again');
+  assert.deepEqual(
+    signals.map((s) => s.type),
+    ['mail:restored', 'mail:action-failed'],
+  );
+  assert.deepEqual(Q.queueStatus(), { pending: 0, failed: 1, done: 0 });
 });

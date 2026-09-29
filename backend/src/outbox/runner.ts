@@ -1,9 +1,14 @@
 /**
- * Outbox runner — the server-owned, restart-safe execution path for deferred actions
- * (migration 0020). Three kinds share one queue:
+ * Outbox runner — the server-owned, restart-safe execution path for every action that reaches
+ * the provider on the user's behalf (migration 0020). Four kinds share one queue:
  *   - `send`    — undo-send (queued with a short window) and scheduled "send later".
  *   - `delete`  — the MOVE-to-Trash behind a delete, deferred so it's undoable.
  *   - `archive` — the MOVE-to-Archive behind an archive, deferred so it's undoable.
+ *   - `flags`   — a read/star STORE, due immediately; due rows are batched per folder.
+ *
+ * delete/archive/flags are mailbox intents (./intents.ts): the local effect is applied in the
+ * enqueue transaction and the inverse runs on cancel and on `dead`, followed by a signal, so a
+ * provider that never takes the change can't leave maily showing something it doesn't have.
  *
  * Why server-side: the old undo window lived in the PWA, so a backgrounded/closed app could
  * drop the commit. Here the backend owns the timer (`dueAt`) and commits regardless of the
@@ -11,14 +16,30 @@
  * UNDO: a `dueAt` gate (only claim once the window elapses) and an atomic `pending`→`sending`
  * flip so a concurrent cancel and the runner can never both win.
  */
-import { and, asc, eq, lte, or, isNull, count } from 'drizzle-orm';
-import type { SendMessageRequest, OutboxEntry, OutboxKind } from '@maily/shared';
+import { and, asc, eq, lte, or, isNull, count, inArray, lt, sql } from 'drizzle-orm';
+import type { SendMessageRequest, OutboxEntry, OutboxKind, MailboxAction } from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
-import { outbox } from '../db/schema.js';
-import { folderByRole, folderIdsForMessage } from '../db/queries.js';
-import { serverPlacement, type ServerPlacement } from '../db/placement.js';
-import { relinkMessageToFolder, restoreMessageDeleted } from '../imap/store.js';
+import { folders, outbox } from '../db/schema.js';
+import { folderByRole } from '../db/queries.js';
+import { isMessageLocalOnly, serverPlacement, type ServerPlacement } from '../db/placement.js';
+import { relinkMessageToFolder } from '../imap/store.js';
 import { moveToFolderOnServer } from '../imap/move.js';
+import { storeFlagsOnServer, type FlagStore } from '../imap/flags.js';
+import {
+  applyArchive,
+  applyDelete,
+  applyFlags,
+  currentFlags,
+  parsePayload,
+  revertArchive,
+  revertDelete,
+  revertFlags,
+  type ArchivePayload,
+  type DeletePayload,
+  type FlagName,
+  type FlagSet,
+  type FlagsPayload,
+} from './intents.js';
 import { getEngine } from '../imap/registry.js';
 import { sendMessage } from '../mail/send.js';
 import { saveDraft } from '../mail/draft.js';
@@ -36,46 +57,137 @@ const BACKOFF_MS = 30_000;
 /** Poll interval — the `dueAt` gate does the real timing; the tick just needs to be frequent. */
 const TICK_MS = 2_000;
 
+/** How long finished rows (done/canceled/dead) are kept for diagnostics before pruning. */
+const RETAIN_MS = 7 * 24 * 60 * 60 * 1000;
+const PRUNE_EVERY_MS = 6 * 60 * 60 * 1000;
+
 interface NewAction {
   accountId: string;
   kind: OutboxKind;
   messageId?: string | null;
-  payload?: SendMessageRequest | null;
+  payload?: unknown;
   /** Epoch ms the action may fire. */
   dueAt: number;
 }
 
-/** Insert one deferred action; returns its outbox id. */
-function enqueue(action: NewAction): string {
-  const row = withWriteRetry('outbox.enqueue', () =>
-    db
-      .insert(outbox)
-      .values({
-        accountId: action.accountId,
-        kind: action.kind,
-        messageId: action.messageId ?? null,
-        payload: action.payload ? JSON.stringify(action.payload) : null,
-        dueAt: new Date(action.dueAt),
-      })
-      .returning({ id: outbox.id })
-      .get(),
+/** Insert one row; returns its outbox id. Call inside the caller's write transaction. */
+function insertRow(action: NewAction): string {
+  return db
+    .insert(outbox)
+    .values({
+      accountId: action.accountId,
+      kind: action.kind,
+      messageId: action.messageId ?? null,
+      payload: action.payload == null ? null : JSON.stringify(action.payload),
+      dueAt: new Date(action.dueAt),
+      // Millisecond precision: flags inverses order rows by insertion (rowid), and reads of
+      // this column for diagnostics shouldn't collapse a burst of toggles onto one second.
+      createdAt: new Date(),
+    })
+    .returning({ id: outbox.id })
+    .get().id;
+}
+
+/**
+ * Apply an intent's local effect and record it, atomically: either both the local change and
+ * the row that will push it (or take it back) exist, or neither does.
+ */
+function enqueueIntent<P>(
+  accountId: string,
+  kind: 'delete' | 'archive' | 'flags',
+  messageId: string,
+  dueAt: number,
+  apply: () => P,
+): { id: string; payload: P } {
+  return withWriteRetry(`outbox.enqueue.${kind}`, () =>
+    db.transaction(() => {
+      const payload = apply();
+      return { id: insertRow({ accountId, kind, messageId, payload, dueAt }), payload };
+    }),
   );
-  return row.id;
 }
 
 /** Queue a send (undo-send window or scheduled). `dueAt` is when it actually fires. */
 export function enqueueSend(accountId: string, req: SendMessageRequest, dueAt: number): string {
-  return enqueue({ accountId, kind: 'send', payload: req, dueAt });
+  return withWriteRetry('outbox.enqueue.send', () =>
+    insertRow({ accountId, kind: 'send', payload: req, dueAt }),
+  );
 }
 
-/** Queue a deferred delete (MOVE-to-Trash) for a message, undoable until `dueAt`. */
+/** Delete: tombstone now (every view hides it), MOVE to Trash at `dueAt` unless undone. */
 export function enqueueDelete(accountId: string, messageId: string, dueAt: number): string {
-  return enqueue({ accountId, kind: 'delete', messageId, dueAt });
+  const { id } = enqueueIntent(accountId, 'delete', messageId, dueAt, () => applyDelete(messageId));
+  emitSignal({ type: 'mail:deleted', accountId, messageId });
+  return id;
 }
 
-/** Queue a deferred archive (MOVE-to-Archive) for a message, undoable until `dueAt`. */
-export function enqueueArchive(accountId: string, messageId: string, dueAt: number): string {
-  return enqueue({ accountId, kind: 'archive', messageId, dueAt });
+/** Archive: leave the inbox now (local relink), MOVE to Archive at `dueAt` unless undone. */
+export function enqueueArchive(
+  accountId: string,
+  messageId: string,
+  archiveId: string,
+  dueAt: number,
+): string {
+  const inboxId = folderByRole(accountId, 'inbox')?.id;
+  const { id } = enqueueIntent(accountId, 'archive', messageId, dueAt, () =>
+    applyArchive(messageId, inboxId, archiveId),
+  );
+  emitSignal({ type: 'mail:archived', accountId, messageId });
+  return id;
+}
+
+/**
+ * Read/star: set the flags locally now and STORE them on the server right away (due now, then
+ * nudged). Returns the resulting local flags.
+ */
+export function enqueueFlags(
+  accountId: string,
+  messageId: string,
+  set: FlagSet,
+): { seen: boolean; flagged: boolean } {
+  enqueueIntent(accountId, 'flags', messageId, Date.now(), () => applyFlags(messageId, set));
+  const flags = currentFlags(messageId) ?? { seen: false, flagged: false };
+  emitSignal({ type: 'mail:flags', accountId, messageId, ...flags });
+  nudgeOutbox();
+  return flags;
+}
+
+interface IntentRow {
+  id: string;
+  accountId: string;
+  kind: OutboxKind;
+  messageId: string | null;
+  payload: string | null;
+}
+
+/**
+ * Apply an intent's inverse (undo, or the provider never took it) and tell clients what the
+ * message looks like now. Runs in one transaction so a half-reverted relink can't be observed.
+ */
+function revertIntent(row: IntentRow): void {
+  const messageId = row.messageId;
+  if (!messageId || row.kind === 'send') return;
+  const changed = withWriteRetry('outbox.revert', () =>
+    db.transaction(() => {
+      switch (row.kind) {
+        case 'delete':
+          return revertDelete(messageId, parsePayload<DeletePayload>(row.payload));
+        case 'archive':
+          return revertArchive(messageId, parsePayload<ArchivePayload>(row.payload));
+        case 'flags':
+          return revertFlags(row.id, messageId, parsePayload<FlagsPayload>(row.payload));
+        default:
+          return false;
+      }
+    }),
+  );
+  if (!changed) return;
+  if (row.kind === 'flags') {
+    const flags = currentFlags(messageId);
+    if (flags) emitSignal({ type: 'mail:flags', accountId: row.accountId, messageId, ...flags });
+  } else {
+    emitSignal({ type: 'mail:restored', accountId: row.accountId, messageId });
+  }
 }
 
 export type CancelOutcome = 'canceled' | 'too-late' | 'not-found';
@@ -83,8 +195,8 @@ export type CancelOutcome = 'canceled' | 'too-late' | 'not-found';
 /**
  * Cancel (undo) a pending action. Wins the race against the runner via an atomic
  * `pending`→`canceled` flip: if the runner already claimed it (now `sending`/`done`), the
- * update changes 0 rows and we report `too-late`. On a successful cancel of a delete/archive
- * we reverse the optimistic local hide and emit `mail:restored` so every client un-hides it.
+ * update changes 0 rows and we report `too-late`. A canceled mailbox intent applies its inverse
+ * (`mail:restored` / `mail:flags`), so every client shows the message as it was.
  * A canceled SEND is saved back to \Drafts so the composition isn't lost — the composer has
  * already navigated away and cleared its local draft, so the server-side \Drafts copy is the
  * only place the message survives (and it then syncs to every device).
@@ -92,6 +204,7 @@ export type CancelOutcome = 'canceled' | 'too-late' | 'not-found';
 export function cancelOutbox(id: string): CancelOutcome {
   const row = db
     .select({
+      id: outbox.id,
       kind: outbox.kind,
       accountId: outbox.accountId,
       messageId: outbox.messageId,
@@ -111,11 +224,7 @@ export function cancelOutbox(id: string): CancelOutcome {
   );
   if (res.changes === 0) return 'too-late';
 
-  if (row.messageId && (row.kind === 'delete' || row.kind === 'archive')) {
-    // delete tombstoned locally at enqueue; archive made no local change (the signal hid it).
-    if (row.kind === 'delete') restoreMessageDeleted(row.messageId);
-    emitSignal({ type: 'mail:restored', accountId: row.accountId, messageId: row.messageId });
-  }
+  revertIntent(row);
 
   if (row.kind === 'send' && row.payload) {
     const engine = getEngine(row.accountId);
@@ -175,16 +284,14 @@ export function listPendingSends(): OutboxEntry[] {
   });
 }
 
-interface DueRow {
-  id: string;
-  accountId: string;
-  kind: OutboxKind;
-  messageId: string | null;
-  payload: string | null;
+interface DueRow extends IntentRow {
   attempts: number;
 }
 
-/** Claim a bounded snapshot of due pending rows (dueAt + backoff gates honoured), oldest first. */
+/**
+ * Claim a bounded snapshot of due pending rows (dueAt + backoff gates honoured), oldest first.
+ * Ties break on insertion order so stacked toggles of one flag execute in the order made.
+ */
 function claimDue(now: Date, limit: number): DueRow[] {
   return db
     .select({
@@ -203,7 +310,7 @@ function claimDue(now: Date, limit: number): DueRow[] {
         or(isNull(outbox.nextAttemptAt), lte(outbox.nextAttemptAt, now)),
       ),
     )
-    .orderBy(asc(outbox.dueAt))
+    .orderBy(asc(outbox.dueAt), sql`${outbox}.rowid`)
     .limit(limit)
     .all();
 }
@@ -233,10 +340,17 @@ function markDone(id: string): void {
   );
 }
 
+const ACTION_OF: Partial<Record<OutboxKind, MailboxAction>> = {
+  delete: 'delete',
+  archive: 'archive',
+  flags: 'flags',
+};
+
 /**
  * Record a failed attempt: bump `attempts` and either re-arm as `pending` with linear backoff
  * (status returns to pending so the next due scan re-claims it) or park as `dead` at the cap.
- * A terminal send emits `mail:send-failed` so the user learns it never went out.
+ * A terminal send emits `mail:send-failed` so the user learns it never went out; a terminal
+ * mailbox intent applies its inverse and emits `mail:action-failed`.
  */
 function markFailed(row: DueRow, message: string, now: Date): void {
   const attempts = row.attempts + 1;
@@ -254,17 +368,30 @@ function markFailed(row: DueRow, message: string, now: Date): void {
       .where(eq(outbox.id, row.id))
       .run(),
   );
-  if (terminal && row.kind === 'send') {
+  if (!terminal) return;
+  if (row.kind === 'send') {
     emitSignal({
       type: 'mail:send-failed',
       accountId: row.accountId,
       outboxId: row.id,
       error: message.slice(0, 200),
     });
+    return;
+  }
+  revertIntent(row);
+  const action = ACTION_OF[row.kind];
+  if (action) {
+    emitSignal({
+      type: 'mail:action-failed',
+      accountId: row.accountId,
+      action,
+      count: 1,
+      error: message.slice(0, 200),
+    });
   }
 }
 
-/** Execute one claimed row. Throws on a retryable failure; returns normally when terminal/done. */
+/** Execute one claimed send/delete/archive row. Throws on a retryable failure. */
 async function execute(row: DueRow): Promise<void> {
   if (row.kind === 'send') {
     const engine = requireEngine(row.accountId);
@@ -297,13 +424,45 @@ async function execute(row: DueRow): Promise<void> {
     return;
   }
 
-  // archive — only the inbox copy moves; anything not in the inbox is already archived/elsewhere.
-  const archive = folderByRole(row.accountId, 'archive');
-  const inbox = folderByRole(row.accountId, 'inbox');
-  if (archive && inbox && folderIdsForMessage(row.messageId).includes(inbox.id)) {
-    await moveOrRelink(row, row.messageId, serverPlacement(row.messageId, inbox.id), archive);
+  if (row.kind === 'archive') {
+    // Only the inbox copy moves; anything not in the inbox is already archived/elsewhere.
+    const dest = archiveDest(row);
+    if (dest) await moveOrRelink(row, row.messageId, dest.placement, dest.folder);
+    markDone(row.id);
   }
-  markDone(row.id);
+}
+
+/**
+ * Where an archive moves from and to. The enqueue already took the message out of the inbox
+ * locally, so the inbox copy's UID comes from the intent's payload, not from the mappings. A
+ * row queued before intents existed carries no payload and still has its inbox mapping.
+ */
+function archiveDest(
+  row: DueRow,
+): { placement: ServerPlacement; folder: { id: string; path: string } } | null {
+  const messageId = row.messageId!;
+  const p = parsePayload<ArchivePayload>(row.payload);
+  if (!p) {
+    const inbox = folderByRole(row.accountId, 'inbox');
+    const archive = folderByRole(row.accountId, 'archive');
+    if (!inbox || !archive) return null;
+    const loc = serverPlacement(messageId, inbox.id);
+    if (loc.kind === 'unplaced') return null;
+    return { placement: loc, folder: archive };
+  }
+  if (!p.from) return null;
+  const path = (id: string) =>
+    db.select({ path: folders.path }).from(folders).where(eq(folders.id, id)).get()?.path;
+  const destPath = path(p.destId);
+  if (!destPath) return null;
+  const folder = { id: p.destId, path: destPath };
+  if (isMessageLocalOnly(messageId)) return { placement: { kind: 'local-only' }, folder };
+  const fromPath = path(p.from.folderId);
+  if (p.from.uid === null || !fromPath) return { placement: { kind: 'unplaced' }, folder };
+  return {
+    placement: { kind: 'server', accountId: row.accountId, folderPath: fromPath, uid: p.from.uid },
+    folder,
+  };
 }
 
 /**
@@ -336,6 +495,98 @@ async function moveOrRelink(
   }
 }
 
+const IMAP_FLAG: Record<FlagName, FlagStore['flag']> = { seen: '\\Seen', flagged: '\\Flagged' };
+
+/**
+ * Execute claimed flags rows as batched STOREs: one transient connection per account and one
+ * STORE per (folder, flag, value). Rows are in insertion order, so when several set the same
+ * flag on the same message the last one decides the value sent, and all of them share its
+ * outcome. Detached or unplaced mail has no server copy — the local write was the whole action.
+ */
+async function executeFlags(rows: DueRow[], now: Date): Promise<number> {
+  interface Group {
+    store: FlagStore;
+    rowIds: Set<string>;
+  }
+  const failed = new Map<string, string>();
+  // Per account: `${messageId}\0${flag}` → the final value and every row that touched it.
+  const perAccount = new Map<
+    string,
+    Map<string, { value: boolean; path: string; uid: number; rowIds: string[] }>
+  >();
+
+  for (const row of rows) {
+    const p = parsePayload<FlagsPayload>(row.payload);
+    const loc = row.messageId && p ? serverPlacement(row.messageId) : { kind: 'unplaced' as const };
+    if (loc.kind !== 'server' || !p) continue; // marked done below
+    let finals = perAccount.get(row.accountId);
+    if (!finals) perAccount.set(row.accountId, (finals = new Map()));
+    for (const f of Object.keys(IMAP_FLAG) as FlagName[]) {
+      const value = p.set[f];
+      if (value === undefined) continue;
+      const key = `${row.messageId}\u0000${f}`;
+      const prior = finals.get(key);
+      finals.set(key, {
+        value,
+        path: loc.folderPath,
+        uid: loc.uid,
+        rowIds: [...(prior?.rowIds ?? []), row.id],
+      });
+    }
+  }
+
+  for (const [accountId, finals] of perAccount) {
+    const groups = new Map<string, Group>();
+    for (const [key, fin] of finals) {
+      const flag = IMAP_FLAG[key.slice(key.indexOf('\u0000') + 1) as FlagName];
+      const gk = `${fin.path}\u0000${flag}\u0000${fin.value}`;
+      let g = groups.get(gk);
+      if (!g) {
+        g = {
+          store: { folderPath: fin.path, flag, value: fin.value, uids: [] },
+          rowIds: new Set(),
+        };
+        groups.set(gk, g);
+      }
+      g.store.uids.push(fin.uid);
+      for (const id of fin.rowIds) g.rowIds.add(id);
+    }
+    const list = [...groups.values()];
+    let results: (string | null)[];
+    try {
+      results = await storeFlagsOnServer(
+        requireEngine(accountId).accountConfig,
+        list.map((g) => g.store),
+      );
+    } catch (err) {
+      results = list.map(() => (err as Error).message);
+    }
+    list.forEach((g, i) => {
+      const error = results[i];
+      for (const id of g.rowIds) if (error) failed.set(id, error);
+    });
+    // A star changes membership of a flag-derived folder (Gmail's [Gmail]/Starred): reconcile
+    // non-INBOX folders now so it shows there right away rather than after the next cron pass.
+    if (list.some((g, i) => g.store.flag === '\\Flagged' && !results[i])) {
+      getEngine(accountId)?.reconcileFoldersNow();
+    }
+  }
+
+  // Oldest first, so a dead intent hands its inverse down to a newer one (intents.revertFlags).
+  let executed = 0;
+  for (const row of rows) {
+    const error = failed.get(row.id);
+    if (error) {
+      log.warn(`flags ${row.id} failed: ${error}`);
+      markFailed(row, error, now);
+    } else {
+      markDone(row.id);
+      executed += 1;
+    }
+  }
+  return executed;
+}
+
 function requireEngine(accountId: string): NonNullable<ReturnType<typeof getEngine>> {
   const engine = getEngine(accountId);
   if (!engine) throw new Error(`no engine for account ${accountId} (not ready yet)`);
@@ -346,16 +597,19 @@ function requireEngine(accountId: string): NonNullable<ReturnType<typeof getEngi
  * Process one bounded snapshot of due work. Returns the number of rows executed this pass.
  * Never throws — per-row failures are recorded as backoff/dead so one bad action can't stall
  * the rest. Each row is atomically claimed first, so a row canceled between claimDue and claim
- * is simply skipped.
+ * is simply skipped. Flag rows go first, batched: they're what the user is looking at.
  */
 export async function runOutboxOnce(): Promise<number> {
   const now = new Date();
-  const due = claimDue(now, BATCH);
+  const due = claimDue(now, BATCH).filter((row) => claim(row.id));
   if (due.length === 0) return 0;
 
-  let executed = 0;
+  let executed = await executeFlags(
+    due.filter((r) => r.kind === 'flags'),
+    now,
+  );
   for (const row of due) {
-    if (!claim(row.id)) continue; // canceled or taken by a racing pass
+    if (row.kind === 'flags') continue;
     try {
       await execute(row);
       executed += 1;
@@ -368,14 +622,40 @@ export async function runOutboxOnce(): Promise<number> {
   return executed;
 }
 
-let busy = false;
+/** Drop finished rows past the retention window — flags make the queue busy enough to grow. */
+export function pruneOutbox(now = Date.now()): number {
+  return withWriteRetry('outbox.prune', () =>
+    db
+      .delete(outbox)
+      .where(
+        and(
+          inArray(outbox.status, ['done', 'canceled', 'dead']),
+          lt(outbox.updatedAt, new Date(now - RETAIN_MS)),
+        ),
+      )
+      .run(),
+  ).changes;
+}
 
-/** Drain the queue once, guarding against overlapping runs (interval + post-enqueue nudge). */
+let busy = false;
+let again = false;
+
+/**
+ * Drain the queue, guarding against overlapping runs (interval + post-enqueue nudge). A nudge
+ * that lands mid-drain runs one more pass afterwards, so a flag toggled while a slow send is in
+ * flight doesn't wait for the next tick.
+ */
 async function drain(): Promise<void> {
-  if (busy) return;
+  if (busy) {
+    again = true;
+    return;
+  }
   busy = true;
   try {
-    await runOutboxOnce();
+    do {
+      again = false;
+      await runOutboxOnce();
+    } while (again);
   } catch (err) {
     log.warn(`outbox tick failed: ${(err as Error).message}`);
   } finally {
@@ -404,6 +684,18 @@ export function startOutbox(): void {
   resetInflight();
   const timer = setInterval(() => void drain(), TICK_MS);
   if (typeof timer.unref === 'function') timer.unref();
+
+  const prune = () => {
+    try {
+      const n = pruneOutbox();
+      if (n > 0) log.info(`pruned ${n} finished outbox rows`);
+    } catch (err) {
+      log.warn(`outbox prune failed: ${(err as Error).message}`);
+    }
+  };
+  prune();
+  const pruneTimer = setInterval(prune, PRUNE_EVERY_MS);
+  if (typeof pruneTimer.unref === 'function') pruneTimer.unref();
 }
 
 /**

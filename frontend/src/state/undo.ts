@@ -14,6 +14,7 @@
  * currently staged-away or committed-away so that list can filter them out and react to undo.
  */
 import { useSyncExternalStore } from 'react';
+import type { MailboxAction } from '@maily/shared';
 import { api } from '../api/client';
 import {
   cache,
@@ -84,6 +85,29 @@ export function showNotice(message: string): void {
     notify();
   }, NOTICE_MS);
   notify();
+}
+
+/**
+ * Stop hiding a message that came back: a late undo from another device, or a delete/archive
+ * the provider never took (the server reverted it and sent `mail:restored`).
+ */
+export function unhide(id: string): void {
+  if (committed.delete(id)) notify();
+}
+
+/** Snackbar text for a change the provider never took (`mail:action-failed`). */
+export function failedActionNotice(action: MailboxAction, count: number): string {
+  const what = count === 1 ? 'a message' : `${count} messages`;
+  switch (action) {
+    case 'delete':
+      return `Couldn’t delete ${what} on the server — restored`;
+    case 'archive':
+      return `Couldn’t archive ${what} on the server — restored`;
+    case 'cleanup':
+      return `Couldn’t move ${what} to Trash on the server — restored`;
+    case 'flags':
+      return 'Couldn’t update the mail server — change reverted';
+  }
 }
 
 function defaultLabel(kind: ActionKind, count: number): string {

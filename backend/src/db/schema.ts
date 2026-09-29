@@ -419,10 +419,10 @@ export const cleanupQueue = sqliteTable(
 
 /**
  * Server-owned outbox: a restart-safe, cancelable deferred-action queue (migration 0020).
- * One row per pending action — a send (undo-send or scheduled "send later"), a delete, or an
- * archive. The runner (src/outbox/runner.ts) only claims rows whose `dueAt` has elapsed, and
- * atomically flips `pending`→`sending` before acting so a concurrent cancel can't double-fire.
- * Because the queue lives server-side, the action commits at `dueAt` whether or not the PWA is
+ * One row per action — a send (undo-send or scheduled "send later"), a delete, an archive, or a
+ * read/star flag change. The runner (src/outbox/runner.ts) only claims rows whose `dueAt` has
+ * elapsed, and atomically flips `pending`→`sending` before acting so a concurrent cancel can't
+ * double-fire. Because the queue lives server-side, the action commits at `dueAt` whether or not the PWA is
  * still open — the whole point of moving the undo window off the client.
  */
 export const outbox = sqliteTable(
@@ -430,10 +430,14 @@ export const outbox = sqliteTable(
   {
     id: uuid(),
     accountId: text('account_id').notNull(),
-    kind: text('kind', { enum: ['send', 'delete', 'archive'] }).notNull(),
-    /** Target message for delete/archive; null for a send (which carries `payload` instead). */
+    // No CHECK constraint on the column, so a new kind needs no migration.
+    kind: text('kind', { enum: ['send', 'delete', 'archive', 'flags'] }).notNull(),
+    /** Target message for delete/archive/flags; null for a send (which carries `payload`). */
     messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }),
-    /** JSON-encoded SendMessageRequest for `send`; null for delete/archive. */
+    /**
+     * JSON: the SendMessageRequest for `send`; for a mailbox intent, what its local effect
+     * replaced — the inverse applied on cancel or `dead` (outbox/intents.ts).
+     */
     payload: text('payload'),
     status: text('status', { enum: ['pending', 'sending', 'done', 'canceled', 'dead'] })
       .notNull()

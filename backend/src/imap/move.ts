@@ -45,7 +45,7 @@ export interface MoveItem {
  * Batched MOVE: move every item that lives in `sourcePath` to `dest` in ONE IMAP command
  * (a comma-joined UID set) over a single transient connection, then relink each locally.
  * This is the gentle bulk primitive — one MOVE per (account, source folder) batch keeps the
- * server from being flagged for thousands of individual commands (ROADMAP Phase 6b). All
+ * server from being flagged for thousands of individual commands. All
  * items MUST share `sourcePath`. Returns the moved message ids (relink applied) so the caller
  * can mark them done; on a per-item missing uidMap entry the destination UID is left null.
  */

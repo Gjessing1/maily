@@ -9,8 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AccountDto, MessageDto } from '@maily/shared';
-import { api } from '../api/client';
-import { patchCachedFlags } from '../db/cache';
+import { mutateFlags } from '../state/mutate';
 import { useMessageDetail } from '../state/data';
 import { OFFLINE_READ_ONLY_MESSAGE } from '../state/connectivity';
 import { showNotice } from '../state/undo';
@@ -66,10 +65,7 @@ function ConversationMessage({
   useEffect(() => {
     if (readOnly || !expanded || autoMarked.current || message.seen || markReadSeconds < 0) return;
     autoMarked.current = true;
-    const mark = () => {
-      void patchCachedFlags(message.id, { seen: true });
-      api.setFlags(message.id, { seen: true }).catch(() => undefined);
-    };
+    const mark = () => mutateFlags([message.id], { seen: true }, { quiet: true });
     if (markReadSeconds === 0) {
       mark();
       return;
@@ -81,13 +77,11 @@ function ConversationMessage({
   function toggleStar(e: React.MouseEvent) {
     e.stopPropagation();
     if (readOnly) return;
-    const next = !flagged;
-    setFlagged(next);
-    void patchCachedFlags(message.id, { flagged: next });
-    api.setFlags(message.id, { flagged: next }).catch(() => {
-      setFlagged(!next);
-      void patchCachedFlags(message.id, { flagged: !next });
-    });
+    mutateFlags(
+      [message.id],
+      { flagged: !flagged },
+      { onApply: (_, f) => setFlagged(!!f.flagged) },
+    );
   }
 
   const senderTrusted = isImageDomainTrusted(detail?.fromAddress, trustedImageDomains);
@@ -284,8 +278,7 @@ function ConversationMessage({
                 <button
                   onClick={() => {
                     if (readOnly) return;
-                    void patchCachedFlags(message.id, { seen: false });
-                    api.setFlags(message.id, { seen: false }).catch(() => undefined);
+                    mutateFlags([message.id], { seen: false });
                   }}
                   disabled={readOnly}
                   className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"

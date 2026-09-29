@@ -14,7 +14,7 @@ import {
 } from '../db/cache';
 import { hydratePrefs } from './prefs';
 import { hydrateServerSettings } from './serverSettings';
-import { showNotice } from './undo';
+import { failedActionNotice, showNotice, unhide } from './undo';
 
 export interface SyncProgress {
   accountId: string;
@@ -53,10 +53,11 @@ export function useSignals(): { progress: SyncProgress | null } {
           void removeCachedMessage(signal.messageId);
           break;
         case 'mail:restored':
-          // A deferred delete/archive was undone (possibly on another device) before it
-          // committed — re-pull the message so it reappears in the inbox. Clear the
-          // removal tombstone first or the cache write would be silently skipped.
+          // A delete/archive was undone (possibly on another device), or the provider never
+          // took it and the server put it back — re-pull the message so it reappears where it
+          // is. Clear the removal tombstone first or the cache write would be silently skipped.
           clearRemovalTombstone(signal.messageId);
+          unhide(signal.messageId);
           api
             .message(signal.messageId)
             .then(cacheBody)
@@ -72,6 +73,10 @@ export function useSignals(): { progress: SyncProgress | null } {
         case 'mail:send-failed':
           // The send exhausted its retries — let the user know it never went out.
           showNotice(`Send failed: ${signal.error}`);
+          break;
+        case 'mail:action-failed':
+          // The server already put the mail back (mail:restored / mail:flags); say why.
+          showNotice(failedActionNotice(signal.action, signal.count));
           break;
         case 'settings:changed':
           // Prefs or server settings were saved, maybe on another device — re-read both.

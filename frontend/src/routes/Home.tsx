@@ -3,9 +3,10 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
-import { cache, patchCachedFlags } from '../db/cache';
+import { cache } from '../db/cache';
 import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
 import { groupConversations } from '../state/threads';
+import { mutateFlags } from '../state/mutate';
 import { MessageRow } from '../components/MessageRow';
 import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
@@ -179,33 +180,16 @@ export function Home() {
     [expandIds, online],
   );
 
-  // Optimistic toggle-read across the conversation: flip locally, reconcile per message.
+  // Toggle-read across the conversation.
   const handleToggleRead = useCallback(
-    (id: string, seen: boolean) => {
-      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
-      for (const mid of expandIds(id)) {
-        void patchCachedFlags(mid, { seen });
-        api.setFlags(mid, { seen }).catch(() => {
-          void patchCachedFlags(mid, { seen: !seen });
-          showNotice('Couldn’t update — reverted');
-        });
-      }
-    },
-    [expandIds, online],
+    (id: string, seen: boolean) => void mutateFlags(expandIds(id), { seen }),
+    [expandIds],
   );
 
-  // Star toggle stays per-message (the representative/latest), Gmail-style — flip
-  // locally, reconcile on the server (revert + notify on failure).
+  // Star toggle stays per-message (the representative/latest), Gmail-style.
   const handleToggleFlag = useCallback(
-    (id: string, flagged: boolean) => {
-      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
-      void patchCachedFlags(id, { flagged });
-      api.setFlags(id, { flagged }).catch(() => {
-        void patchCachedFlags(id, { flagged: !flagged });
-        showNotice('Couldn’t update — reverted');
-      });
-    },
-    [online],
+    (id: string, flagged: boolean) => void mutateFlags([id], { flagged }),
+    [],
   );
 
   // Archive the whole conversation (context menu): staged behind one undo window,
@@ -260,19 +244,9 @@ export function Home() {
   // message in its thread so "mark read"/"archive"/"delete" hit whole conversations.
   const bulkMarkRead = useCallback(
     (seen: boolean) => {
-      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
-      for (const id of selectedIds) {
-        for (const mid of expandIds(id)) {
-          void patchCachedFlags(mid, { seen });
-          api.setFlags(mid, { seen }).catch(() => {
-            void patchCachedFlags(mid, { seen: !seen });
-            showNotice('Couldn’t update — reverted');
-          });
-        }
-      }
-      clearSelect();
+      if (mutateFlags([...selectedIds].flatMap(expandIds), { seen })) clearSelect();
     },
-    [selectedIds, expandIds, clearSelect, online],
+    [selectedIds, expandIds, clearSelect],
   );
   const bulkArchive = useCallback(() => {
     if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
