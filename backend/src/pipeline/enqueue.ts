@@ -13,7 +13,7 @@
  * enricher's own `applies()` gate is evaluated later, at RUN time, so enqueue stays
  * cheap (needs only the received date, never the full body).
  */
-import { and, desc, eq, gte, notExists } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, notExists } from 'drizzle-orm';
 import { db, withWriteRetry } from '../db/client.js';
 import { visible } from '../db/visibility.js';
 import { enrichments, messages } from '../db/schema.js';
@@ -59,8 +59,8 @@ export function enqueueMessage(
 /**
  * Self-heal: enqueue up to `limit` non-deleted messages that have NO enrichment rows
  * at all (synced before the pipeline existed, or inserted by the source sweep without
- * a nudge). Newest first. Coverage gaps from a *newly added* enricher or a version
- * bump are handled by `reindex`, not here.
+ * a nudge). Newest first. A *newly added* enricher is `backfillEnricherCoverage`'s
+ * job, a version bump `backfillStaleVersions`'.
  */
 export function backfillPending(limit: number, now: Date = new Date()): number {
   const orphans = db
@@ -148,5 +148,48 @@ export function backfillEnricherCoverage(limit: number, now: Date = new Date()):
       }
     }
     return inserted;
+  });
+}
+
+/**
+ * Version-bump self-heal: reset up to `limit` finished rows (`ok` / `dead`) that an
+ * older version of their enricher wrote back to `pending`, so bumping `version`
+ * actually re-runs the mailbox instead of leaving the old output in place forever.
+ * Readers only trust current-version results (`pipeline/facts.ts`), so without this a
+ * bump would silently blank every old message's facts.
+ *
+ * Operational enrichers are skipped: re-running one repeats its side effect. Bounded
+ * and idle-only like the other backfills, so a bump drains over a few nudges.
+ */
+export function backfillStaleVersions(limit: number, now: Date = new Date()): number {
+  if (limit <= 0) return 0;
+  return withWriteRetry('pipeline.backfillStaleVersions', () => {
+    let remaining = limit;
+    let reset = 0;
+    for (const e of allEnrichers()) {
+      if (remaining <= 0) break;
+      if (e.kind === 'operational') continue;
+      const stale = db
+        .select({ id: enrichments.id })
+        .from(enrichments)
+        .where(
+          and(
+            eq(enrichments.enricher, e.name),
+            lt(enrichments.enricherVersion, e.version),
+            inArray(enrichments.status, ['ok', 'dead']),
+          ),
+        )
+        .limit(remaining)
+        .all()
+        .map((r) => r.id);
+      if (stale.length === 0) continue;
+      reset += db
+        .update(enrichments)
+        .set({ status: 'pending', attempts: 0, nextAttemptAt: null, error: null, updatedAt: now })
+        .where(inArray(enrichments.id, stale))
+        .run().changes;
+      remaining -= stale.length;
+    }
+    return reset;
   });
 }

@@ -466,6 +466,35 @@ test('reindex by enricher resets every row of that enricher (version-bump path)'
   assert.equal(oneRow(b, 'test-ok').status, 'pending');
 });
 
+test('an enricher version bump re-runs its old rows on the next idle drain', async () => {
+  only(okEnricher);
+  const acct = seedAccount();
+  const msg = seedMessage(acct);
+  P.enqueueMessage(msg, new Date());
+  await P.drainPipeline({ selfHeal: false });
+  assert.equal(oneRow(msg, 'test-ok').enricherVersion, 1);
+
+  only({ ...okEnricher, version: 2, run: () => ({ result: { tag: 'v2' } }) });
+  await P.drainPipeline({ selfHeal: true });
+  const row = oneRow(msg, 'test-ok');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.enricherVersion, 2);
+  assert.equal(row.result, JSON.stringify({ tag: 'v2' }));
+});
+
+test('a version bump never re-runs an operational enricher', async () => {
+  only(opEnricher);
+  const acct = seedAccount();
+  const msg = seedMessage(acct);
+  P.enqueueMessage(msg, new Date());
+  await P.drainPipeline({ selfHeal: false });
+  assert.equal(oneRow(msg, opEnricher.name).status, 'ok');
+
+  only({ ...opEnricher, version: opEnricher.version + 1 });
+  assert.equal(P.backfillStaleVersions(100), 0);
+  assert.equal(oneRow(msg, opEnricher.name).status, 'ok');
+});
+
 test('reindex all resets existing rows and backfills any orphan message', async () => {
   only(okEnricher);
   const acct = seedAccount();

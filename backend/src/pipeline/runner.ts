@@ -13,7 +13,7 @@ import { enrichments } from '../db/schema.js';
 import { env } from '../env.js';
 import { createLogger } from '../logger.js';
 import { enricherByName } from './registry.js';
-import { backfillEnricherCoverage, backfillPending } from './enqueue.js';
+import { backfillEnricherCoverage, backfillPending, backfillStaleVersions } from './enqueue.js';
 import { loadPipelineMessage } from './load.js';
 import { tierForMessage } from './tiers.js';
 import type { Enricher, EnricherResult, EnrichmentCost, PipelineMessage } from './types.js';
@@ -234,10 +234,12 @@ export async function drainPipeline(opts: DrainOptions = {}): Promise<DrainResul
   if (rows.length === 0 && selfHeal) {
     // Idle: top up coverage. `backfillPending` reaches messages with NO rows at all;
     // `backfillEnricherCoverage` reaches messages missing a *specific* enricher (how a
-    // newly added LLM enricher catches up on the existing mailbox). Re-claim afterwards.
+    // newly added LLM enricher catches up on the existing mailbox); `backfillStaleVersions`
+    // re-runs rows an older enricher version wrote. Re-claim afterwards.
     const limit = opts.backfillLimit ?? 500;
     backfillPending(limit, now);
     backfillEnricherCoverage(limit, now);
+    backfillStaleVersions(limit, now);
     rows = claimDue(now, max, costs);
   }
 
