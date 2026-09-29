@@ -14,7 +14,7 @@ import { hasRemoteImages, MailHtml, MailText } from '../components/MailBody';
 import { AttachmentChip } from '../components/AttachmentChip';
 import { ImageAttachment, isImageAttachment } from '../components/ImageAttachment';
 import { AddToCalendar } from '../components/AddToCalendar';
-import { FactCards } from '../components/FactCards';
+import { billingDocuments, FactCards } from '../components/FactCards';
 import {
   fmtAddr,
   joinAddrs,
@@ -272,6 +272,7 @@ export function ReaderView({
   }
 
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
+  const documents = billingDocuments(detail?.facts);
   // A trusted sender domain bypasses blocking automatically; otherwise the per-message
   // "Show images" override applies.
   const senderTrusted = isImageDomainTrusted(detail?.fromAddress, trustedImageDomains);
@@ -560,7 +561,12 @@ export function ReaderView({
                       {visibleAttachments
                         .filter((a) => !isImageAttachment(a))
                         .map((a) => (
-                          <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                          <AttachmentChip
+                            key={a.id}
+                            messageId={detail.id}
+                            attachment={a}
+                            document={documents.get(a.id)}
+                          />
                         ))}
                     </div>
                   )}

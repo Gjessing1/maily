@@ -31,6 +31,7 @@ function msg(bodyCalendar: string | null): Parameters<typeof icsEnricher.run>[0]
     sentAt: null,
     receivedAt: null,
     sourcePath: null,
+    attachments: [],
   };
 }
 

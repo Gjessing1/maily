@@ -37,6 +37,14 @@ export type EnrichmentCost = 'cheap' | 'llm';
 /** Age-tier of a message (ARCHITECTURE §14). 0 = recent (≤ horizon), 1 = older. */
 export type Tier = 0 | 1 | 2;
 
+/** Attachment metadata an enricher can read (names and types — never the bytes). */
+export interface PipelineAttachment {
+  id: string;
+  filename: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+}
+
 /**
  * The parsed-stage view an enricher reads — derived columns only (a pure function
  * of the canonical `.eml`, §15). Mailbox-state (flags/folders) is deliberately absent;
@@ -62,6 +70,8 @@ export interface PipelineMessage {
   receivedAt: Date | null;
   /** On-disk raw `.eml` path, when archived (lets enrichers reach the full source). */
   sourcePath: string | null;
+  /** Non-inline attachments, in document order (metadata only). */
+  attachments: PipelineAttachment[];
 }
 
 /** What an enricher returns: a persisted result (optional). */

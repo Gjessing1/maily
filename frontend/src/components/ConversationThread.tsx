@@ -17,7 +17,7 @@ import { usePrefs } from '../state/prefs';
 import { isImageDomainTrusted, senderDomain, trustImageDomain } from '../state/trustedImages';
 import { buildForward, buildMailto, buildReply, buildReplyAll } from '../state/replyPrefill';
 import { fullDate, senderName, shortDate } from '../ui/format';
-import { FactCards } from './FactCards';
+import { billingDocuments, FactCards } from './FactCards';
 import { AddSenderPrompt, joinAddrs, MessageHeaderDetails, SenderAvatar } from './MessageHeader';
 import { hasRemoteImages, MailHtml, MailText } from './MailBody';
 import { AttachmentChip } from './AttachmentChip';
@@ -96,6 +96,7 @@ function ConversationMessage({
 
   const date = message.sentAt ?? message.receivedAt;
   const visibleAttachments = detail?.attachments.filter((a) => !a.isInline) ?? [];
+  const documents = billingDocuments(detail?.facts);
   const hasAttachment = message.attachments.some((a) => !a.isInline);
 
   return (
@@ -235,7 +236,12 @@ function ConversationMessage({
                       {visibleAttachments
                         .filter((a) => !isImageAttachment(a))
                         .map((a) => (
-                          <AttachmentChip key={a.id} messageId={detail.id} attachment={a} />
+                          <AttachmentChip
+                            key={a.id}
+                            messageId={detail.id}
+                            attachment={a}
+                            document={documents.get(a.id)}
+                          />
                         ))}
                     </div>
                   )}

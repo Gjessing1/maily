@@ -1,9 +1,10 @@
 /**
  * The typed ledger read path (`facts-read.ts`) and its SQL twins. One fixture set is
  * checked through both sides — `messageFacts`/`isPayable` in JS and `is:invoice` /
- * `has:kid` / `has:tracking` in SQL — so the rules can't drift apart. Also pins the
- * trust bar (ok + current version + valid JSON), the http(s)-only tracking link, and
- * the cleanup gate protecting a validated bill that no keyword catches.
+ * `is:receipt` / `is:bill` / `has:kid` / `has:tracking` in SQL — so the rules can't
+ * drift apart. Also pins the trust bar (ok + current version + valid JSON), the
+ * http(s)-only tracking link, and the cleanup gate protecting an invoice or receipt
+ * that no keyword catches.
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -60,7 +61,16 @@ const ACCOUNT = '6021.07.45583';
 
 function invoice(over: Record<string, unknown> = {}) {
   return {
-    invoice: { kids: [], ibans: [], accounts: [], amount: null, dueDate: null, ...over },
+    invoice: {
+      kind: 'invoice',
+      documents: [],
+      kids: [],
+      ibans: [],
+      accounts: [],
+      amount: null,
+      dueDate: null,
+      ...over,
+    },
   };
 }
 
@@ -109,6 +119,14 @@ test('JS and SQL agree on which messages are bills, carry a KID, or track a parc
     { enricher: 'invoice', result: invoice({ kids: [KID] }), status: 'dead' },
   ]);
   const garbage = seed('g', [{ enricher: 'invoice', result: '{not json' }]);
+  // A paid receipt: its KID is history, not something to pay.
+  const receipt = seed('r', [
+    { enricher: 'invoice', result: invoice({ kind: 'receipt', kids: [KID] }) },
+  ]);
+  // A v1-shaped row (no kind) written under the current version is not trusted.
+  const kindless = seed('k', [
+    { enricher: 'invoice', result: { invoice: { kids: [KID], ibans: [], accounts: [] } } },
+  ]);
   const parcel = seed('h', [
     {
       enricher: 'package',
@@ -125,14 +143,33 @@ test('JS and SQL agree on which messages are bills, carry a KID, or track a parc
       },
     },
   ]);
-  const all = [kidBill, accountBill, amountOnly, nullInvoice, stale, dead, garbage, parcel];
+  const all = [
+    kidBill,
+    accountBill,
+    amountOnly,
+    nullInvoice,
+    stale,
+    dead,
+    garbage,
+    receipt,
+    kindless,
+    parcel,
+  ];
 
   const jsPayable = all.filter((id) => F.isPayable(F.messageFacts(id).invoice)).sort();
   assert.deepEqual(jsPayable, [kidBill, accountBill].sort());
-  assert.deepEqual(ids('is:invoice'), jsPayable);
+  assert.deepEqual(ids('is:bill'), jsPayable);
 
-  const jsKid = all.filter((id) => (F.messageFacts(id).invoice?.kids.length ?? 0) > 0);
-  assert.deepEqual(jsKid, [kidBill]);
+  const kindOf = (id: string) => F.messageFacts(id).invoice?.kind;
+  const jsInvoices = all.filter((id) => kindOf(id) === 'invoice').sort();
+  assert.deepEqual(jsInvoices, [kidBill, accountBill, amountOnly].sort());
+  assert.deepEqual(ids('is:invoice'), jsInvoices);
+  const jsReceipts = all.filter((id) => kindOf(id) === 'receipt');
+  assert.deepEqual(jsReceipts, [receipt]);
+  assert.deepEqual(ids('is:receipt'), jsReceipts);
+
+  const jsKid = all.filter((id) => (F.messageFacts(id).invoice?.kids.length ?? 0) > 0).sort();
+  assert.deepEqual(jsKid, [kidBill, receipt].sort());
   assert.deepEqual(ids('has:kid'), jsKid);
 
   const jsTracking = all.filter((id) => F.messageFacts(id).shipments.length > 0);
@@ -141,6 +178,21 @@ test('JS and SQL agree on which messages are bills, carry a KID, or track a parc
 });
 
 test('the reader DTO shows payment details only for a bill, and only safe tracking links', () => {
+  const paid = seed('p', [
+    {
+      enricher: 'invoice',
+      result: invoice({
+        kind: 'receipt',
+        kids: [KID],
+        documents: [{ attachmentId: 'att-1', kind: 'receipt' }],
+      }),
+    },
+  ]);
+  const paidDto = F.toMessageFactsDto(F.messageFacts(paid));
+  assert.equal(paidDto.payment, null, 'a receipt has nothing left to pay');
+  assert.equal(paidDto.billing, 'receipt');
+  assert.deepEqual(paidDto.documents, [{ attachmentId: 'att-1', kind: 'receipt' }]);
+
   const amountOnly = seed('a', [
     {
       enricher: 'invoice',
@@ -181,6 +233,7 @@ test('the reader DTO shows payment details only for a bill, and only safe tracki
     },
   ]);
   const dto = F.toMessageFactsDto(F.messageFacts(bill));
+  assert.equal(dto.billing, 'invoice');
   assert.deepEqual(dto.payment, {
     kids: [KID],
     accounts: [],
@@ -194,12 +247,14 @@ test('the reader DTO shows payment details only for a bill, and only safe tracki
   );
 });
 
-test('the cleanup gate protects a validated bill that carries no protected keyword', () => {
+test('the cleanup gate protects an invoice or receipt that carries no protected keyword', () => {
   const bill = seed('Hei', [{ enricher: 'invoice', result: invoice({ accounts: [ACCOUNT] }) }]);
+  const receipt = seed('Hei', [{ enricher: 'invoice', result: invoice({ kind: 'receipt' }) }]);
   const plain = seed('Hei', []);
   const unprotected = (
     db.all(sql`SELECT m.id AS id FROM messages m WHERE ${S.notProtected('m')}`) as { id: string }[]
   ).map((r) => r.id);
   assert.ok(!unprotected.includes(bill));
+  assert.ok(!unprotected.includes(receipt));
   assert.ok(unprotected.includes(plain));
 });

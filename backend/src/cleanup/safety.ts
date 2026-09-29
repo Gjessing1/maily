@@ -16,7 +16,7 @@
  */
 import { sql, type SQL } from 'drizzle-orm';
 import { getServerSettings, type KeywordListKey } from '../db/settings.js';
-import { payableSql } from '../pipeline/facts-read.js';
+import { billingSql } from '../pipeline/facts-read.js';
 import { PROTECTED_KEYWORDS } from './keywords.js';
 
 /** Build an FTS5 MATCH expression: prefix-match each term, OR-joined. */
@@ -58,7 +58,7 @@ export function protectedMatch(): string {
 export function protectedSql(alias = 'm'): SQL {
   const a = sql.raw(alias);
   return sql`(${a}.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})
-    OR ${payableSql(alias)})`;
+    OR ${billingSql(undefined, alias)})`;
 }
 
 /** SQL predicate excluding protected mail, for AND-ing into a slice query. */

@@ -32,6 +32,7 @@ function msg(fields: {
     sentAt: null,
     receivedAt: null,
     sourcePath: null,
+    attachments: [],
   };
 }
 

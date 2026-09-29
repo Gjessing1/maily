@@ -81,6 +81,9 @@ export interface MessageDetailDto extends MessageDto {
   facts?: MessageFactsDto;
 }
 
+/** What a message is, billing-wise: a bill to pay (or its reminder), or proof of payment. */
+export type BillingKind = 'invoice' | 'receipt';
+
 /**
  * Payment details from an invoice or receipt. Only present when the mail carries at
  * least one checksum-validated identifier (KID, account or IBAN); an amount alone is
@@ -107,8 +110,22 @@ export interface ShipmentDto {
   estimatedDelivery: string | null;
 }
 
+/** An attachment that is the invoice or receipt document itself. */
+export interface BillingDocumentDto {
+  attachmentId: string;
+  kind: BillingKind;
+}
+
 /** Enricher-extracted facts about one message, as the reader shows them. */
 export interface MessageFactsDto {
+  /**
+   * What the message is, billing-wise, or null. Optional: facts cached before it
+   * existed have neither this nor `documents`.
+   */
+  billing?: BillingKind | null;
+  /** Attachments that are the invoice/receipt document (by name, or a bill's sole PDF). */
+  documents?: BillingDocumentDto[];
+  /** Payment details — only for an invoice with a validated identifier, never a receipt. */
   payment: PaymentDetailsDto | null;
   shipments: ShipmentDto[];
 }

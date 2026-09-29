@@ -44,8 +44,10 @@ interface Filters {
   larger: string;
   unread: boolean;
   flagged: boolean;
-  /** Bills: an invoice with a validated KID, account or IBAN (`is:invoice`). */
+  /** Invoices: bills, their reminders, credit notes (`is:invoice`). */
   invoice: boolean;
+  /** Receipts: proof of payment, paid order confirmations (`is:receipt`). */
+  receipt: boolean;
   /** Parcel shipping notices with a tracking number (`has:tracking`). */
   tracking: boolean;
 }
@@ -62,6 +64,7 @@ const EMPTY_FILTERS: Filters = {
   unread: false,
   flagged: false,
   invoice: false,
+  receipt: false,
   tracking: false,
 };
 
@@ -102,6 +105,7 @@ function buildQuery(text: string, f: Filters): string {
   if (f.unread) parts.push('is:unread');
   if (f.flagged) parts.push('is:flagged');
   if (f.invoice) parts.push('is:invoice');
+  if (f.receipt) parts.push('is:receipt');
   if (f.tracking) parts.push('has:tracking');
   return parts.join(' ');
 }
@@ -485,9 +489,14 @@ export function Search() {
                   onChange={(v) => set('flagged', v)}
                 />
                 <FilterChip
-                  label="Bills"
+                  label="Invoices"
                   checked={filters.invoice}
                   onChange={(v) => set('invoice', v)}
+                />
+                <FilterChip
+                  label="Receipts"
+                  checked={filters.receipt}
+                  onChange={(v) => set('receipt', v)}
                 />
                 <FilterChip
                   label="Parcels"
@@ -534,6 +543,8 @@ export function Search() {
                 <code className="text-muted">is:unread</code>{' '}
                 <code className="text-muted">is:flagged</code>{' '}
                 <code className="text-muted">is:invoice</code>{' '}
+                <code className="text-muted">is:receipt</code>{' '}
+                <code className="text-muted">is:bill</code>{' '}
                 <code className="text-muted">has:kid</code>{' '}
                 <code className="text-muted">has:tracking</code>{' '}
                 <code className="text-muted">in:trash</code>

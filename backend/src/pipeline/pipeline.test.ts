@@ -564,6 +564,7 @@ function pmsg(bodyHtml: string | null): PipelineMessage {
     sentAt: null,
     receivedAt: new Date(),
     sourcePath: null,
+    attachments: [],
   };
 }
 

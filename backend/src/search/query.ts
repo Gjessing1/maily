@@ -11,14 +11,19 @@
  *   contact:                     — exact direct correspondence with comma-separated addresses
  *   since:/after:  before:/until: — date bounds (YYYY-MM-DD or relative 7d/2w/3m/1y)
  *   has:attachment                — only messages with a non-inline attachment
- *   is:invoice  has:kid  has:tracking — enricher facts: a bill with a validated payment
- *                                   identifier, one with a KID, a parcel tracking number
+ *   is:invoice  is:receipt  is:bill  has:kid  has:tracking — enricher facts: an invoice
+ *                                   (a bill, its reminder, a credit note), a receipt
+ *                                   (proof of payment), an invoice you can pay from the
+ *                                   message (a validated KID / account / IBAN), one with a
+ *                                   KID, a parcel tracking number
  *   larger:/smaller:  (or size:>/<) — attachment-size bounds (e.g. 500k, 2M)
  *   is:unread/read  is:flagged/starred  is:answered — message-state filters
  *   filename:                     — substring match on an attachment filename
  *   in:trash                      — search the Trash (normally hidden from results)
  * Anything else is a free-text term, AND-joined into the FTS MATCH.
  */
+
+import type { BillingKind } from '@maily/shared';
 
 /** The structured, compile-target-agnostic representation of a search query. */
 export interface QueryIR {
@@ -45,8 +50,10 @@ export interface QueryIR {
   answered?: boolean;
   /** Substring match on a (non-inline) attachment's filename. */
   filename?: string;
-  /** Only bills: an invoice with a validated KID, account or IBAN. */
-  invoice?: boolean;
+  /** Only invoices or only receipts, as the `invoice` enricher classified them. */
+  billing?: BillingKind;
+  /** Only payable bills: an invoice with a validated KID, account or IBAN. */
+  bill?: boolean;
   /** Only mail with a validated KID payment reference. */
   hasKid?: boolean;
   /** Only mail with a parcel tracking number. */
@@ -179,8 +186,16 @@ export function parseQuery(raw: string, now = Date.now()): QueryIR {
             ir.answered = true;
             break;
           case 'invoice':
+          case 'invoices':
+            ir.billing = 'invoice';
+            break;
+          case 'receipt':
+          case 'receipts':
+            ir.billing = 'receipt';
+            break;
           case 'bill':
-            ir.invoice = true;
+          case 'bills':
+            ir.bill = true;
             break;
           default:
             // Unknown state → keep the whole token as a free-text term.
@@ -243,7 +258,8 @@ export function isEmptyQuery(ir: QueryIR): boolean {
     ir.flagged === undefined &&
     ir.answered === undefined &&
     ir.filename === undefined &&
-    ir.invoice === undefined &&
+    ir.billing === undefined &&
+    ir.bill === undefined &&
     ir.hasKid === undefined &&
     ir.hasTracking === undefined &&
     ir.inTrash === undefined

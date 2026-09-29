@@ -5,7 +5,12 @@
  * text — Norwegian **KID**, **IBAN**, Norwegian **account number** (kontonummer),
  * the **amount** to pay, and the **due date** (forfallsdato) — by deterministic
  * regex + **check-digit validation**. No LLM (Phase 5), no PDF-text extraction
- * (deferred): body text/HTML only.
+ * (deferred): body text/HTML, subject and attachment *names* only.
+ *
+ * It first decides what the message **is** — an `invoice` (a bill, its reminder, a
+ * credit note) or a `receipt` (proof of payment) — and which attachments are that
+ * document; only a message that is one keeps its identifiers (see Classification
+ * below). Anything else yields `invoice: null`.
  *
  * Classification: `search` (passive-by-default, ARCHITECTURE §14 / the ROADMAP
  * anti-chore guardrail). The extracted facts feed the search index + provenance and
@@ -23,7 +28,14 @@
  * order number or phone number is never mistaken for a KID/account. Norwegian +
  * English labels and number/date formats are both handled.
  */
-import type { Enricher, EnricherContext, EnricherResult } from '../types.js';
+import type { BillingKind } from '@maily/shared';
+import type {
+  Enricher,
+  EnricherContext,
+  EnricherResult,
+  PipelineAttachment,
+  PipelineMessage,
+} from '../types.js';
 
 /** A monetary amount parsed from the body. */
 export interface InvoiceAmount {
@@ -35,8 +47,18 @@ export interface InvoiceAmount {
   raw: string;
 }
 
+/** An attachment that is the invoice or receipt document itself. */
+export interface BillingDocument {
+  attachmentId: string;
+  kind: BillingKind;
+}
+
 /** The normalised invoice/receipt facts for one message (one bill per mail). */
 export interface InvoiceFacts {
+  /** What the message is: a bill (or its reminder / credit note), or proof of payment. */
+  kind: BillingKind;
+  /** Attachments that are the invoice/receipt document, by name or as a bill's sole PDF. */
+  documents: BillingDocument[];
   /** Validated KID payment references (MOD-10 or MOD-11), deduped. */
   kids: string[];
   /** Validated IBANs (MOD-97), normalised uppercase, no spaces, deduped. */
@@ -118,6 +140,8 @@ function stripHtml(html: string): string {
     .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([\da-f]+);/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
     .replace(/&amp;/gi, '&')
     .replace(/\s+/g, ' ')
     .trim();
@@ -269,13 +293,24 @@ function extractAmount(text: string): InvoiceAmount | null {
   let best: AmountHit | null = null;
   for (const h of hits) {
     const before = text.slice(Math.max(0, h.index - 40), h.index);
-    if (TOTAL_LABEL.test(before)) {
+    // "Totalt å betale 0,00" on an already-settled line is not the bill's figure.
+    if (h.value > 0 && TOTAL_LABEL.test(before)) {
       best = h;
       break;
     }
   }
   if (!best) best = hits.reduce((a, b) => (b.value > a.value ? b : a));
   return { value: best.value, currency: best.currency, raw: best.raw };
+}
+
+/** True when a non-zero amount sits right after a total label ("Totalt kr 1 299,00"). */
+function hasLabelledTotal(text: string): boolean {
+  for (const m of text.matchAll(AMOUNT_RE)) {
+    const value = parseNumber(m[2] ?? m[3] ?? '');
+    const before = text.slice(Math.max(0, (m.index ?? 0) - 40), m.index ?? 0);
+    if (value && TOTAL_LABEL.test(before)) return true;
+  }
+  return false;
 }
 
 // --- Due date ---------------------------------------------------------------------------
@@ -358,34 +393,209 @@ function extractDueDate(text: string): string | null {
   return null;
 }
 
+// --- Classification ---------------------------------------------------------------------
+//
+// A checksum-valid number is not a bill: a signature carries the sender's own account
+// number, a hosting provider's footer prints its IBAN under every login mail, and a
+// customer-service thread passes a refund account back and forth. So the identifiers
+// above are kept only once the message itself reads as an invoice or a receipt: the
+// subject says so and the body backs it up, an attachment is named as one, a body lead
+// says so, or a labelled KID sits next to an amount or a due date.
+
+/** A bill (to pay, or a reminder of one) — and credit notes, which settle one. */
+const INVOICE_WORDS = String.raw`faktura(?!nett)|(?<![a-z])invoice|rechnung|kreditnota|credit\s*note|betalingsp[åa]minnelse|betalingsvarsel|purring|inkassovarsel|payment\s+reminder|betalingsinformasjon|payment\s+information|due\s+date|late\s+fee|purregebyr|missed\s+(?:your\s+)?payment|request\s+for\s+payment|payment\s+request|betalingsforesp[øo]rsel|manglende\s+(?:inn)?betaling|payment\s+(?:is\s+)?(?:due|overdue|missing)|ubetalt|unpaid`;
+/** Proof that something was paid. */
+const RECEIPT_WORDS = String.raw`kvittering|receipt|quittung|betalings?bekreftelse|payment\s+(?:received|confirmation|confirmed|sent)|(?:betaling|betalingen|innbetaling)\s+(?:er\s+)?(?:mottatt|registrert|bekreftet)|mottatt\s+(?:din\s+)?betaling|received\s+(?:from\s+)?your\s+payment|bekreftelse\s+(?:p[åa]\s+)?betaling|takk\s+for\s+(?:din\s+)?betaling|thank\s+you\s+for\s+your\s+payment|you\s+sent\s+a\s+payment|got\s+your\b.{0,40}\bpayment|payment\b.{0,40}\bsuccessful`;
+
+/**
+ * An order confirmation — the purchase record. Counted as a receipt once it shows what
+ * was paid (a labelled total) or carries the order as a PDF; a bare "we got your order"
+ * stays out.
+ */
+const ORDER_WORDS =
+  /ordrebekreftelse|ordrebekræftelse|order\s+confirm|bestillingsbekreftelse|bekreftelse\s+p[åa]\s+(?:bestilling|ordre)|bestillingsoversikt|bestilling\s+registrert|takk\s+for\s+(?:din\s+|at\s+du\s+)?(?:bestilling|ordre|handelen|kj[øo]pet)|thanks?\s+(?:you\s+)?for\s+your\s+(?:order|purchase)|kj[øo]psbekreftelse|purchase\s+confirmation/i;
+
+/**
+ * Named as a receipt (or a reminder), but not about money: a form or application
+ * received, an exam hand-in, a read receipt, an expiring card, a payslip.
+ */
+const NOT_BILLING =
+  /acknowledge?ment\s+receipt|read\s+receipt|lesebekreftelse|skjema|s[øo]knad|henvendelse|innsynskrav|kvittering\s+for:\s|mottakskvittering|request\s+received|submission|registreringen\s+er|eksamen|nabovarsel|bakgrunnssjekk|bibliote[kc]|library|betalingskort|payment\s+(?:card|method)|l[øo]nnsslipp|payslip/i;
+/** Senders whose "kvittering" / "purring" is a loan, not a purchase: libraries. */
+const NOT_BILLING_SENDER = /bibliote[kc]|folkebibl|library|bibsok|bibsys/i;
+
+/** `Re:` / `SV:` / `AW:` — a conversation about a bill, not the bill itself. */
+const REPLY_PREFIX = /^\s*(?:re|sv|aw|antw)\s*:/i;
+
+/** Lead-of-body phrasings for a message whose subject doesn't say what it is. */
+const INVOICE_LEAD =
+  /(?:ny|din|vedlagt|vedlagte)\s+faktura|(?:mottatt|received)\s+(?:en|an)\s+(?:faktura|invoice)|your\s+(?:new\s+|latest\s+)?invoice|invoice\s+(?:is\s+)?attached|attached\s+(?:is\s+)?(?:your\s+)?invoice|fakturanummer|fakturanr|invoice\s+(?:number|no\.?|#)/i;
+const RECEIPT_LEAD =
+  /here(?:'|’)?s\s+your\s+receipt|this\s+is\s+your\s+receipt|your\s+receipt|din\s+kvittering|kvittering\s+for\s+(?:ditt|din|kj[øo]p)|payment\s+receipt|takk\s+for\s+(?:din\s+)?betaling|thanks?\s+(?:you\s+)?for\s+your\s+payment|we(?:'|’)?ve\s+received\s+your\s+payment|vi\s+har\s+mottatt\s+(?:din\s+)?betaling/i;
+/** How far into the body a lead phrase counts (past it is footer / small print). */
+const LEAD_CHARS = 1500;
+
+/** Attachment names that are the invoice / receipt document. */
+const INVOICE_FILE = /faktura|invoice|rechnung|kreditnota|credit[\s_-]*note/i;
+const RECEIPT_FILE = /kvittering|receipt|quittung/i;
+/** PDFs that ride along with a bill but aren't it: terms, return forms, labels, tickets. */
+const NOT_DOCUMENT_FILE =
+  /angre|vilk[åa]r|terms|agb|withdrawal|retur|policy|betingelser|avtale|agreement|label|etikett|billett|ticket|boarding|manual|guide|brosjyre|katalog/i;
+/** Formats an invoice or receipt actually comes in (not a signature, calendar or vCard). */
+const DOCUMENT_FILE_TYPE = /\.(?:pdf|xml|html?|jpe?g|png|heic)$/i;
+const DOCUMENT_MIME = /pdf|xml|html|^image\//i;
+
+const isPdf = (a: PipelineAttachment): boolean =>
+  /pdf/i.test(a.mimeType ?? '') || /\.pdf$/i.test(a.filename ?? '');
+
+/**
+ * Which kind a phrase names. Naming both ("Faktura / Kvittering", "Payment received for
+ * invoice 51722") is a paid bill, so a receipt.
+ */
+function kindIn(s: string, invoice: RegExp, receipt: RegExp): BillingKind | null {
+  if (receipt.test(s)) return 'receipt';
+  return invoice.test(s) ? 'invoice' : null;
+}
+
+const INVOICE_SUBJECT = new RegExp(INVOICE_WORDS, 'i');
+const RECEIPT_SUBJECT = new RegExp(RECEIPT_WORDS, 'i');
+/** Either vocabulary, for a body lead that seconds what the subject says. */
+const LEAD_INVOICE = new RegExp(`${INVOICE_WORDS}|${INVOICE_LEAD.source}`, 'i');
+const LEAD_RECEIPT = new RegExp(`${RECEIPT_WORDS}|${RECEIPT_LEAD.source}`, 'i');
+
+/** The attachments that are the invoice/receipt, by their own names. */
+function namedDocuments(attachments: PipelineAttachment[]): BillingDocument[] {
+  const out: BillingDocument[] = [];
+  for (const a of attachments) {
+    const name = a.filename ?? '';
+    if (!name) continue;
+    if (!DOCUMENT_FILE_TYPE.test(name) && !DOCUMENT_MIME.test(a.mimeType ?? '')) continue;
+    const kind = kindIn(name, INVOICE_FILE, RECEIPT_FILE);
+    if (kind && !NOT_BILLING.test(name)) out.push({ attachmentId: a.id, kind });
+  }
+  return out;
+}
+
+/**
+ * The one PDF on a message already known to be a bill is that bill, whatever it's called
+ * (`223630010407.pdf`, `Vedlegg_2603.pdf`), once the PDFs that ride along (terms, a
+ * return form) are set aside. Two or more candidates left: no guess.
+ */
+function soleDocument(attachments: PipelineAttachment[], kind: BillingKind): BillingDocument[] {
+  const pdfs = attachments.filter((a) => isPdf(a) && !NOT_DOCUMENT_FILE.test(a.filename ?? ''));
+  return pdfs.length === 1 ? [{ attachmentId: pdfs[0]!.id, kind }] : [];
+}
+
+/** Invoice when every named document is one; a receipt anywhere means it was paid. */
+function kindOfDocuments(docs: BillingDocument[]): BillingKind | null {
+  if (docs.length === 0) return null;
+  return docs.some((d) => d.kind === 'receipt') ? 'receipt' : 'invoice';
+}
+
+/** What the message is, from its subject, attachments and body, or null for neither. */
+function classify(
+  subject: string,
+  from: string,
+  text: string,
+  docs: BillingDocument[],
+  facts: Omit<InvoiceFacts, 'kind' | 'documents'>,
+  attachments: PipelineAttachment[],
+): BillingKind | null {
+  const hasPdf = attachments.some(isPdf);
+  if (NOT_BILLING.test(subject) || NOT_BILLING_SENDER.test(from)) return null;
+  const reply = REPLY_PREFIX.test(subject);
+  const hasId = facts.kids.length > 0 || facts.accounts.length > 0 || facts.ibans.length > 0;
+
+  // A named document is the strongest signal there is — even on a reply, it's attached.
+  const docKind = kindOfDocuments(docs);
+
+  // The subject names it, and the body carries something a bill has.
+  // Or the body opens by saying so too — a bill that only links to itself ("Fakturaen kan
+  // hentes via denne lenken") carries no sum to back it with.
+  const lead = text.slice(0, LEAD_CHARS);
+  const subjectKind = kindIn(subject, INVOICE_SUBJECT, RECEIPT_SUBJECT);
+  if (subjectKind) {
+    const backed = reply
+      ? facts.kids.length > 0 || docKind !== null
+      : facts.amount !== null ||
+        facts.dueDate !== null ||
+        hasId ||
+        hasPdf ||
+        kindIn(lead, LEAD_INVOICE, LEAD_RECEIPT) !== null;
+    if (backed) return subjectKind;
+  }
+  if (docKind) return docKind;
+  if (reply) return null;
+
+  // The body opens by saying what it is, and there's a sum.
+  const leadKind = kindIn(lead, INVOICE_LEAD, RECEIPT_LEAD);
+  if (leadKind && (facts.amount !== null || facts.kids.length > 0)) return leadKind;
+
+  // An order confirmation that shows what was paid, or carries the order itself.
+  if (
+    ORDER_WORDS.test(subject) &&
+    (hasLabelledTotal(text) || soleDocument(attachments, 'receipt').length > 0)
+  ) {
+    return 'receipt';
+  }
+
+  // A labelled, check-digit-valid KID with a sum or a due date is a bill by itself.
+  if (facts.kids.length > 0 && (facts.amount !== null || facts.dueDate !== null)) return 'invoice';
+  return null;
+}
+
+/**
+ * The body to read: the text part, unless it's a stub standing in for the HTML ("To view
+ * the message, please use an HTML compatible email viewer!") — then the HTML, stripped.
+ */
+function bodyOf({ bodyText, bodyHtml }: PipelineMessage): string {
+  const text = bodyText?.trim() ?? '';
+  if (!bodyHtml) return text;
+  const html = stripHtml(bodyHtml);
+  // A real text part is about as long as the HTML's text; a stub is short and much shorter.
+  const stub = text.length < 200 || text.length * 2 < html.length;
+  return stub && html.length > text.length ? html : text;
+}
+
 // --- Enricher ---------------------------------------------------------------------------
 
-function extractInvoice(text: string): InvoiceFacts | null {
-  const kids = extractKids(text);
-  const ibans = extractIbans(text);
-  const accounts = extractAccounts(text);
-  const amount = extractAmount(text);
-  const dueDate = extractDueDate(text);
-  const hasAny = kids.length > 0 || ibans.length > 0 || accounts.length > 0 || amount || dueDate;
-  if (!hasAny) return null;
-  return { kids, ibans, accounts, amount, dueDate };
+/** Every fact for one message, or null when it is neither an invoice nor a receipt. */
+export function extractInvoice(message: PipelineMessage): InvoiceFacts | null {
+  const text = bodyOf(message);
+  const subject = message.subject ?? '';
+  const attachments = message.attachments;
+  const facts = {
+    kids: extractKids(text),
+    ibans: extractIbans(text),
+    accounts: extractAccounts(text),
+    amount: extractAmount(text),
+    dueDate: extractDueDate(text),
+  };
+  const named = namedDocuments(attachments);
+  const from = message.fromAddress ?? '';
+  const kind = classify(subject, from, text, named, facts, attachments);
+  if (!kind) return null;
+  const documents = named.length > 0 ? named : soleDocument(attachments, kind);
+  return { kind, documents, ...facts };
 }
+
+/** Cheap gate: some marker of a bill in the subject, an attachment name or the body. */
+const GATE = new RegExp(`${HINT.source}|${INVOICE_WORDS}|${RECEIPT_WORDS}`, 'i');
 
 export const invoiceEnricher: Enricher = {
   name: 'invoice',
-  version: 1,
+  // v2: classifies invoice vs receipt and gates the identifiers on it; finds documents.
+  version: 2,
   kind: 'search',
-  // Cheap gate: skip mail with no invoice/receipt marker in either body part.
   applies(message) {
     return Boolean(
-      (message.bodyText && HINT.test(message.bodyText)) ||
-      (message.bodyHtml && HINT.test(message.bodyHtml)),
+      (message.subject && GATE.test(message.subject)) ||
+      message.attachments.some((a) => a.filename && GATE.test(a.filename)) ||
+      (message.bodyText && GATE.test(message.bodyText)) ||
+      (message.bodyHtml && GATE.test(message.bodyHtml)),
     );
   },
   run(ctx: EnricherContext): EnricherResult {
-    const { bodyText, bodyHtml } = ctx.message;
-    const text = bodyText?.trim() || (bodyHtml ? stripHtml(bodyHtml) : '');
-    const invoice = text ? extractInvoice(text) : null;
-    return { result: { invoice } };
+    return { result: { invoice: extractInvoice(ctx.message) } };
   },
 };

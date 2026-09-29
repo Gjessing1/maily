@@ -14,7 +14,7 @@
  * the reader.
  */
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
-import type { MessageFactsDto, PaymentDetailsDto, ShipmentDto } from '@maily/shared';
+import type { BillingKind, MessageFactsDto, PaymentDetailsDto, ShipmentDto } from '@maily/shared';
 import { db } from '../db/client.js';
 import { enrichments } from '../db/schema.js';
 import { enricherByName } from './registry.js';
@@ -44,8 +44,9 @@ function readTravel(r: unknown): TravelReservation[] {
 function readInvoice(r: unknown): InvoiceFacts | null {
   if (!isObj(r) || !isObj(r.invoice)) return null;
   const inv = r.invoice;
-  const lists = [inv.kids, inv.ibans, inv.accounts].every(Array.isArray);
-  return lists ? (inv as unknown as InvoiceFacts) : null;
+  const lists = [inv.kids, inv.ibans, inv.accounts, inv.documents].every(Array.isArray);
+  const kind = inv.kind === 'invoice' || inv.kind === 'receipt';
+  return lists && kind ? (inv as unknown as InvoiceFacts) : null;
 }
 function readShipments(r: unknown): PackageShipment[] {
   return isObj(r) && Array.isArray(r.shipments) ? (r.shipments as PackageShipment[]) : [];
@@ -103,12 +104,14 @@ export function messageFacts(messageId: string): MessageFacts {
 }
 
 /**
- * True when an invoice carries a checksum-validated payment identifier — the bar for
- * calling a message a bill. An amount or a due date alone doesn't clear it.
+ * True when an invoice (not a receipt — that's paid) carries a checksum-validated payment
+ * identifier: a bill you can pay from the message. An amount or a due date alone doesn't
+ * clear it.
  */
 export function isPayable(invoice: InvoiceFacts | null): invoice is InvoiceFacts {
   return Boolean(
-    invoice && (invoice.kids.length > 0 || invoice.accounts.length > 0 || invoice.ibans.length > 0),
+    invoice?.kind === 'invoice' &&
+    (invoice.kids.length > 0 || invoice.accounts.length > 0 || invoice.ibans.length > 0),
   );
 }
 
@@ -129,16 +132,28 @@ function currentRowSql(enricher: Name, condition: SQL, alias: string): SQL {
 const nonEmpty = (path: string): SQL =>
   sql`CASE WHEN json_valid(e.result) THEN json_array_length(e.result, ${path}) END > 0`;
 
-/** SQL for `isPayable`: a validated KID, account or IBAN. */
+/** The row's billing kind is `kind` (invalid JSON reads as neither). */
+const kindIs = (kind: BillingKind): SQL =>
+  sql`CASE WHEN json_valid(e.result) THEN json_extract(e.result, '$.invoice.kind') END = ${kind}`;
+
+/** SQL for `isPayable`: an invoice with a validated KID, account or IBAN. */
 export function payableSql(alias = 'm'): SQL {
-  const any = sql`(${nonEmpty('$.invoice.kids')} OR ${nonEmpty('$.invoice.accounts')}
-    OR ${nonEmpty('$.invoice.ibans')})`;
+  const any = sql`(${kindIs('invoice')} AND (${nonEmpty('$.invoice.kids')}
+    OR ${nonEmpty('$.invoice.accounts')} OR ${nonEmpty('$.invoice.ibans')}))`;
   return currentRowSql('invoice', any, alias);
+}
+
+/** Either kind — the shape `readInvoice` trusts (a kind-less row reads as no facts). */
+const classified = (): SQL => sql`(${kindIs('invoice')} OR ${kindIs('receipt')})`;
+
+/** SQL: the message is an invoice or a receipt — `kind` narrows it to one. */
+export function billingSql(kind?: BillingKind, alias = 'm'): SQL {
+  return currentRowSql('invoice', kind ? kindIs(kind) : classified(), alias);
 }
 
 /** SQL: the invoice carries a validated KID. */
 export function hasKidSql(alias = 'm'): SQL {
-  return currentRowSql('invoice', nonEmpty('$.invoice.kids'), alias);
+  return currentRowSql('invoice', sql`(${classified()} AND ${nonEmpty('$.invoice.kids')})`, alias);
 }
 
 /** SQL: at least one parcel shipment was found. */
@@ -178,5 +193,10 @@ export function toMessageFactsDto(facts: MessageFacts): MessageFactsDto {
     trackingUrl: safeUrl(s.trackingUrl),
     estimatedDelivery: s.estimatedDelivery,
   }));
-  return { payment, shipments };
+  return {
+    billing: inv?.kind ?? null,
+    documents: inv?.documents ?? [],
+    payment,
+    shipments,
+  };
 }

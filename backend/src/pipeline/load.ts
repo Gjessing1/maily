@@ -2,10 +2,10 @@
  * Load a message's parsed-stage view for enrichment. Pure read over derived columns
  * (ARCHITECTURE §15) — never touches mailbox state.
  */
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { EmailAddress } from '@maily/shared';
 import { db } from '../db/client.js';
-import { messages } from '../db/schema.js';
+import { attachments, messages } from '../db/schema.js';
 import type { PipelineMessage } from './types.js';
 
 function parseAddresses(json: string | null): EmailAddress[] {
@@ -44,6 +44,17 @@ export function loadPipelineMessage(id: string): PipelineMessage | null {
     .where(eq(messages.id, id))
     .get();
   if (!row) return null;
+  const files = db
+    .select({
+      id: attachments.id,
+      filename: attachments.filename,
+      mimeType: attachments.mimeType,
+      sizeBytes: attachments.sizeBytes,
+    })
+    .from(attachments)
+    .where(and(eq(attachments.messageId, id), eq(attachments.isInline, false)))
+    .orderBy(asc(attachments.partOrdinal))
+    .all();
   return {
     id: row.id,
     accountId: row.accountId,
@@ -62,5 +73,6 @@ export function loadPipelineMessage(id: string): PipelineMessage | null {
     sentAt: row.sentAt,
     receivedAt: row.receivedAt,
     sourcePath: row.sourcePath,
+    attachments: files,
   };
 }

@@ -6,10 +6,15 @@
  * the card is just there when the message is open (the anti-chore stance).
  */
 import { useEffect, useRef, useState } from 'react';
-import type { MessageFactsDto, PaymentDetailsDto, ShipmentDto } from '@maily/shared';
+import type { BillingKind, MessageFactsDto, PaymentDetailsDto, ShipmentDto } from '@maily/shared';
 import { CheckIcon, CopyIcon, PackageIcon, ReceiptIcon } from '../ui/icons';
 import { openNativeExternal } from '../nativeAndroid';
 import { showNotice } from '../state/undo';
+
+/** Which attachments are the invoice/receipt itself, by attachment id (for the chips). */
+export function billingDocuments(facts: MessageFactsDto | undefined): Map<string, BillingKind> {
+  return new Map((facts?.documents ?? []).map((d) => [d.attachmentId, d.kind]));
+}
 
 /** Display an amount in its currency; an unknown code falls back to "12.50 XYZ". */
 export function formatAmount(amount: { value: number; currency: string }): string {

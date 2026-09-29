@@ -1,7 +1,7 @@
-import type { AttachmentDto } from '@maily/shared';
+import type { AttachmentDto, BillingKind } from '@maily/shared';
 import { useAttachmentActions } from '../ui/useAttachmentActions';
 import { Spinner } from '../ui/Spinner';
-import { DownloadIcon, PaperclipIcon, ShareIcon } from '../ui/icons';
+import { DownloadIcon, PaperclipIcon, ReceiptIcon, ShareIcon } from '../ui/icons';
 
 function humanSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -15,6 +15,8 @@ function humanSize(bytes: number | null): string {
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
+const DOCUMENT_LABEL: Record<BillingKind, string> = { invoice: 'Invoice', receipt: 'Receipt' };
+
 const ACTION =
   'flex shrink-0 items-center justify-center px-2.5 text-muted active:bg-surface-2 active:text-accent disabled:opacity-40';
 
@@ -23,14 +25,17 @@ const ACTION =
  * app on Android, a new tab in a desktop browser, a download on a phone (see
  * `openAttachment`) — and the two buttons beside it Share it (the share sheet) or
  * Download it (to disk; the phone's Downloads in the Android app). Bytes are fetched
- * lazily, and only where the platform needs them from us (§4).
+ * lazily, and only where the platform needs them from us (§4). An attachment the
+ * `invoice` enricher found to be the invoice or receipt itself says so.
  */
 export function AttachmentChip({
   messageId,
   attachment,
+  document,
 }: {
   messageId: string;
   attachment: AttachmentDto;
+  document?: BillingKind;
 }) {
   const { online, busy, failed, canShare, open, share, download } = useAttachmentActions(
     messageId,
@@ -48,7 +53,13 @@ export function AttachmentChip({
         className="flex min-w-0 items-center gap-2 px-3 py-2 text-left transition active:bg-surface-2 disabled:opacity-60"
       >
         <span className="text-muted">
-          {busy === 'open' ? <Spinner className="size-4" /> : <PaperclipIcon className="size-4" />}
+          {busy === 'open' ? (
+            <Spinner className="size-4" />
+          ) : document ? (
+            <ReceiptIcon className="size-4 text-accent" />
+          ) : (
+            <PaperclipIcon className="size-4" />
+          )}
         </span>
         <span className="min-w-0">
           <span className="block truncate text-sm">{name}</span>
@@ -57,7 +68,9 @@ export function AttachmentChip({
               ? 'Unavailable offline'
               : failed
                 ? 'Failed — tap to retry'
-                : humanSize(attachment.sizeBytes)}
+                : [document && DOCUMENT_LABEL[document], humanSize(attachment.sizeBytes)]
+                    .filter(Boolean)
+                    .join(' · ')}
           </span>
         </span>
       </button>

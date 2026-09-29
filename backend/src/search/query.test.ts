@@ -54,9 +54,12 @@ test('is: state filters — unread/read/flagged/starred/answered', () => {
   assert.deepEqual(parseQuery('is:blue').terms, ['is:blue']);
 });
 
-test('enricher-fact operators: is:invoice/bill, has:kid, has:tracking', () => {
-  assert.equal(parseQuery('is:invoice').invoice, true);
-  assert.equal(parseQuery('is:bill').invoice, true);
+test('enricher-fact operators: is:invoice/receipt/bill, has:kid, has:tracking', () => {
+  assert.equal(parseQuery('is:invoice').billing, 'invoice');
+  assert.equal(parseQuery('is:receipt').billing, 'receipt');
+  assert.equal(parseQuery('is:bill').bill, true);
+  assert.equal(parseQuery('is:bill').billing, undefined);
+  assert.equal(isEmptyQuery(parseQuery('is:receipt')), false);
   assert.equal(parseQuery('has:kid').hasKid, true);
   assert.equal(parseQuery('has:tracking').hasTracking, true);
   assert.equal(isEmptyQuery(parseQuery('has:tracking')), false);

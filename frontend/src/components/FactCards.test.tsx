@@ -10,7 +10,7 @@ import type { MessageFactsDto } from '@maily/shared';
 const openNativeExternal = vi.fn((_url: string) => Promise.resolve());
 vi.mock('../nativeAndroid', () => ({ openNativeExternal: (u: string) => openNativeExternal(u) }));
 
-const { FactCards, amountForCopy } = await import('./FactCards');
+const { FactCards, amountForCopy, billingDocuments } = await import('./FactCards');
 
 const writeText = vi.fn((_text: string) => Promise.resolve());
 
@@ -63,5 +63,26 @@ describe('FactCards', () => {
   test('amounts copy without grouping, NOK with a decimal comma', () => {
     expect(amountForCopy({ value: 57819, currency: 'NOK' })).toBe('57819,00');
     expect(amountForCopy({ value: 12.5, currency: 'EUR' })).toBe('12.50');
+  });
+});
+
+describe('billingDocuments', () => {
+  test('maps the invoice/receipt attachments by id, and tolerates older cached facts', () => {
+    const facts: MessageFactsDto = {
+      billing: 'receipt',
+      documents: [
+        { attachmentId: 'a1', kind: 'invoice' },
+        { attachmentId: 'a2', kind: 'receipt' },
+      ],
+      payment: null,
+      shipments: [],
+    };
+    const docs = billingDocuments(facts);
+    expect(docs.get('a1')).toBe('invoice');
+    expect(docs.get('a2')).toBe('receipt');
+    expect(docs.get('a3')).toBeUndefined();
+    // Facts cached before `documents` existed, or none at all.
+    expect(billingDocuments({ payment: null, shipments: [] }).size).toBe(0);
+    expect(billingDocuments(undefined).size).toBe(0);
   });
 });
