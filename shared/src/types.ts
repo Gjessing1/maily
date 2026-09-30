@@ -141,6 +141,8 @@ export interface BillingExportItemDto {
   receivedAt: string | null;
   /** ISO 8601 UTC: when maily last (re)classified the message. */
   classifiedAt: string;
+  /** True when the message is in maily's Trash. Consumers should omit it from active archives. */
+  trashed: boolean;
   /** Fetch bytes from `GET /api/messages/:messageId/attachments/:attachmentId`. */
   documents: BillingExportDocumentDto[];
   kids: string[];

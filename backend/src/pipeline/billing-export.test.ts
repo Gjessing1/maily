@@ -177,6 +177,7 @@ test('an item carries the message, its facts and its fetchable documents', () =>
     from: { name: 'Hafslund', address: 'faktura@hafslund.example' },
     receivedAt: new Date(T0).toISOString(),
     classifiedAt: new Date(T0).toISOString(),
+    trashed: false,
     documents: [
       {
         attachmentId: attId,
@@ -238,6 +239,7 @@ test('a trashed message is exported; a purged one has no bytes left and is not',
   const trashed = seed({ result: invoice(), message: { deletedAt: new Date(T0) } });
   seed({ result: invoice(), message: { deletedAt: new Date(T0), purgedAt: new Date(T0) } });
   assert.deepEqual(messageIds(page()), [trashed.messageId]);
+  assert.equal(page().items[0]!.trashed, true);
 });
 
 test('a row that fails the shape check is skipped, and the cursor still moves past it', () => {

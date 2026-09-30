@@ -109,6 +109,7 @@ export function billingExportPage(opts: {
       fromName: messages.fromName,
       fromAddress: messages.fromAddress,
       receivedAt: messages.receivedAt,
+      deletedAt: messages.deletedAt,
     })
     .from(enrichments)
     .innerJoin(messages, eq(messages.id, enrichments.messageId))
@@ -148,6 +149,7 @@ export function billingExportPage(opts: {
       from: row.fromAddress ? { name: row.fromName, address: row.fromAddress } : null,
       receivedAt: row.receivedAt ? row.receivedAt.toISOString() : null,
       classifiedAt: new Date(updatedAt).toISOString(),
+      trashed: row.deletedAt !== null,
       documents: toDocuments(invoice.documents, byId, row.messageId),
       kids: invoice.kids,
       accounts: invoice.accounts,
