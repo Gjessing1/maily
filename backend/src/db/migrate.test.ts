@@ -107,6 +107,9 @@ test('migrations create the FTS index and trigger-maintained cleanup version', (
     'cleanup_version_attachments_ai',
     'cleanup_version_queue_au',
     'cleanup_version_settings_au',
+    'cleanup_version_enrichments_ai',
+    'cleanup_version_enrichments_ad',
+    'cleanup_version_enrichments_au',
   ]) {
     assert.ok(triggers.includes(t), `trigger ${t} exists`);
   }
@@ -238,6 +241,32 @@ test('cleanup version tracks relevant writes and ignores unrelated message colum
 
   sqlite.prepare(`UPDATE cleanup_queue SET status = 'done' WHERE id = ?`).run(queueId);
   assert.equal(version(), before + 7, 'cleanup completion tally');
+
+  const enrich = sqlite.prepare(
+    `INSERT INTO enrichments (id, message_id, enricher, enricher_version, kind)
+     VALUES (?, ?, ?, 1, 'operational')`,
+  );
+  const summaryId = randomUUID();
+  enrich.run(summaryId, messageId, 'summary');
+  sqlite.prepare(`UPDATE enrichments SET status = 'ok', result = '{}' WHERE id = ?`).run(summaryId);
+  assert.equal(version(), before + 7, 'other enrichers are outside the protected gate');
+
+  const invoiceId = randomUUID();
+  enrich.run(invoiceId, messageId, 'invoice');
+  assert.equal(version(), before + 8, 'invoice enrichment enqueue');
+
+  sqlite
+    .prepare(`UPDATE enrichments SET attempts = 2, error = 'x', duration_ms = 5 WHERE id = ?`)
+    .run(invoiceId);
+  assert.equal(version(), before + 8, 'retry bookkeeping does not change the gate');
+
+  sqlite
+    .prepare(`UPDATE enrichments SET status = 'ok', result = ? WHERE id = ?`)
+    .run(JSON.stringify({ invoice: { kind: 'invoice' } }), invoiceId);
+  assert.equal(version(), before + 9, 'a classified bill becomes protected');
+
+  sqlite.prepare(`DELETE FROM enrichments WHERE id = ?`).run(invoiceId);
+  assert.equal(version(), before + 10, 'invoice enrichment delete');
 });
 
 /**

@@ -11,8 +11,9 @@
  * the safe direction for a delete filter.
  *
  * Keywords miss bills that never say "invoice" in a word the list knows, so a message
- * the `invoice` enricher found a checksum-validated KID, account or IBAN in is protected
- * too (`payableSql`) — a stronger signal than any keyword.
+ * the `invoice` enricher classified as an invoice or a receipt is protected too
+ * (`billingSql`) — a stronger signal than any keyword. Those enrichment writes bump the
+ * `cleanup` data version (migration 0032), so cached slice previews notice them.
  */
 import { sql, type SQL } from 'drizzle-orm';
 import { getServerSettings, type KeywordListKey } from '../db/settings.js';

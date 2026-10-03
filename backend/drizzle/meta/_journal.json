@@ -225,6 +225,13 @@
       "when": 1789506400000,
       "tag": "0031_trash_stranded_detached_deletes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1789592800000,
+      "tag": "0032_cleanup_version_invoice_facts",
+      "breakpoints": true
     }
   ]
 }
