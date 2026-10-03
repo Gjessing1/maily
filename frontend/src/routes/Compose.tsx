@@ -246,7 +246,7 @@ export function Compose() {
     uploads.length > 0 ||
     attachments.length !== (prefill.attachments?.length ?? 0);
 
-  // Local-first autosave (ROADMAP §3.7.B): persist an in-progress draft to IndexedDB
+  // Local-first autosave: persist an in-progress draft to IndexedDB
   // (debounced) so it survives a reload/refresh. Untouched composes aren't saved.
   useEffect(() => {
     if (!isDirty) return;

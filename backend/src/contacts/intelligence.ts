@@ -1,5 +1,5 @@
 /**
- * Mail-derived contact intelligence (ROADMAP A3). CardDAV remains the source of
+ * Mail-derived contact intelligence. CardDAV remains the source of
  * contact data; this read model only projects messages already cached in SQLite.
  */
 import { sql, type SQL } from 'drizzle-orm';

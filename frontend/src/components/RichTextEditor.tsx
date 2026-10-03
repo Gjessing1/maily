@@ -1,5 +1,5 @@
 /**
- * Lightweight rich-text composer (ROADMAP §3.7.B). A `contentEditable` surface —
+ * Lightweight rich-text composer. A `contentEditable` surface —
  * no editor dependency, in keeping with the project's hand-rolled UI. Emits HTML
  * via `onChange`; the caller derives the plain-text alternative (see htmlText.ts).
  *

@@ -51,7 +51,7 @@ type EnrichmentRow = typeof enrichments.$inferSelect;
 /**
  * Claim up to `limit` rows due for a run: never-attempted (`pending`) or errored-and-
  * retrying (`failed`) rows whose backoff gate has passed. `dead` and `ok` are excluded.
- * `costs` scopes the claim to one or more cost classes (Phase 5): the worker drains
+ * `costs` scopes the claim to one or more cost classes: the worker drains
  * `['cheap']` to completion, then a small bounded batch of `['llm']`, so a deep LLM
  * backlog can't sit at the front of the createdAt order and starve cheap mail.
  */
@@ -145,9 +145,9 @@ function persistFailure(
 }
 
 /**
- * Index stage seam (ROADMAP Phase 4 "semantic index build step"). Named, no-op
- * extension point invoked after a row reaches `enriched`. FTS is its first future
- * occupant; embeddings slot in here later with no schema change.
+ * Index stage seam (the "semantic index build step"). Named, no-op extension point
+ * invoked after a row reaches `enriched`. Nothing occupies it: FTS is maintained by
+ * triggers, not here. An embeddings index would slot in here with no schema change.
  */
 function indexStage(_message: PipelineMessage, _result: EnricherResult): void {
   // intentionally empty for the framework pass
@@ -207,7 +207,7 @@ export interface DrainOptions {
   /** Self-heal scan size. */
   backfillLimit?: number;
   /**
-   * Restrict this drain to one or more cost classes (Phase 5). Omitted = all costs
+   * Restrict this drain to one or more cost classes. Omitted = all costs
    * (the default; preserves single-pass behaviour for tests and any non-worker caller).
    * The worker drains `['cheap']` to completion, then one bounded `['llm']` batch.
    */

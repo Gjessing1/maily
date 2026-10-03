@@ -1,8 +1,8 @@
 /**
- * Cleanup Dashboard API (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
+ * Cleanup Dashboard API.
  * Read-only deterministic analytics over the local SQLite archive (a storage audit plus the
  * delete-eligible slices — cold-storage candidates, large messages, newsletters — each with
- * its preview impact) PLUS the Phase 6b execution path: POST /execute queues a slice for
+ * its preview impact) PLUS the execution path: POST /execute queues a slice for
  * trashing and GET /queue reports trickle progress.
  *
  * Safety invariants on execute: the client sends only the slice + filters (never a message

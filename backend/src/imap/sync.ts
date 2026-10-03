@@ -2,10 +2,13 @@
  * Folder synchronisation: fetch messages, parse them, persist via the store.
  *
  * What we pull over IMAP per message: envelope, flags, BODYSTRUCTURE, internal
- * date, the References header, and — separately and only when present — the
- * text/plain and text/html body parts. We deliberately do NOT fetch full message
- * source, because that would drag attachment bytes over the wire in bulk
- * (ARCHITECTURE §4 / KEY GOTCHA). Attachment bytes are fetched on demand later.
+ * date and the References header, plus content that depends on the fetch mode
+ * (`FetchMode` below). The `live` path (new INBOX mail, low volume) fetches the full
+ * RFC822 source once, stores it as the canonical `.eml` and derives the body from it.
+ * The `bulk` path (initial cache-window sync) fetches only the text/plain and
+ * text/html parts, so a first sync never drags attachment bytes over the wire in
+ * bulk (ARCHITECTURE §4 / KEY GOTCHA); the budgeted full-source sweep archives that
+ * backlog later. Attachment bytes for un-archived mail are fetched on demand.
  */
 import { randomUUID } from 'node:crypto';
 import type { FetchQueryObject, ImapFlow } from 'imapflow';
@@ -34,7 +37,7 @@ import { enqueueMessage } from '../pipeline/index.js';
 
 /**
  * Local cache window — roughly one year by default (ARCHITECTURE §1). A value of 0
- * means "all": no `since` filter, sync the entire folder (ROADMAP §3.7.E).
+ * means "all": no `since` filter, sync the entire folder (ARCHITECTURE §4).
  */
 const CACHE_WINDOW_DAYS = env.cacheWindowDays;
 const FETCH_BATCH = 100;
@@ -184,7 +187,7 @@ async function streamSourceToDisk(
 }
 
 /**
- * Live-path full-source capture (ROADMAP §3.7.E — the day-one invariant). Streams the
+ * Live-path full-source capture (ARCHITECTURE §1 — the day-one invariant). Streams the
  * complete RFC822 to `<sourceDir>/{account}/{uuid}/source.eml`, charges the bytes to
  * the shared per-day budget, and derives the body by parsing that `.eml`. Returns null
  * (caller falls back to body-only) when the budget is exhausted or the fetch fails, so
@@ -228,7 +231,7 @@ export interface StoreCounts {
 }
 
 /**
- * Fetch mode (ROADMAP §3.7.E). `live` is the low-volume IDLE path: it captures the
+ * Fetch mode (ARCHITECTURE §4). `live` is the low-volume IDLE path: it captures the
  * full RFC822 source and derives the parsed row from it (the day-one canonical
  * invariant). `bulk` is the body-only fast path for the initial cache-window sync;
  * its backlog gets archived later by the throttled, budgeted full-source sweep.
@@ -287,7 +290,7 @@ export async function fetchAndStore(
       );
       if (result.inserted) {
         insertedIds.push(result.id);
-        // Ingest hook (Phase 4): queue the new message for enrichment. Pure DB write,
+        // Ingest hook (ARCHITECTURE §14): queue the new message for enrichment. Pure DB write,
         // safe from either thread; the worker nudge that actually runs it is separate.
         enqueueMessage(result.id, parsed.receivedAt);
       } else {
@@ -377,7 +380,7 @@ export interface SweepResult {
 }
 
 /**
- * Resumable, throttled, budgeted full-source sweep (ROADMAP §3.7.E — the historical
+ * Resumable, throttled, budgeted full-source sweep (ARCHITECTURE §4 — the historical
  * backfill). Walks a folder's UIDs from the `oldest_synced_uid` watermark DOWNWARD,
  * archiving the raw `.eml` for every message that lacks one:
  *   - a row already exists (body-only) → upgrade it in place (set `source_path`);
@@ -388,10 +391,9 @@ export interface SweepResult {
  * and resumes after the UTC day rolls — so the provider's ~2.5 GB/day cap is never
  * breached. Runs over a transient connection (caller's), never the INBOX IDLE one.
  *
- * NOTE: the Pipeline Horizon (ROADMAP Phase 4) is not yet built — there is no enrichment
- * pipeline for a deep backfill to flood — so this sweep is not horizon-gated. When the
- * pipeline lands, the ingest hook must tier old swept mail (search/analytical only) so a
- * years-deep backfill can't fire operational side effects.
+ * Swept inserts are not enqueued for enrichment here. The pipeline's backfill picks them up
+ * and applies the horizon (ARCHITECTURE §14): mail older than the horizon only gets
+ * search/analytical enrichers, so a years-deep backfill can't fire operational side effects.
  */
 export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Promise<SweepResult> {
   const empty: SweepResult = {
@@ -523,7 +525,7 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
 }
 
 /**
- * Targeted source repair (ROADMAP §3.7.E — the "fully synced" guarantee's third leg).
+ * Targeted source repair (ARCHITECTURE §4 — the "fully synced" guarantee's third leg).
  * The live path can fall back to body-only (budget exhausted, transient fetch failure),
  * and once a folder's historical sweep has finished (watermark at UID 1) its downward
  * walk never revisits — so such rows would stay body-only forever. This pass queries the

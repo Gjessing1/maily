@@ -1,5 +1,5 @@
 /**
- * Characterization net for the merge field union (ROADMAP §A2). The contract the UI
+ * Characterization net for the merge field union. The contract the UI
  * promises the user is "nothing you typed is lost", so these pin the no-data-loss rules:
  * lists union, scalars fall back rather than overwrite, notes concatenate, and an
  * existing PHOTO is left untouched (it rides in the raw vCard, not in this payload).

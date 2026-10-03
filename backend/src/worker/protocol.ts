@@ -1,11 +1,10 @@
 /**
- * Message protocol for the shared sync worker (ROADMAP §3.7.E).
+ * Message protocol for the shared sync worker (ARCHITECTURE §4).
  *
  * The worker is the single, process-global heavy-work thread: it owns the synchronous,
  * CPU-bound paths (`better-sqlite3` writes + `.eml` parsing) that must not run on the
- * main event loop. Stage 1 moves the full-source sweep here; the bulk `fullSyncFolder`
- * and the future Phase-4 enrichment pipeline are meant to land on this *same* worker
- * (the roadmap's "build one worker, not three").
+ * main event loop. The full-source sweep and the enrichment-pipeline drain both run here — one worker,
+ * not one per job.
  *
  * IMPORTANT — no secrets cross the channel. Jobs carry only the non-secret account
  * `email`; the worker resolves the full `AccountConfig` (with IMAP/SMTP credentials)
@@ -22,7 +21,7 @@ export interface SweepJob {
 }
 
 /**
- * Drain a bounded snapshot of due enrichment work (Phase 4). Carries no payload — the
+ * Drain a bounded snapshot of due enrichment work (ARCHITECTURE §14). Carries no payload — the
  * queue lives in SQLite (`enrichments` ledger), so a single coalesced job tells the
  * worker "there may be work" and it claims whatever is due across all accounts.
  */

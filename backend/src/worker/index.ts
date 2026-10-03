@@ -1,5 +1,5 @@
 /**
- * Shared sync worker — runs inside a Node `worker_threads` Worker (ROADMAP §3.7.E).
+ * Shared sync worker — runs inside a Node `worker_threads` Worker (ARCHITECTURE §4).
  *
  * Why a worker: `better-sqlite3` is synchronous, so the full-source sweep's upserts and
  * its `.eml` parsing block the event loop when run on the main thread — stalling INBOX
@@ -102,7 +102,7 @@ async function runSweep(job: SweepJob): Promise<void> {
 }
 
 /**
- * Drain due enrichment work in two cost-scoped phases (Phase 4 framework + Phase 5 guard):
+ * Drain due enrichment work in two cost-scoped phases (the N150 guard):
  *
  *  1. CHEAP — loop `drainPipeline({ costs: ['cheap'] })` so a single nudge clears the
  *     currently-due deterministic backlog (sub-ms each). Self-heal runs only on the first
@@ -113,7 +113,7 @@ async function runSweep(job: SweepJob): Promise<void> {
  *     up over many nudges (the periodic enrich timer keeps nudging when idle) without
  *     starving cheap mail or monopolising the worker against sync sweeps (the N150 guard).
  *     No LLM enrichers ship today; this stays as the seam for future LLM work (the LLM
- *     client framework is preserved — ROADMAP Phase 5).
+ *     client framework is preserved).
  */
 async function runEnrich(): Promise<void> {
   const MAX_PASSES = 20;

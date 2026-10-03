@@ -1,5 +1,5 @@
 /**
- * Contacts manager (ROADMAP §3.7.B). A standalone address-book view over the
+ * Contacts manager. A standalone address-book view over the
  * cached CardDAV cards with full write-back: create, edit, and delete cards on the
  * Radicale server. Writes go through the backend, which PUTs/DELETEs the vCard and
  * re-syncs the local cache (Radicale stays authoritative), so the list reflects the
@@ -35,7 +35,7 @@ import { GUTTER } from '../ui/layout';
 /**
  * Whole-card match: every whitespace-separated term must appear somewhere in the
  * card's searchable text — name/nickname, company/title, emails, phones, websites,
- * notes, and categories (ROADMAP §C global contact search).
+ * notes, and categories (global contact search).
  */
 function matchesQuery(c: ContactCardDto, q: string): boolean {
   if (!q) return true;
@@ -60,7 +60,7 @@ function matchesQuery(c: ContactCardDto, q: string): boolean {
  * Shared width cap for the page's stacked bands (header, search, list). Contacts are
  * one-line rows and short labelled fields — on a wide monitor they'd otherwise stretch
  * to an unreadable line length, so every band centres its content in one column
- * (ROADMAP §A1 wide-screen layout) rather than fanning fields out across the viewport.
+ * rather than fanning fields out across the viewport.
  */
 const column = 'mx-auto w-full max-w-2xl';
 
@@ -93,7 +93,7 @@ export function Contacts() {
   // True while an import/export round-trip is in flight (disables the buttons).
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  // Cards that look like the same person (§A2). Advisory only: the band below the header
+  // Cards that look like the same person. Advisory only: the band below the header
   // says how many there are and nothing else happens until the user opens it.
   const [duplicates, setDuplicates] = useState<ContactDuplicateGroupDto[]>([]);
   const [showDuplicates, setShowDuplicates] = useState(false);

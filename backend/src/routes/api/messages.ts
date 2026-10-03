@@ -126,7 +126,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     const dto = toMessageDetailDto(m, folderIdsForMessage(m.id), atts);
     dto.facts = toMessageFactsDto(messageFacts(m.id));
     // Embed inline CID images as data: URIs so they render in the sandboxed,
-    // null-origin reader iframe (ROADMAP §3.7.A). Inline parts that couldn't be
+    // null-origin reader iframe. Inline parts that couldn't be
     // embedded (over the size cap, or unreferenced) surface in the attachments
     // panel instead — flip their isInline hint so the client stops hiding them.
     const { html, embeddedIds } = await embedInlineImages(dto.bodyHtml, atts);

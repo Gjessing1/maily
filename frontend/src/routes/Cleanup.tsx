@@ -1,5 +1,5 @@
 /**
- * Cleanup Dashboard (ROADMAP Phase 6 "Master archive & Cleanup Dashboard"). An opt-in
+ * Cleanup Dashboard. An opt-in
  * power tool over the local SQLite archive — *not* a backlog to clear. It previews the
  * impact (message count + estimated storage, grouped by sender — domain, or full address
  * for freemail providers) of deterministic

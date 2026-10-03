@@ -1,6 +1,6 @@
 /**
  * Contacts: composer autocomplete + full CardDAV-backed card management (Radicale is
- * the source of truth — ROADMAP §3.7.D). Writes round-trip through `contacts/carddav`.
+ * the source of truth). Writes round-trip through `contacts/carddav`.
  */
 import type { FastifyInstance } from 'fastify';
 import type {
@@ -168,14 +168,14 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Does this address already have a card? Drives the reader's unknown-sender prompt
-  // (§A2) — a per-message question, so it answers from the cache without parsing the
+  // — a per-message question, so it answers from the cache without parsing the
   // whole address book. More than one card means the address is filed twice.
   app.get<{ Querystring: { email?: string } }>('/api/contacts/lookup', async (req) => {
     const email = (req.query.email ?? '').trim();
     return { email: email.toLowerCase(), cards: email ? findCardsByEmail(email) : [] };
   });
 
-  // Cards that look like the same person, across every book (§A2). Read-only and
+  // Cards that look like the same person, across every book. Read-only and
   // advisory: the UI flags them, the user decides. Static path, so Fastify routes it
   // ahead of `/cards/:key`.
   app.get('/api/contacts/cards/duplicates', async () => findDuplicateGroups(listCards()));
@@ -235,7 +235,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // Passive, read-only message activity for a card (A3). This is derived entirely
+  // Passive, read-only message activity for a card. This is derived entirely
   // from the local mail cache and never writes intelligence back to CardDAV.
   app.get<{ Params: { key: string } }>(
     '/api/contacts/cards/:key/intelligence',

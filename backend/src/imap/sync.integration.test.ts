@@ -1,5 +1,5 @@
 /**
- * End-to-end sync/parse integration net (Refactoring Phase 5a). The Phase-1
+ * End-to-end sync/parse integration net.
  * `sync.test.ts` pins the pure transform (`buildParsedMessage`); this pins the
  * I/O *orchestration* around it that needs a live connection — exactly the part
  * `sync.test.ts` flagged as out of scope: the fetch→download deadlock ordering,

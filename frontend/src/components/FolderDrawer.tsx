@@ -186,7 +186,7 @@ function AccountFolders({
 /**
  * Cross-account "All accounts" group: the unified inbox (pinned, always visible)
  * plus the unified Drafts/Sent views tucked under a collapse — since the inbox is
- * what's used day-to-day, the rest stays collapsed by default (ROADMAP §top).
+ * what's used day-to-day, the rest stays collapsed by default.
  */
 function UnifiedFolders({
   collapsed,

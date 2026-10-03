@@ -1,5 +1,5 @@
 /**
- * Merge review for a duplicate cluster (ROADMAP §A2). The merge itself is a one-call
+ * Merge review for a duplicate cluster. The merge itself is a one-call
  * server operation; this sheet exists so it is never an *automatic* one — the user picks
  * which card survives, sees exactly what the merged card will contain and which cards are
  * deleted, and confirms. Duplicate detection stays a passive flag; this is the only place

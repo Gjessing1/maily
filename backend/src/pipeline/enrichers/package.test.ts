@@ -1,5 +1,5 @@
 /**
- * `package` enricher coverage (ROADMAP Phase 4). Pure unit tests over the enricher's
+ * `package` enricher coverage (ARCHITECTURE §14). Pure unit tests over the enricher's
  * `run` — no DB, no pipeline wiring (the framework's queue/persist path is covered by
  * pipeline.test.ts). We pin the two deterministic extraction routes (JSON-LD
  * ParcelDelivery + carrier-anchored regex), the false-positive discipline (ambiguous

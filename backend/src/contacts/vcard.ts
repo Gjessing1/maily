@@ -115,7 +115,7 @@ function escapeValue(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
 }
 
-// ── Rich fields (contacts Phase 2) ──────────────────────────────────────────────
+// ── Rich fields ───────────────────────────────────────────────────────────────
 // We parse a card's full detail for display and round-trip edits while keeping
 // Radicale authoritative: edits rewrite only the properties maily models and leave
 // everything else (PHOTO, X-* extensions, REV, …) untouched — see `mergeVCard`.

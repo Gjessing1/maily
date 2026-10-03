@@ -3,7 +3,7 @@
  *
  * Boot order: migrate → start the HTTP API + Socket.io + Web Push → start the
  * per-account IMAP sync engines (one persistent INBOX IDLE connection each, plus
- * a non-INBOX reconcile cron). See docs/ROADMAP.md and src/imap/.
+ * a non-INBOX reconcile cron). See src/imap/.
  */
 import type { Server as IoServer } from 'socket.io';
 import { env } from './env.js';
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   startContactsSync();
 
   // Resume any cleanup trash-queue work left pending from a previous run, and trickle new
-  // bulk-cleanup MOVEs to Trash thereafter (Phase 6b — rate-limited, restart-safe).
+  // bulk-cleanup MOVEs to Trash thereafter (rate-limited, restart-safe).
   startTrashQueue();
 
   // Server-owned outbox: commit deferred sends (undo-send / scheduled) and undoable
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
   installShutdown(engines, io);
 
   // Kick the enrichment pipeline once at boot so backlog + any mail enqueued while the
-  // process was down (or synced before the pipeline existed) gets drained (Phase 4).
+  // process was down (or synced before the pipeline existed) gets drained (ARCHITECTURE §14).
   enqueueEnrichPass();
 }
 

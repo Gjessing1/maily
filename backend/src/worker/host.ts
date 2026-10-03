@@ -1,5 +1,5 @@
 /**
- * Main-thread host for the shared sync worker (ROADMAP §3.7.E).
+ * Main-thread host for the shared sync worker (ARCHITECTURE §4).
  *
  * Owns the single, process-global `Worker` instance: spawns it lazily on first use,
  * forwards jobs, surfaces worker logs/errors, and tears it down on shutdown. Engines
@@ -95,7 +95,7 @@ export function enqueueSweep(accountId: string, email: string): void {
 }
 
 /**
- * Nudge the worker to drain due enrichment work (Phase 4). The queue lives in SQLite,
+ * Nudge the worker to drain due enrichment work (ARCHITECTURE §14). The queue lives in SQLite,
  * so this is only a wake-up — the worker coalesces repeated nudges and claims whatever
  * is due. Losing a nudge only delays work (the runner's self-heal backfill is the backstop).
  */

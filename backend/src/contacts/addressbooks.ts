@@ -1,5 +1,5 @@
 /**
- * Address-book registry + active/default settings (ROADMAP §C, contacts Phase 1).
+ * Address-book registry + active/default settings.
  *
  * Address books are auto-discovered from the CardDAV server (see `./discover.ts`);
  * this module holds the in-memory discovered set plus the user's choices — which

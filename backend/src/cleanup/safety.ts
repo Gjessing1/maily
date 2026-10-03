@@ -1,5 +1,5 @@
 /**
- * Cleanup safety filter (ROADMAP Phase 6 "Risk & safety filters — HARD RULES").
+ * Cleanup safety filter — the hard safety rules.
  * Financial / legal / account-security / medical-identity mail is *protected*: it never
  * appears in a delete-eligible slice and never lands in a delete preset. This is the
  * non-negotiable gate every destructive slice AND-s into its query.

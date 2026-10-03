@@ -1,5 +1,5 @@
 /**
- * Create/edit form for a single CardDAV card (contacts Phase 2). Covers the rich
+ * Create/edit form for a single CardDAV card. Covers the rich
  * fields maily models — name, nickname, company/title, multiple emails/phones/
  * websites, postal addresses, birthday, notes, categories. Writes go through the
  * backend, which PUTs the vCard (preserving unmodelled properties like PHOTO) and

@@ -18,7 +18,7 @@ export interface ParsedAttachment {
   sizeBytes: number | null;
   /** IMAP BODYSTRUCTURE part id used to fetch the bytes on demand (ARCHITECTURE §4). */
   imapPartId: string | null;
-  /** Document-order index among attachment parts — local-source match key (§3.7.E). */
+  /** Document-order index among attachment parts — local-source match key. */
   partOrdinal: number;
   contentId: string | null;
   isInline: boolean;
@@ -45,11 +45,11 @@ export interface ParsedMessage {
   bodyHtml: string | null;
   /** Captured iCalendar (text/calendar) part for a calendar invite; null when absent. */
   bodyCalendar: string | null;
-  /** On-disk raw `.eml` path when captured on the live path; null until archived (§3.7.E). */
+  /** On-disk raw `.eml` path when captured on the live path; null until archived. */
   sourcePath: string | null;
   /**
-   * Byte size of the archived `.eml` at `sourcePath`; null/absent when not archived
-   * (§3.7.E). Optional so the many `ParsedMessage` literals that predate full-source
+   * Byte size of the archived `.eml` at `sourcePath`; null/absent when not archived.
+   * Optional so the many `ParsedMessage` literals that predate full-source
    * capture stay valid — a missing value is persisted as NULL (still un-archived).
    */
   sourceBytes?: number | null;

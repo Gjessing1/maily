@@ -1,5 +1,5 @@
 /**
- * `facts` — the reference / smoke enricher (Phase 4 framework).
+ * `facts` — the reference / smoke enricher (ARCHITECTURE §14).
  *
  * Deliberately trivial: it exists to prove the pipeline loop end-to-end (queue →
  * run → persist → reindex) and to back the framework tests, NOT as a real product

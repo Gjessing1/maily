@@ -162,7 +162,7 @@ export function updateFolderSyncState(
     uidValidity?: number;
     highestModseq?: number | null;
     lastUid?: number | null;
-    /** Low-watermark of the resumable full-source sweep (ROADMAP §3.7.E). */
+    /** Low-watermark of the resumable full-source sweep (ARCHITECTURE §4). */
     oldestSyncedUid?: number | null;
   },
 ): void {

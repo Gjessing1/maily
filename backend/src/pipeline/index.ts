@@ -1,5 +1,5 @@
 /**
- * Enrichment pipeline — public surface (ROADMAP Phase 4; ARCHITECTURE §14/§15).
+ * Enrichment pipeline — public surface (ARCHITECTURE §14/§15).
  *
  * The framework: `ingest → enrich → index`. A unit of work is a pending
  * row in the SQLite `enrichments` ledger (pull/claim queue → restart-safe,

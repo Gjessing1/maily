@@ -249,7 +249,7 @@ function TrustedImageDomains() {
   );
 }
 
-/** Per-account list of custom labels with a show/hide switch (ROADMAP §B). Hidden
+/** Per-account list of custom labels with a show/hide switch. Hidden
  * labels drop out of the folder drawer but are never deleted server-side. */
 function AccountLabels({ account }: { account: AccountDto }) {
   const folders = useFolders(account.id);
@@ -283,7 +283,7 @@ function AccountLabels({ account }: { account: AccountDto }) {
 }
 
 /**
- * Address books (ROADMAP §C, contacts Phase 1). Lists the books discovered on the
+ * Address books. Lists the books discovered on the
  * CardDAV server with an active toggle (which are synced/in use) and a default picker
  * (where new contacts are created). Stored server-side, so this manages its own state
  * rather than the client-owned prefs; saving re-syncs the contacts cache.

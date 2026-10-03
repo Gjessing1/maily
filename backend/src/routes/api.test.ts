@@ -1,5 +1,5 @@
 /**
- * Characterization net for the protected HTTP API (Refactoring Phase 2 prerequisite).
+ * Characterization net for the protected HTTP API.
  * `routes/api.ts` is the 488-LOC god-file the next structural step splits by resource
  * (messages / folders / attachments / actions / contacts). Before moving any route,
  * these tests PIN the observable contract a split must preserve:

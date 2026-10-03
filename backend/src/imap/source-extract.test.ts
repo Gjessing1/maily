@@ -1,5 +1,5 @@
 /**
- * Ordinal tripwire (ROADMAP §3.7.E). The local-source attachment resolver matches a
+ * Ordinal tripwire (ARCHITECTURE §4). The local-source attachment resolver matches a
  * CID-less attachment by its document-order `part_ordinal`, which is correct ONLY if
  * the raw-`.eml` walk (`enumerateSourceParts`) and the IMAP BODYSTRUCTURE walk
  * (`extractStructure`) enumerate the *same* parts in the *same* order. Both are meant
@@ -114,7 +114,7 @@ const BODYSTRUCTURE = {
   ],
 } as unknown as MessageStructureObject;
 
-test('§3.7.E: raw-.eml and BODYSTRUCTURE walks enumerate identical parts', async () => {
+test('raw-.eml and BODYSTRUCTURE walks enumerate identical parts', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maily-ordinal-'));
   const path = join(dir, 'source.eml');
   await writeFile(path, EML);
@@ -155,7 +155,7 @@ test('§3.7.E: raw-.eml and BODYSTRUCTURE walks enumerate identical parts', asyn
   }
 });
 
-test('§3.7.E: extractPartFromSource streams the right decoded bytes', async () => {
+test('extractPartFromSource streams the right decoded bytes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maily-extract-'));
   const path = join(dir, 'source.eml');
   await writeFile(path, EML);
@@ -211,7 +211,7 @@ test('§3.7.E: extractPartFromSource streams the right decoded bytes', async () 
  * the archived `.eml`. It must stay strictly weaker than the ordinal: filename-only,
  * never MIME-only, or a multi-attachment message would hand back the wrong part.
  */
-test('§3.7.E: legacy rows (no CID, no ordinal) fall back to the filename', async () => {
+test('legacy rows (no CID, no ordinal) fall back to the filename', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maily-extract-legacy-'));
   const path = join(dir, 'source.eml');
   await writeFile(path, EML);

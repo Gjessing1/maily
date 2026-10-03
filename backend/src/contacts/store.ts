@@ -1,5 +1,5 @@
 /**
- * Contacts cache persistence + lookup (ROADMAP §3.7.D). The `contacts` table is a
+ * Contacts cache persistence + lookup. The `contacts` table is a
  * rebuildable mirror of the Radicale addressbook; this module owns writing it and
  * the two read paths over it:
  *   - compose autocomplete (`searchContacts`),
@@ -56,7 +56,7 @@ export function reloadContactCache(): void {
  */
 export function replaceContacts(parsed: ParsedContact[]): number {
   // Key every row by its card identity + address. Two different cards carrying the same
-  // address is the ordinary shape of a duplicate (§A2) — collapsing them here made the
+  // address is the ordinary shape of a duplicate — collapsing them here made the
   // second card invisible, so the address is deduped on READ (`searchContacts`) instead.
   // Email-less cards key on card identity alone.
   const byKey = new Map<string, ParsedContact>();
@@ -273,7 +273,7 @@ export function getCardDetail(key: string): ContactCardDto | null {
 }
 
 /**
- * Every cached card carrying `email` (§A2). Normally zero or one, but two cards may
+ * Every cached card carrying `email`. Normally zero or one, but two cards may
  * legitimately share an address — a duplicate across address books — and the reader's
  * unknown-sender prompt has to know the difference between "not filed" and "filed twice".
  * Only the matching cards are parsed, so this stays cheap enough to run per message.
@@ -356,7 +356,7 @@ export function searchContacts(q: string, limit: number): ContactDto[] {
       .all()
       .filter((r) => !!r.email && (!r.addressbookHref || active.has(r.addressbookHref)))
       // One suggestion per address: the cache now keeps a row per card+address, so an
-      // address on two cards (a duplicate, §A2) would otherwise autocomplete twice.
+      // address on two cards (a duplicate) would otherwise autocomplete twice.
       .filter((r) => {
         const key = r.email!.toLowerCase();
         if (seen.has(key)) return false;

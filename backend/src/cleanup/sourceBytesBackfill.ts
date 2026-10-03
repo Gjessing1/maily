@@ -1,5 +1,5 @@
 /**
- * Idempotent, self-healing backfill of `messages.source_bytes` (ROADMAP Phase 6 cleanup
+ * Idempotent, self-healing backfill of `messages.source_bytes` (the cleanup
  * storage metric / detach size estimate). Rows archived before the `source_bytes` column
  * existed have a `source_path` but a NULL `source_bytes`, so the byte estimates
  * (slices.ts `BYTES`, the detach preview) under-count their dominant on-disk cost — the

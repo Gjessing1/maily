@@ -1,5 +1,5 @@
 /**
- * Derive the parsed body of a message from its on-disk raw `.eml` (ROADMAP §3.7.E).
+ * Derive the parsed body of a message from its on-disk raw `.eml` (ARCHITECTURE §4).
  *
  * This is the body half of the "one download, one parse path" goal: the live path
  * captures full RFC822 once and reads `bodyText` / `bodyHtml` back out of it here
@@ -163,7 +163,7 @@ export async function deriveBodyFromSource(path: string): Promise<DerivedBody> {
 }
 
 /**
- * The message-content columns derivable from a raw `.eml` (ROADMAP §3.7.E rebuild).
+ * The message-content columns derivable from a raw `.eml` (ARCHITECTURE §15 rebuild).
  * These are the parsed cache *over* the canonical source — everything in here can be
  * regenerated from the `.eml` alone. Mailbox state NOT in RFC822 (flags, folder
  * membership, tombstones, `received_at`, the identity/thread keys) is deliberately

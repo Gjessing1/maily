@@ -1,5 +1,5 @@
 /**
- * Query IR parser coverage (ROADMAP §3.7.D / Query Contract Layer). Pins the
+ * Query IR parser coverage (the Query Contract Layer). Pins the
  * operator grammar — the contract every consumer (UI search, the advanced-search
  * form, future NL→query) builds against — so an operator can't silently change
  * meaning. Pure tests: parse only, no DB.

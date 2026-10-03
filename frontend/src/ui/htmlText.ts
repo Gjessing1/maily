@@ -1,7 +1,7 @@
 /**
  * Plain-text ⇄ HTML helpers for the rich-text composer. Outgoing mail ships both
  * an HTML part (from the editor) and a derived `text/plain` alternative so the
- * message renders for every client (CLAUDE.md / ROADMAP §3.7.B). Kept dependency-
+ * message renders for every client (CLAUDE.md). Kept dependency-
  * free: the conversions run in the browser using the DOM parser.
  */
 

@@ -1,8 +1,8 @@
 /**
- * LLM runtime configuration (ROADMAP Phase 5). Thin wrapper over `env.ollama` that gives
+ * LLM runtime configuration. Thin wrapper over `env.ollama` that gives
  * the rest of the LLM module a single, typed read of "are we configured, and with what".
  *
- * Provider is LOCKED to local Ollama (ARCHITECTURE / ROADMAP §5): a single-user mailbox's
+ * Provider is LOCKED to local Ollama: a single-user mailbox's
  * raw mail (invoices, password resets, contacts) must never leave the box, so there is no
  * Claude/OpenAI/cloud path and no external cost/cache controls to model here.
  *

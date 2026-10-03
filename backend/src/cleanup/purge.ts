@@ -1,5 +1,5 @@
 /**
- * Local "Purge Trash" (ROADMAP storage / vendor-independence companion to the detach archive).
+ * Local "Purge Trash" (the vendor-independence companion to the detach archive).
  * Permanently reclaims the LOCAL disk used by a trash folder's messages — unlinks the raw `.eml`
  * (`source_path`) and any downloaded attachment files, and nulls the body/source columns — while
  * keeping a lightweight tombstone row.

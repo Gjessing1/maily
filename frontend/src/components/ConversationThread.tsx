@@ -166,7 +166,7 @@ function ConversationMessage({
             </div>
           )}
           {/* Only on the message the user opened — an offer on every collapsed card in a
-              long thread would be the backlog §A2 exists to avoid. */}
+              long thread would be exactly the backlog to avoid. */}
           <AddSenderPrompt name={message.fromName} address={message.fromAddress} />
         </div>
       )}

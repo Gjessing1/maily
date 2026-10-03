@@ -1,6 +1,6 @@
 /**
- * Public surface of the local-LLM runtime (ROADMAP Phase 5 foundation). Phase-5 enrichers
- * import from here. Provider is LOCKED to local Ollama — no cloud path.
+ * Public surface of the local-LLM runtime. LLM enrichers import
+ * from here. Provider is LOCKED to local Ollama — no cloud path.
  *
  * Typical enricher usage:
  *   import { llmEnabled, generateJson } from '../llm/index.js';

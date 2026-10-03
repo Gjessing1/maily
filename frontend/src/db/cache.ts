@@ -42,7 +42,7 @@ interface MetaRow {
 }
 
 /**
- * A locally-persisted compose draft (ROADMAP §3.7.B). Local-first so an in-progress
+ * A locally-persisted compose draft. Local-first so an in-progress
  * message survives reload/refresh; the backend SQLite is unaware of it. Optional
  * IMAP APPEND to \Drafts is deferred.
  */
@@ -105,7 +105,7 @@ class MailyCache extends Dexie {
     this.version(1).stores({
       accounts: 'id',
       folders: 'id, accountId',
-      // multiEntry index on folderIds: a message lives in many folders (§7).
+      // multiEntry index on folderIds: a message lives in many folders (ARCHITECTURE §8).
       messages: 'id, receivedAt, threadId, accountId, cachedAt, *folderIds',
       bodies: 'id, cachedAt',
       meta: 'key',

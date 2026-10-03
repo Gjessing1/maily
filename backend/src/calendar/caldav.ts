@@ -5,7 +5,7 @@
  * calendar collection (discovered via `./discover.ts`; picked per event with a
  * stored default — `./calendars.ts`, the CardDAV pattern).
  *
- * **Human-in-the-loop only** (no auto-RSVP, no auto-add — ROADMAP guardrail): the
+ * **Human-in-the-loop only** (no auto-RSVP, no auto-add): the
  * only caller is the reader's "Add to calendar" action (`routes/api/calendar.ts`),
  * always behind an explicit user confirm. The write is idempotent: the resource
  * path derives from the supplied id, so a retry after a transient failure (or

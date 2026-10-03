@@ -1,5 +1,5 @@
 /**
- * `travel` — JSON-LD travel/reservation enricher (ROADMAP Phase 4).
+ * `travel` — JSON-LD travel/reservation enricher (ARCHITECTURE §14).
  *
  * Deterministic extraction of schema.org reservation microdata that airlines,
  * hotels and ticketing sites embed in HTML mail as
@@ -49,7 +49,7 @@ export interface TravelReservation {
 /**
  * The derived `calendar_event` proposal payload — deliberately VEVENT-shaped
  * (SUMMARY/DTSTART/DTEND/LOCATION/DESCRIPTION) so the future Radicale CalDAV push
- * consumes it directly, no translation step (ROADMAP Phase 4 "one representation").
+ * consumes it directly, no translation step ("one representation").
  */
 export interface CalendarEventDraft {
   summary: string;

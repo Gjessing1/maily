@@ -1,5 +1,5 @@
 /**
- * `package` — deterministic shipment / parcel-tracking enricher (ROADMAP Phase 4).
+ * `package` — deterministic shipment / parcel-tracking enricher (ARCHITECTURE §14).
  *
  * Extracts carrier + tracking number (and, where available, a tracking URL and an
  * estimated-delivery date) from shipping mail, by three complementary deterministic
@@ -17,10 +17,10 @@
  *      but the mail always links to the carrier's own tracking page — anchoring on the
  *      carrier *domain* gives the number with zero false positives.
  *
- * Classification: `search` (passive-by-default, ARCHITECTURE §14 / the ROADMAP
- * anti-chore guardrail). The extracted shipments are *facts* that feed the search
- * index and the future Purchase Object / Evidence Locker timeline — surfaced
- * in-message ("where's my parcel"), NOT a notification stream. Because it is
+ * Classification: `search` (passive-by-default, ARCHITECTURE §14 / the
+ * anti-chore guardrail). The extracted shipments are *facts*, read through
+ * `pipeline/facts-read.ts` by the reader's parcel card ("where's my parcel") and the
+ * `has:tracking` search operator — NOT a notification stream. Because it is
  * `search`-kind it runs on ALL tiers (old shipping mail stays searchable) and emits
  * NO proposals: delivery reminders / delayed / delivered *alerts* are a separate
  * **operational**, opt-in, Tier-0-gated enricher (deferred), so a years-deep backfill
@@ -28,8 +28,8 @@
  *
  * False-positive discipline: tracking numbers overlap with order numbers, phone
  * numbers and the like, so the unconditional patterns (UPS `1Z…`, the UPU/S10
- * international-postal code) are **check-digit-validated** (the digit check the ROADMAP
- * asks for) — a random `XX#########NO`-shaped or `1Z…`-shaped string that fails its
+ * international-postal code) are **check-digit-validated** (a digit check, not a bare
+ * shape match) — a random `XX#########NO`-shaped or `1Z…`-shaped string that fails its
  * checksum is dropped. The ambiguous all-digit carriers (FedEx/USPS/DHL) only match
  * when that carrier's name also appears in the body; the Norwegian carriers come in via
  * their tracking-URL host, never a bare number.
@@ -47,7 +47,7 @@ export interface PackageShipment {
   trackingUrl: string | null;
   /** ISO 8601 estimated delivery (`expectedArrivalUntil`), when supplied. */
   estimatedDelivery: string | null;
-  /** Where this came from — provenance for the Purchase Object / debugging. */
+  /** Where this came from — provenance for debugging. */
   source: 'jsonld' | 'regex';
 }
 

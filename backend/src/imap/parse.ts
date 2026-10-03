@@ -45,7 +45,7 @@ export interface PartTraits {
 }
 
 /**
- * THE single attachment classifier (ROADMAP §3.7.E). Both the IMAP BODYSTRUCTURE
+ * THE single attachment classifier (ARCHITECTURE §4). Both the IMAP BODYSTRUCTURE
  * walk (`extractStructure`) and the local-source `.eml` walk (the unified attachment
  * resolver) run *this one* predicate over their respective trees, so their part
  * enumerations — and therefore `part_ordinal` — are identical **by construction**.

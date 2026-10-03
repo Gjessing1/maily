@@ -82,7 +82,7 @@ export class AccountEngine {
       if (this.connected) void this.onInboxEvent();
     }, INBOX_BACKSTOP_MS);
     if (typeof this.inboxBackstopTimer.unref === 'function') this.inboxBackstopTimer.unref();
-    // Full-source historical backfill (ROADMAP §3.7.E), throttled by its own timer and
+    // Full-source historical backfill (ARCHITECTURE §4), throttled by its own timer and
     // the shared daily byte budget. The heavy work runs on the shared sync worker thread
     // (synchronous SQLite + `.eml` parsing must stay off the event loop); this timer only
     // nudges it. On by default; MAILY_SOURCE_SWEEP=false pauses it.
@@ -90,7 +90,7 @@ export class AccountEngine {
       this.sweepTimer = setInterval(() => this.tickSweep(), env.sourceSweepIntervalMs);
       if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
     }
-    // Enrichment-pipeline drain nudge (Phase 4) — independent of the sweep + its byte
+    // Enrichment-pipeline drain nudge (ARCHITECTURE §14) — independent of the sweep + its byte
     // budget. Drives backfill of un-enqueued mail and retry of backed-off failures; new
     // mail is nudged inline on arrival (onInboxEvent / cron). The worker coalesces nudges.
     this.enrichTimer = setInterval(() => enqueueEnrichPass(), env.sourceSweepIntervalMs);
@@ -285,7 +285,7 @@ export class AccountEngine {
         }
         // Non-INBOX mail (a saved draft, a Sent copy, mail filtered past IDLE) arrives
         // here with no `mail:new` of its own — deliberately, since Web Push is INBOX-only
-        // (§9). The folder signal tells a foreground client to refetch the affected view;
+        // (ARCHITECTURE §9). The folder signal tells a foreground client to refetch the affected view;
         // it is transport only and is no longer responsible for server-cache correctness.
         if (result.insertedIds.length || result.updated || result.expunged) {
           emitSignal({ type: 'mail:folder', accountId: this.id, folderId: folder.id });
@@ -308,7 +308,7 @@ export class AccountEngine {
   }
 
   /**
-   * Nudge the shared sync worker to run a full-source sweep pass (ROADMAP §3.7.E). The
+   * Nudge the shared sync worker to run a full-source sweep pass (ARCHITECTURE §4). The
    * actual fetch + archive + parse runs on the worker thread, over its own transient
    * connection, so neither the event loop nor the INBOX IDLE connection is disturbed
    * (ARCHITECTURE §2/§9). The worker serialises and dedups passes, so a tick that

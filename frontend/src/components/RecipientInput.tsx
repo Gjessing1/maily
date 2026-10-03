@@ -1,5 +1,5 @@
 /**
- * Recipient field with CardDAV contacts (ROADMAP §3.7.D). Captured addresses render
+ * Recipient field with CardDAV contacts. Captured addresses render
  * as removable **chips** so it's obvious what's been committed, and the in-progress
  * token after the last separator stays editable in the trailing input. Focusing the
  * field opens a picker listing the whole addressbook (filtered as you type); picking a

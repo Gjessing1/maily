@@ -1,6 +1,6 @@
 /**
  * Characterization net for the pure vCard / CardDAV-multistatus codec (`vcard.ts`),
- * extracted from `carddav.ts` in Refactoring Phase 3. Tripwires, not specs: they pin
+ * extracted from `carddav.ts`. Tripwires, not specs: they pin
  * the current parse/serialise behaviour the CardDAV transport relies on — name
  * resolution (FN over N), email collection, group/param stripping, line unfolding,
  * XML-entity decoding, and the vCard 3.0 build round-trip.

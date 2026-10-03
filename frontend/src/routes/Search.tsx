@@ -1,5 +1,5 @@
 /**
- * Search screen (ROADMAP §3.7.D Advanced Search — the query IR's first consumer).
+ * Search screen (Advanced Search — the query IR's first consumer).
  * One text box, two ways to use it: power users type operators (`from:` `is:unread`
  * `filename:` …) straight into the box; everyone else opens **Filters**, a structured
  * form whose fields compile into the same operator string. The composed query is shown

@@ -240,7 +240,7 @@ export interface SendMessageRequest {
 
 /**
  * Save (or update) a draft: same shape as a send, minus the SMTP step. The backend
- * APPENDs the composed MIME to the account's \Drafts mailbox (ROADMAP §B), so drafts
+ * APPENDs the composed MIME to the account's \Drafts mailbox, so drafts
  * sync across devices instead of living only in the composer. `replaceDraftId` swaps
  * a previously-saved copy (edit-in-place) rather than accumulating duplicates.
  */
@@ -288,7 +288,7 @@ export interface ContactCardDto {
   addressbook: string | null;
   /** That book's display name, so a card can say where it lives without a second fetch. */
   addressbookName: string | null;
-  /** Rich fields (contacts Phase 2), parsed from the card's raw vCard. */
+  /** Rich fields, parsed from the card's raw vCard. */
   nickname: string | null;
   /** Company / organisation (first ORG component). */
   org: string | null;
@@ -305,7 +305,7 @@ export interface ContactCardDto {
   photo: string | null;
 }
 
-/** Read-only mail-derived activity for one CardDAV contact (ROADMAP A3). */
+/** Read-only mail-derived activity for one CardDAV contact. */
 export interface ContactEmailIntelligenceDto {
   /** Every distinct live message directly exchanged with one of the card's addresses. */
   messageCount: number;
@@ -369,7 +369,7 @@ export interface ContactCardInput {
 }
 
 /**
- * A cluster of cards that look like the same person (ROADMAP §A2). Purely descriptive —
+ * A cluster of cards that look like the same person. Purely descriptive —
  * the UI flags it and offers a merge; nothing is merged or queued automatically.
  */
 export interface ContactDuplicateGroupDto {
@@ -383,7 +383,7 @@ export interface ContactDuplicateGroupDto {
   cards: ContactCardDto[];
 }
 
-/** Merge request (ROADMAP §A2): fold `others` into `primary`, then delete them. */
+/** Merge request: fold `others` into `primary`, then delete them. */
 export interface ContactMergeInput {
   /** Key of the card that survives and receives the union of every field. */
   primary: string;
@@ -570,8 +570,8 @@ export interface EnrichmentStatusDto {
 }
 
 /**
- * One row of a cleanup slice — a sender with its preview impact (ROADMAP Phase 6
- * Cleanup Dashboard). Grouping by sender is what lets a preset say "delete N from
+ * One row of a cleanup slice — a sender with its preview impact (Cleanup
+ * Dashboard). Grouping by sender is what lets a preset say "delete N from
  * <sender>, free X" before any execution.
  */
 export interface CleanupGroupDto {
@@ -605,7 +605,7 @@ export interface CleanupSliceDto {
 }
 
 /**
- * One message inside a cleanup slice — the drill-down unit (ROADMAP Phase 6b). Lets the
+ * One message inside a cleanup slice — the drill-down unit. Lets the
  * user inspect exactly what a slice/sender would trash before confirming; `id` deep-links
  * to the reader (the internal UUID, never the IMAP UID — see CLAUDE.md gotchas).
  */
@@ -678,7 +678,7 @@ export interface CleanupDashboardDto {
 }
 
 /**
- * Execute a delete-eligible cleanup slice (ROADMAP Phase 6b). The server always re-resolves
+ * Execute a delete-eligible cleanup slice. The server always re-resolves
  * the slice and re-applies the HARD safety gate at execution time, then **intersects** that
  * eligible set with whatever scope the client sends — so a forged/stale/protected id can never
  * be trashed (it simply isn't in the eligible set). Scope precedence: `messageIds` (explicit
@@ -772,7 +772,7 @@ export type SocketSignal =
    * expunged) with no per-message signal of its own — the non-INBOX cron path, where
    * mail lands in Drafts/Sent/Trash/… without `mail:new`. Foreground clients refetch
    * the view they're showing; server-side read correctness does not depend on this signal.
-   * Deliberately NOT a push trigger: background notifications stay INBOX-only (§9).
+   * Deliberately NOT a push trigger: background notifications stay INBOX-only (ARCHITECTURE §9).
    */
   | { type: 'mail:folder'; accountId: string; folderId: string }
   | { type: 'sync:progress'; accountId: string; done: number; total: number }

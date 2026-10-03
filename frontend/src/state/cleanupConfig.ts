@@ -1,5 +1,5 @@
 /**
- * Cleanup configuration (ROADMAP Phase 6b). Replaces the old fixed strict/balanced/aggressive
+ * Cleanup configuration. Replaces the old fixed strict/balanced/aggressive
  * presets with a per-slice model: each delete-eligible slice is toggled on/off independently
  * and carries its own tunable threshold (cold-storage years / large-message MB / unread months),
  * plus user-extendable keyword lists. The settings live in synced prefs; the backend honours the

@@ -1,6 +1,6 @@
 /**
  * Offline rebuild of the derived message cache from the canonical `.eml` archive
- * (ROADMAP §3.7.E / ARCHITECTURE §15 — "index-rebuild independence").
+ * (ARCHITECTURE §15 — "index-rebuild independence").
  *
  * The raw `.eml` on disk is the canonical content store; the parsed columns, snippet
  * and FTS index are a *rebuildable cache* over it. This command reparses every
@@ -11,8 +11,8 @@
  * FTS follows automatically via the messages-table UPDATE trigger (migration 0003).
  *
  * Un-swept history (null `source_path`) is skipped — its parsed row is its only copy.
- * Idempotent: keyed by message UUID, a re-run reproduces the same rows. This is the
- * forerunner of the Phase 4 *reindex mode*; when enrichers exist they hook in here.
+ * Idempotent: keyed by message UUID, a re-run reproduces the same rows. Enrichment
+ * reindexing (ARCHITECTURE §14 Tier 2) belongs here too.
  *
  * Run standalone: `npm run db:rebuild` (in the backend workspace).
  */

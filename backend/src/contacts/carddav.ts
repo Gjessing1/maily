@@ -1,5 +1,5 @@
 /**
- * Minimal Radicale CardDAV client (ROADMAP §3.7.D/B). Hand-rolled over `fetch` — no
+ * Minimal Radicale CardDAV client. Hand-rolled over `fetch` — no
  * CardDAV/vCard dependency, in keeping with the project's lean stack. It issues a
  * single `addressbook-query` REPORT for every card's vCard data, parses out names
  * and emails (via the pure codec in `./vcard.js`), and replaces the local contacts
@@ -59,8 +59,8 @@ function collectionUrl(cfg: NonNullable<ReturnType<typeof env.carddav>>): string
  * Absolute, slash-terminated URL of the book a new card should be created in.
  *
  * Any **discovered** book is a valid target — "active" only governs which books feed
- * composer autocomplete, so a book excluded from search must still be writable
- * (ROADMAP §A1). An unknown href falls back to the configured default.
+ * composer autocomplete, so a book excluded from search must still be writable.
+ * An unknown href falls back to the configured default.
  */
 function targetCollection(
   cfg: NonNullable<ReturnType<typeof env.carddav>>,

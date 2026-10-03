@@ -58,7 +58,7 @@ export const folders = sqliteTable(
     /** One past the highest UID synced — new messages are fetched from `lastUid:*` on resync. */
     lastUid: integer('last_uid'),
     /**
-     * Low-watermark of the resumable full-source sweep (ROADMAP §3.7.E): the lowest
+     * Low-watermark of the resumable full-source sweep (ARCHITECTURE §4): the lowest
      * UID whose raw `.eml` has been archived. The sweep walks downward from here, so
      * an interrupted run resumes instead of restarting. Null = sweep not yet started.
      */
@@ -102,7 +102,7 @@ export const messages = sqliteTable(
     bodyCalendar: text('body_calendar'),
     /**
      * On-disk path of the complete raw RFC822 (.eml) — the canonical content store
-     * (ROADMAP §3.7.E / ARCHITECTURE §15). Null = not yet archived; the parsed
+     * (ARCHITECTURE §15). Null = not yet archived; the parsed
      * columns above are then the message's only copy. Once set, the parsed rows /
      * FTS / attachment bytes are a rebuildable cache over this file.
      */
@@ -206,17 +206,16 @@ export const pushSubscriptions = sqliteTable('push_subscriptions', {
 /**
  * Devices registered for self-hosted push — the Android APK's background-notification
  * channel. The APK is a WebView shell and Android System WebView exposes no Push API,
- * so it cannot hold the VAPID `push_subscriptions` row the PWA does. It holds a long
- * connection to `GET /api/push/stream` from a foreground service instead, and this row
- * is the credential that connection presents.
+ * so it cannot hold the VAPID `push_subscriptions` row the PWA does. It wakes on its own
+ * alarm and polls `GET /api/push/pending` instead (push/pending.ts), and this row is the
+ * credential that poll presents.
  *
  * Only the SHA-256 of the secret is stored: the plaintext is returned once, at
  * registration, and never again — it is a bearer credential, and the DB is backed up.
  *
- * `lastEventAt` is the catch-up cursor. Unlike FCM, nothing queues for a device that is
- * offline, so on reconnect the server replays the INBOX arrivals newer than this.
- * `lastSeenAt` is liveness only (last successful connect), which is what lets a stale
- * registration be recognised.
+ * `lastEventAt` is the cursor: each poll answers with the unread INBOX arrivals newer than
+ * it, then advances it. `lastSeenAt` is liveness only (last successful poll), which is what
+ * lets a stale registration be recognised.
  */
 export const pushDevices = sqliteTable('push_devices', {
   id: uuid(),
@@ -230,7 +229,7 @@ export const pushDevices = sqliteTable('push_devices', {
 });
 
 /**
- * Contacts cached from the Radicale CardDAV addressbook (ROADMAP §3.7.D). One row
+ * Contacts cached from the Radicale CardDAV addressbook. One row
  * per (card, email) so an address autocompletes directly; `vcardUid` ties the rows
  * of a multi-email card together. The whole table is a rebuildable cache of the
  * remote addressbook — refreshed by a periodic sync, never the source of truth.
@@ -256,14 +255,14 @@ export const contacts = sqliteTable(
     etag: text('etag'),
     /**
      * CardDAV collection (address book) the card belongs to — its href. Multi-address-book
-     * support (ROADMAP §C, contacts Phase 1). Null for pre-sync/legacy rows; repopulated
+     * support. Null for pre-sync/legacy rows; repopulated
      * on the next sync (the table is a rebuildable cache).
      */
     addressbookHref: text('addressbook_href'),
     /** The book's display name captured at sync time (labelling without a live PROPFIND). */
     addressbookName: text('addressbook_name'),
     /**
-     * The card's full raw vCard text (contacts Phase 2). Stored verbatim per email-row
+     * The card's full raw vCard text. Stored verbatim per email-row
      * (same across a card's rows) so rich fields can be parsed for display and, on edit,
      * merged back while preserving properties maily doesn't model (PHOTO, X-* extensions).
      * Radicale stays the source of truth; this is a rebuildable cache. NULL for legacy rows.
@@ -309,7 +308,7 @@ export const attachments = sqliteTable(
      * Stable document-order index assigned during the BODYSTRUCTURE walk
      * (`extractStructure`, DFS order). The local-source resolver selects the matching
      * MIME part by walking the `.eml` in the same order with the same classifier, so
-     * the match is exact regardless of duplicate filenames/sizes (ROADMAP §3.7.E).
+     * the match is exact regardless of duplicate filenames/sizes (ARCHITECTURE §4).
      */
     partOrdinal: integer('part_ordinal'),
     /** Content-ID for inline (CID) images. */
@@ -324,7 +323,7 @@ export const attachments = sqliteTable(
 );
 
 /**
- * Enrichment-pipeline ledger (Phase 4; ARCHITECTURE §14/§15 — the `enriched` stage).
+ * Enrichment-pipeline ledger (ARCHITECTURE §14/§15 — the `enriched` stage).
  * ONE row per (message, enricher), serving three roles at once:
  *  - work queue:   status='pending' + nextAttemptAt gate the runner's claim scan;
  *  - result store: status='ok' rows carry the enricher output JSON in `result`;
@@ -347,7 +346,7 @@ export const enrichments = sqliteTable(
     /** Classification driving tiering/ordering (ARCHITECTURE §14). */
     kind: text('kind', { enum: ['operational', 'search', 'analytical'] }).notNull(),
     /**
-     * Scheduling cost (ROADMAP Phase 5): 'cheap' deterministic vs 'llm' Ollama work.
+     * Scheduling cost: 'cheap' deterministic vs 'llm' Ollama work.
      * Lets the claim scan filter by cost so a deep LLM backlog never starves cheap mail
      * or monopolises the worker. Existing rows default to 'cheap' (all deterministic).
      */
@@ -373,14 +372,14 @@ export const enrichments = sqliteTable(
   (t) => [
     uniqueIndex('enrichments_message_enricher_uq').on(t.messageId, t.enricher),
     index('enrichments_status_due_idx').on(t.status, t.nextAttemptAt),
-    // Cost-scoped claim scan (Phase 5): drain cheap work fully, LLM work in bounded batches.
+    // Cost-scoped claim scan: drain cheap work fully, LLM work in bounded batches.
     index('enrichments_cost_status_due_idx').on(t.cost, t.status, t.nextAttemptAt),
     index('enrichments_enricher_version_idx').on(t.enricher, t.enricherVersion),
   ],
 );
 
 /**
- * Cleanup trash queue (ROADMAP Phase 6b — execution path). ONE row per message awaiting
+ * Cleanup trash queue (the execution path). ONE row per message awaiting
  * a rate-limited MOVE-to-Trash, modelled on the `enrichments`-as-queue pattern: a pending
  * row with `nextAttemptAt` is claimed by the trickle runner, MOVEd to the account's Trash
  * folder, then marked `done`. Trash-only by design — the runner never EXPUNGEs, so moving

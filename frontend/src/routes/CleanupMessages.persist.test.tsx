@@ -1,6 +1,5 @@
 /**
- * The drill-down preserves an in-progress selection across navigation (ROADMAP Phase 6b
- * workflow fix). Tapping a message open in the reader unmounts this screen; without the
+ * The drill-down preserves an in-progress selection across navigation. Tapping a message open in the reader unmounts this screen; without the
  * module-level drill-state cache, returning would reset every checkbox to the all-selected
  * default and lose the review in progress. Here we deselect a row, unmount, remount the same
  * drill, and assert the deselection survived.

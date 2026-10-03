@@ -1,5 +1,5 @@
 /**
- * VEVENT serialiser coverage (ROADMAP Phase 4 — CalDAV push). Pure unit tests over
+ * VEVENT serialiser coverage (CalDAV push). Pure unit tests over
  * `buildCalendar`: the three date regimes the parser emits (all-day date-only, floating
  * naive-local, zoned→UTC), DTEND omission, TEXT escaping, deep-link embedding (URL prop
  * only for absolute links), UID stability, and the no-start guard. No I/O.

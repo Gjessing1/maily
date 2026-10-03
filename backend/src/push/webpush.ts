@@ -52,11 +52,12 @@ async function broadcast(payload: MailNotification): Promise<void> {
 /**
  * Subscribe to the event bus and fire background notifications (ARCHITECTURE §3).
  *
- * Two transports, one trigger. The installed PWA holds a VAPID subscription; the Android
- * APK cannot (System WebView exposes no Push API) and holds an SSE stream open from a
- * foreground service instead (push/stream.ts). Both are fed from `mail:new` — which the
- * sync engine emits for INBOX arrivals only, so neither channel ever notifies about a
- * Sent copy, a saved draft, or a backfill sweep (§9).
+ * Only the installed PWA is reached from here: it holds a VAPID subscription, and
+ * `mail:new` fans out to it. The Android APK cannot (System WebView exposes no Push API);
+ * it polls `GET /api/push/pending` from an alarm instead (push/pending.ts), so it needs no
+ * trigger. Both see INBOX arrivals only — `mail:new` is emitted for the INBOX alone, and
+ * the pending query reads the INBOX — so neither notifies about a Sent copy, a saved draft,
+ * or a backfill sweep (ARCHITECTURE §9).
  */
 export function wirePushNotifications(): void {
   onSignal((signal) => {

@@ -1,6 +1,5 @@
 /**
- * Returning from a message must not drop the list back to a spinner (ROADMAP priority
- * fix). `useLiveQuery` keeps its result across a folder switch but not across a remount,
+ * Returning from a message must not drop the list back to a spinner. `useLiveQuery` keeps its result across a folder switch but not across a remount,
  * and the reader is its own route — so the inbox re-mounted with nothing to show and sat
  * on a spinner for as long as IndexedDB took to answer, which on a phone could be
  * minutes ("loading forever"). `useMessages` now keeps the rows each view last rendered.

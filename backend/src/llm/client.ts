@@ -1,5 +1,5 @@
 /**
- * Lean hand-rolled Ollama HTTP client (ROADMAP Phase 5). Zero new deps — talks to Ollama's
+ * Lean hand-rolled Ollama HTTP client. Zero new deps — talks to Ollama's
  * REST API over global `fetch` (Node 20+). Provider is LOCKED to local Ollama; there is no
  * cloud path (privacy: a single-user mailbox's raw mail never leaves the box).
  *

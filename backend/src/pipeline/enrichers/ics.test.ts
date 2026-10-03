@@ -1,5 +1,5 @@
 /**
- * `ics` enricher coverage (ROADMAP Phase 4). Pure unit tests over the enricher's
+ * `ics` enricher coverage (ARCHITECTURE §14). Pure unit tests over the enricher's
  * `run` + the exported `parseCalendar` — no DB, no pipeline wiring (the framework's
  * queue/persist/tier path is covered by pipeline.test.ts). We pin: VEVENT field
  * extraction, date/date-time → ISO (UTC `Z`, naive local, all-day date-only), TEXT

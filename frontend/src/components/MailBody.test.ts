@@ -1,5 +1,5 @@
 /**
- * Sanitisation / CSP contract for rendered email HTML (Refactoring Phase 5d).
+ * Sanitisation / CSP contract for rendered email HTML.
  * Sender HTML is untrusted, so the security-relevant behaviour is pinned here:
  *   - remote-image detection (drives the tracking-pixel "load images?" gate),
  *   - the iframe CSP (default-src 'none'; remote img/media only when allowed),

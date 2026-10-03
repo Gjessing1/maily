@@ -111,7 +111,7 @@ export function SenderAvatar({
 }
 
 /**
- * One-click "file this sender" (ROADMAP §A2), shown inline under the header when the
+ * One-click "file this sender", shown inline under the header when the
  * sender has no card. Deliberately *not* a suggestion queue: it appears on the message
  * the user already opened, adds the contact in one tap, and a dismissal is remembered
  * for that address forever — so an unknown sender is an offer, never an item of work.

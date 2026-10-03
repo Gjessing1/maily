@@ -19,8 +19,8 @@ import { withTransientConnection } from '../imap/connection.js';
 import { getEngine } from '../imap/registry.js';
 
 /**
- * Upper bound on an inline image embedded as a `data:` URI in a message body
- * (ROADMAP §3.7.A). base64 inflates bytes ~4/3, and the whole body ships inside
+ * Upper bound on an inline image embedded as a `data:` URI in a message body.
+ * base64 inflates bytes ~4/3, and the whole body ships inside
  * the reader's srcdoc string, so cap the source bytes to keep that string small.
  * Inline images over the cap fall back to the attachments panel (authenticated
  * blob fetch), which already works.
@@ -28,7 +28,7 @@ import { getEngine } from '../imap/registry.js';
 const INLINE_EMBED_CAP_BYTES = 500 * 1024;
 
 /**
- * Aggregate guards across one message body (ROADMAP §3.7 hardening). The per-image
+ * Aggregate guards across one message body. The per-image
  * cap above bounds a single image, but a newsletter with dozens of small inline
  * pixels/logos could still bloat the srcdoc and lag the reader. Cap the *cumulative*
  * embedded bytes and the *count* of embeds per body; images past either limit fall
@@ -41,7 +41,7 @@ const INLINE_EMBED_MAX_COUNT = 20;
 const log = createLogger('attachments');
 
 /**
- * Where a freshly-materialised attachment's bytes get written (ROADMAP §3.7.E).
+ * Where a freshly-materialised attachment's bytes get written (ARCHITECTURE §4).
  * New files are partitioned `<attachmentsDir>/{account_id}/{message_uuid}/{att.id}`
  * so a message's attachments sit under the same `{account}/{message}` sub-path as its
  * source `.eml` (`storage/source.ts`) and orphan-GC can drop a whole message directory.
@@ -57,7 +57,7 @@ function materialisePathFor(att: AttachmentRow): string {
 }
 
 /**
- * The single attachment-byte resolver (ROADMAP §3.7.E). Returns the on-disk path of
+ * The single attachment-byte resolver (ARCHITECTURE §4). Returns the on-disk path of
  * an attachment's bytes, materialising them on demand, by trying in order:
  *   1. **Materialised** — already downloaded and present on disk.
  *   2. **Local source** — the owning message's raw `.eml` is archived
@@ -146,9 +146,9 @@ function escapeRegExp(s: string): string {
  * Rewrite `cid:<id>` references in an HTML body to self-contained `data:` URIs so
  * inline images render inside the locked-down, null-origin reader iframe — which
  * can neither send the JWT (header-auth attachment route 401s) nor read the
- * parent's blob URLs (ROADMAP §3.7.A). Bytes are resolved through the shared
- * resolver (`ensureAttachmentOnDisk`), so this transparently picks up the local
- * `.eml` source path once §3.7.E lands. Images over `INLINE_EMBED_CAP_BYTES`, or past
+ * parent's blob URLs. Bytes are resolved through the shared
+ * resolver (`ensureAttachmentOnDisk`), so this prefers the local `.eml` source
+ * where one is archived. Images over `INLINE_EMBED_CAP_BYTES`, or past
  * the per-body cumulative budget / max-count cap, are left as-is and surface through
  * the attachments panel instead.
  */

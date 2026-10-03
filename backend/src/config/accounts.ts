@@ -88,7 +88,7 @@ function readAccount(index: number): AccountConfig {
   };
 }
 
-/** Parse all configured accounts. Returns [] when none are set (Phase 0 boot). */
+/** Parse all configured accounts. Returns [] when none are set (the app still boots). */
 export function loadAccountConfigs(): AccountConfig[] {
   return discoverIndices().map(readAccount);
 }

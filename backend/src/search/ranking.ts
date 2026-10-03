@@ -1,12 +1,12 @@
 /**
- * Search ranking strategy (ROADMAP §3.7.D / Phase 4 Query Contract Layer — the
+ * Search ranking strategy (the Query Contract Layer — the
  * "ranking strategy" half of the contract). The canonical query IR (`query.ts`)
  * decides *what* matches; the ranker decides *what order* matches come back in.
  *
  * The seam is deliberately **retrieve-then-rerank**: the FTS5 index returns a
  * cheap over-fetched candidate set ordered by raw bm25, and a pluggable `Ranker`
  * scores each candidate to produce the final order. Today's default ranker is
- * `bm25 + recency + importance`; a future vector reranker (Phase 6, VISION §5)
+ * `bm25 + recency + importance`; a future vector reranker (VISION §5)
  * slots in here as another `Ranker` over the same `RankCandidate` shape — no
  * change to retrieval, the IR, or callers.
  *
@@ -22,7 +22,7 @@ export interface RankCandidate {
   bm25: number;
   /** `received_at` in epoch ms, or null if the date is unknown. */
   receivedAtMs: number | null;
-  /** Starred/`\Flagged` — our standing importance proxy until LLM VIP scoring (Phase 5). */
+  /** Starred/`\Flagged` — our standing importance proxy until LLM VIP scoring. */
   flagged: boolean;
 }
 

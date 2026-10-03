@@ -1,5 +1,5 @@
 /**
- * Enrichment-pipeline contracts (ROADMAP Phase 4; ARCHITECTURE §14/§15).
+ * Enrichment-pipeline contracts (ARCHITECTURE §14/§15).
  *
  * An *enricher* is a pure-ish function over a parsed message that produces a
  * `result` (search tokens / extracted facts to persist on the `enriched` stage).
@@ -22,9 +22,9 @@ import type { EmailAddress } from '@maily/shared';
 export type EnrichmentKind = 'operational' | 'search' | 'analytical';
 
 /**
- * Scheduling cost of an enricher (ROADMAP Phase 5, the N150 guard). Orthogonal to
+ * Scheduling cost of an enricher (the N150 guard). Orthogonal to
  * `kind` (which gates *side effects* by age): `cost` gates *throughput* by expense.
- *  - `cheap` — deterministic, sub-millisecond CPU (the Phase-4 enrichers). Drained to
+ *  - `cheap` — deterministic, sub-millisecond CPU (the regex/JSON-LD enrichers). Drained to
  *    completion every nudge.
  *  - `llm`   — an Ollama generation: seconds of CPU, serialised single-flight. Drained
  *    a small bounded batch per nudge so a deep backlog can never starve the cheap

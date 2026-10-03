@@ -16,7 +16,7 @@ export interface MailNotification {
 
 export function notificationFor(m: MessageRow): MailNotification {
   return {
-    // Radicale-first sender name (ROADMAP §3.7.D), matching the DTO precedence.
+    // Radicale-first sender name, matching the DTO precedence.
     title: contactNameFor(m.fromAddress) ?? m.fromName ?? m.fromAddress ?? 'New mail',
     body: m.subject ?? '(no subject)',
     messageId: m.id,

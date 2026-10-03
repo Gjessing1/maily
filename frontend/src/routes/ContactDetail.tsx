@@ -1,5 +1,5 @@
 /**
- * Contact detail page (contacts Phase 2). A read view of one CardDAV card — photo,
+ * Contact detail page. A read view of one CardDAV card — photo,
  * name, company/role, and every rich field with the addresses/links made actionable
  * (tap an email to compose, a phone to dial, a website to open). Edit/delete reuse the
  * shared ContactEditor, which writes back to Radicale.
@@ -33,7 +33,7 @@ import {
 } from '../ui/icons';
 import { GUTTER } from '../ui/layout';
 
-/** Width cap for the detail column — see the same constant in `Contacts` (ROADMAP §A1). */
+/** Width cap for the detail column — see the same constant in `Contacts`. */
 const column = 'mx-auto w-full max-w-2xl';
 
 /** A line of the address, skipping empty components. */
@@ -63,7 +63,7 @@ export function ContactDetail() {
       favorite ? favorites.filter((f) => f !== uid) : [...favorites, uid],
     );
 
-  // The duplicate cluster this card belongs to, if any (§A2). A flag, not a wizard:
+  // The duplicate cluster this card belongs to, if any. A flag, not a wizard:
   // it names the other cards and offers a merge, and does nothing at all otherwise.
   const [duplicate, setDuplicate] = useState<ContactDuplicateGroupDto | null>(null);
   const [merging, setMerging] = useState(false);

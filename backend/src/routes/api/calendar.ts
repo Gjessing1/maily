@@ -1,7 +1,7 @@
 /**
  * Calendar integration (Radicale CalDAV): discovered-calendar settings + the
  * reader's "Add to calendar" action. Human-in-the-loop only — every event write
- * is an explicit user confirm; nothing is auto-added (ROADMAP guardrail).
+ * is an explicit user confirm; nothing is auto-added.
  */
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';

@@ -90,8 +90,8 @@ export function backfillPending(limit: number, now: Date = new Date()): number {
  * Per-enricher self-heal: enqueue missing rows for a *newly added* enricher (or a
  * gap a prior run never filled) across messages that already have OTHER enrichers'
  * rows — the case `backfillPending` (zero-row messages only) can't see. This is how
- * the Phase-5 LLM enrichers (`summary`, …) reach the existing mailbox: the historical
- * mail already carries Phase-4 rows, so it would never be picked up otherwise.
+ * newly added enrichers (e.g. the LLM `summary`) reach the existing mailbox: the historical
+ * mail already carries rows for the older enrichers, so it would never be picked up otherwise.
  *
  * Newest first, bounded by a shared `limit` across all registered enrichers. Operational
  * enrichers are scoped to Tier-0 (within the horizon) so a deep backfill can't manufacture

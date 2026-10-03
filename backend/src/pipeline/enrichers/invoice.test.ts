@@ -1,5 +1,5 @@
 /**
- * `invoice` enricher coverage (ROADMAP Phase 4). Pure unit tests over the enricher's
+ * `invoice` enricher coverage (ARCHITECTURE §14). Pure unit tests over the enricher's
  * `run` — no DB, no pipeline wiring (the framework's queue/persist path is covered by
  * pipeline.test.ts). We pin the invoice-vs-receipt classification and the document
  * attachments it picks (the cases are shaped after real mail: a signature's account

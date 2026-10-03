@@ -1,5 +1,5 @@
 /**
- * "Is this address already in the address book?" for the reader (ROADMAP §A2).
+ * "Is this address already in the address book?" for the reader.
  *
  * The question is asked once per message opened, and a thread asks it once per sender, so
  * the answers are memoised per address at module level (the same shape Search's session

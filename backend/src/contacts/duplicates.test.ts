@@ -1,5 +1,5 @@
 /**
- * Characterization net for duplicate clustering (ROADMAP §A2). Pins the three things
+ * Characterization net for duplicate clustering. Pins the three things
  * the passive flag depends on: what counts as a match (shared address, identical name),
  * that matching is transitive, and that a non-match never produces a group — a false
  * positive here would turn an advisory flag into noise the user has to dismiss.

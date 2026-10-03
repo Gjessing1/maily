@@ -1,5 +1,5 @@
 /**
- * IR → FTS5/SQL compiler coverage (ROADMAP §3.7.D). Exercises the new state and
+ * IR → FTS5/SQL compiler coverage. Exercises the new state and
  * attachment-filename predicates end-to-end against a real (throwaway) SQLite DB:
  * what `is:unread` / `is:flagged` / `filename:` actually return. Same bootstrap as
  * slices.test.ts: point MAILY_DATA_DIR at a temp dir BEFORE the dynamic import,

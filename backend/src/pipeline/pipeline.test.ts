@@ -1,5 +1,5 @@
 /**
- * Enrichment-pipeline framework coverage (ROADMAP Phase 4; ARCHITECTURE §14/§15).
+ * Enrichment-pipeline framework coverage (ARCHITECTURE §14/§15).
  *
  * Pins the framework's load-bearing behaviour around the (deliberately trivial)
  * reference enricher and purpose-built test enrichers:
@@ -702,7 +702,7 @@ test('travel: search-kind runs on old mail too (no tier suppression)', () => {
 });
 
 // ========================================================================================
-// cost scheduling (Phase 5) — cheap vs llm: bounded batches + per-enricher coverage
+// cost scheduling — cheap vs llm: bounded batches + per-enricher coverage
 // ========================================================================================
 
 /** A `cheap` deterministic enricher (default cost). */
@@ -776,8 +776,8 @@ test('a deep cheap-cost claim window cannot starve a freshly added llm enricher'
 });
 
 test('backfillEnricherCoverage enqueues a newly added enricher across existing mail', () => {
-  // A message already carrying one enricher's row (the Phase-4 case) is invisible to
-  // backfillPending (zero-row only); coverage is how a new Phase-5 enricher reaches it.
+  // A message already carrying one enricher's row (an existing message) is invisible to
+  // backfillPending (zero-row only); coverage is how a newly added enricher reaches it.
   only(cheapEnricher);
   const acct = seedAccount();
   const m = seedMessage(acct);

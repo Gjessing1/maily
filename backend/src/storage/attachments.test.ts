@@ -1,5 +1,5 @@
 /**
- * Inline-CID embedding guards (ROADMAP §3.7 hardening). `embedInlineImages` rewrites
+ * Inline-CID embedding guards. `embedInlineImages` rewrites
  * `cid:` references to `data:` URIs, but must bound how much it stuffs into the reader
  * srcdoc: a per-image cap, a per-body cumulative byte budget, and a max-count cap.
  * Images past any limit are left as `cid:` (the caller then surfaces them in the

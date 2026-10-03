@@ -1,5 +1,5 @@
 /**
- * Ollama client coverage (ROADMAP Phase 5 foundation). Pure unit tests over the HTTP client
+ * Ollama client coverage. Pure unit tests over the HTTP client
  * with a mocked global `fetch` (node:test `mock`); no real Ollama and no DB. We pin:
  *  - request shape: URL, method, JSON body carry the configured model + prompt/system/format,
  *  - JSON-mode parsing via `generateJson`,

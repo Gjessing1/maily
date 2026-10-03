@@ -1,5 +1,5 @@
 /**
- * Swipe-action behaviour for the message list row (Refactoring Phase 5d). The
+ * Swipe-action behaviour for the message list row. The
  * gesture maths is fiddly and security-adjacent only in the sense that a wrong
  * commit deletes mail, so the commit thresholds + direction→action mapping are
  * pinned here: a right swipe past the commit distance fires `swipeRight`, a left

@@ -1,5 +1,5 @@
 /**
- * Rebuild parse path (ROADMAP §3.7.E). `parseSourceContent` is the authoritative
+ * Rebuild parse path (ARCHITECTURE §4). `parseSourceContent` is the authoritative
  * derivation of a message's content columns from its canonical `.eml` — the offline
  * rebuild rewrites exactly these fields, so this asserts the header/body/snippet
  * mapping that feeds both the parsed row and (via the FTS trigger) the search index.
@@ -44,7 +44,7 @@ const EML = [
   '',
 ].join(CRLF);
 
-test('§3.7.E: parseSourceContent derives content columns from the raw .eml', async () => {
+test('parseSourceContent derives content columns from the raw .eml', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maily-rebuild-'));
   try {
     const path = join(dir, 'source.eml');
@@ -109,7 +109,7 @@ const INVITE_EML = [
   '',
 ].join(CRLF);
 
-test('§3.7.E: parseSourceContent captures an inline text/calendar part as bodyCalendar', async () => {
+test('parseSourceContent captures an inline text/calendar part as bodyCalendar', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maily-rebuild-ics-'));
   try {
     const path = join(dir, 'source.eml');

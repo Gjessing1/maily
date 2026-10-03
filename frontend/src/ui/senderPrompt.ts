@@ -1,5 +1,5 @@
 /**
- * Which senders are worth offering as a contact (ROADMAP §A2).
+ * Which senders are worth offering as a contact.
  *
  * The offer is only useful for addresses a person might actually want in their address
  * book. Most unknown senders in a real mailbox are machines — receipts, newsletters,

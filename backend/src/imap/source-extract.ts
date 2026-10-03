@@ -1,6 +1,6 @@
 /**
- * Streaming single-part extraction from a message's on-disk raw `.eml` (ROADMAP
- * §3.7.E, the local-source half of the unified attachment-byte resolver).
+ * Streaming single-part extraction from a message's on-disk raw `.eml` (ARCHITECTURE
+ * §4, the local-source half of the unified attachment-byte resolver).
  *
  * Walks the `.eml` MIME tree node-by-node with `mailsplit`'s `Streamer` — a
  * tokenizer that hands back a *decoder stream* for the one selected node — and
@@ -15,7 +15,7 @@
  * CID-less attachment is selected purely by its document-order ordinal — exact
  * regardless of duplicate filenames/sizes. Parts that carry a Content-ID match on
  * that instead (also exact). If a future edit moves the classifier predicate on
- * one side only, the two enumerations drift; the §3.7.E ordinal tripwire test
+ * one side only, the two enumerations drift; the ordinal tripwire test
  * (`source-extract.test.ts`) guards exactly that.
  */
 import { createReadStream, createWriteStream, statSync } from 'node:fs';

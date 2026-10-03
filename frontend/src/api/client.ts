@@ -570,16 +570,16 @@ export const api = {
   /** Whole-card management (CardDAV write-back) for the Contacts manager. */
   contactCards: () => request<ContactCardDto[]>('/api/contacts/cards'),
 
-  /** Cards already filing this address — drives the reader's unknown-sender prompt (§A2). */
+  /** Cards already filing this address — drives the reader's unknown-sender prompt. */
   contactLookup: (email: string) =>
     request<{ email: string; cards: ContactCardDto[] }>(
       `/api/contacts/lookup?email=${encodeURIComponent(email)}`,
     ),
 
-  /** Cards that look like the same person, across every address book (§A2, advisory). */
+  /** Cards that look like the same person, across every address book (advisory). */
   contactDuplicates: () => request<ContactDuplicateGroupDto[]>('/api/contacts/cards/duplicates'),
 
-  /** Fold `others` into `primary` and delete them — always user-confirmed (§A2). */
+  /** Fold `others` into `primary` and delete them — always user-confirmed. */
   mergeContactCards: (primary: string, others: string[]) =>
     request<ContactMergeResult>('/api/contacts/cards/merge', {
       method: 'POST',
@@ -590,7 +590,7 @@ export const api = {
   contactCard: (key: string) =>
     request<ContactCardDto>(`/api/contacts/cards/${encodeURIComponent(key)}`),
 
-  /** Read-only message activity derived for all addresses on one card (A3). */
+  /** Read-only message activity derived for all addresses on one card. */
   contactEmailIntelligence: (key: string) =>
     request<ContactEmailIntelligenceDto>(
       `/api/contacts/cards/${encodeURIComponent(key)}/intelligence`,
@@ -642,7 +642,7 @@ export const api = {
       body: JSON.stringify({ vcard, addressbook: addressbook ?? null }),
     }),
 
-  // ── Cleanup Dashboard (Phase 6 — analytics + Phase 6b execution) ─────────────
+  // ── Cleanup Dashboard (analytics + execution) ────────────────────────────────
   cleanup: {
     summary: () => request<CleanupSummaryDto>('/api/cleanup/summary'),
     /** The whole dashboard in one round-trip, memoised against the backend's data version. */

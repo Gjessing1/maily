@@ -1,5 +1,5 @@
 /**
- * Cleanup slice coverage (ROADMAP Phase 6). Pins the deterministic analytics contract:
+ * Cleanup slice coverage. Pins the deterministic analytics contract:
  *  - storage audit groups every sender by estimated bytes (.eml source + body + attachments),
  *  - cold-storage selects old, value-marker-free, non-protected mail,
  *  - the HARD safety filter keeps financial/security mail out of delete-eligible slices,

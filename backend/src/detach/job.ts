@@ -1,6 +1,6 @@
 /**
  * "Detach to local" job — delete mail from the provider while keeping the complete copy
- * on this server (ROADMAP storage / vendor-independence). For each in-scope message the
+ * on this server. For each in-scope message the
  * job moves the server copy to the provider Trash (recoverable there ~30 days, then
  * auto-purged) and flags the row `local_only`, LEAVING its local folder mappings intact
  * so it stays a normal member of the inbox — served entirely from the archived `.eml`.

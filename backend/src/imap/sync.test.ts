@@ -1,13 +1,12 @@
 /**
- * Characterization net for the sync engine's pure transform (Refactoring Phase 1).
+ * Characterization net for the sync engine's pure transform.
  * `buildParsedMessage` maps a captured IMAP message (envelope + BODYSTRUCTURE + flags)
  * into the provider-agnostic `ParsedMessage` the store persists. It is the riskiest
  * *parse* logic in `sync.ts` and — unlike the fetch/download/sweep orchestration around
  * it — is deterministic and needs no live connection, so it's pinned here.
  *
  * The fetch/download deadlock ordering, byte-budget stops, and sweep watermark logic are
- * I/O orchestration; their characterization is the Phase-5 item "feed `.eml` fixtures
- * through the live + sweep paths" (needs a mock ImapFlow harness) and is out of scope here.
+ * I/O orchestration; they are characterized against a mock ImapFlow in `sync.integration.test.ts`.
  *
  * These tests describe today's behaviour, not an ideal — a regression tripwire.
  */

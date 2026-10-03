@@ -1,5 +1,5 @@
 /**
- * CardDAV address-book discovery (ROADMAP §C, contacts Phase 1). Hand-rolled over
+ * CardDAV address-book discovery. Hand-rolled over
  * `fetch` + regex, matching the lean transport in `./carddav.ts` (no CardDAV
  * dependency). Walks the standard discovery chain seeded from the configured
  * `CARDDAV_URL`:

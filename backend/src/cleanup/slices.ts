@@ -1,5 +1,5 @@
 /**
- * Deterministic cleanup slices (ROADMAP Phase 6 "Master archive & Cleanup Dashboard").
+ * Deterministic cleanup slices for the Cleanup Dashboard.
  * Read-only power-user analytics over the local SQLite archive — slices that need no
  * enrichment, each a different *angle* on "what could I be tempted to delete":
  *  - storage audit (informational), cold-storage candidates,
@@ -12,7 +12,7 @@
  * Two invariants:
  *  - **Never delete-eligible without the safety gate.** Every destructive slice
  *    AND-s in `notProtected` so financial / legal / account-security / medical mail
- *    (EN+NO) can never surface (ROADMAP HARD RULES).
+ *    (EN+NO) can never surface (`safety.ts`).
  *  - **No LIKE-scan.** Keyword matching rides the FTS5 index (ARCHITECTURE §12).
  *
  * This is analytics only — no IMAP, no mutation. Bulk execution (the rate-limited trash
@@ -42,7 +42,7 @@ const MB = 1024 * 1024;
 
 /**
  * Per-message byte estimate. When the message is archived the raw `.eml` size
- * (`source_bytes`, captured at archive time, ROADMAP §3.7.E) is AUTHORITATIVE: the `.eml`
+ * (`source_bytes`, captured at archive time, ARCHITECTURE §4) is AUTHORITATIVE: the `.eml`
  * already contains the body AND every attachment, so it is the whole on-disk cost — adding
  * the body/attachment terms on top double-counts (~half the headline total once the master
  * archive sweep + lazy attachments landed: the .eml bytes plus a phantom copy of the same
@@ -437,7 +437,7 @@ const toMessage = (r: RawMessage): CleanupMessageDto => ({
 });
 
 /**
- * Drill a delete-eligible slice down to its individual messages (ROADMAP Phase 6b review
+ * Drill a delete-eligible slice down to its individual messages (the review
  * surface), optionally scoped to one sender `domain` (a sender key). Reuses the EXACT
  * slice + safety predicates of the preview/execute paths, so the listed messages are
  * precisely what an execute would trash. Newest-first; returns the `[offset, offset+limit)`

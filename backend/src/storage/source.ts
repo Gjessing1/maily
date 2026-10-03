@@ -1,5 +1,5 @@
 /**
- * Canonical raw-RFC822 (.eml) archive on disk (ROADMAP §3.7.E / ARCHITECTURE §15).
+ * Canonical raw-RFC822 (.eml) archive on disk (ARCHITECTURE §15).
  *
  * Files are partitioned `<sourceDir>/{account_id}/{message_uuid}/source.eml` so a
  * message's source sits beside its (lazily materialised) attachments and orphan-GC

@@ -1,5 +1,5 @@
 /**
- * Search ranking coverage (ROADMAP §3.7.D / Phase 4 Query Contract Layer).
+ * Search ranking coverage (the Query Contract Layer).
  *
  * Pins the blend ranker's load-bearing behaviour: relevance stays dominant, the
  * recency boost only ever breaks ties between comparable hits (never drags an

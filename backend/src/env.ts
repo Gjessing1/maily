@@ -25,7 +25,7 @@ const dbPath = resolve(dataDir, optional('MAILY_DB_FILE', 'mail.sqlite'));
 const attachmentsDir = resolve(dataDir, 'attachments');
 /** Staging area for outbound attachments uploaded from the composer (pre-send). */
 const uploadsDir = resolve(dataDir, 'uploads');
-/** Canonical raw-RFC822 (.eml) archive (ROADMAP §3.7.E), partitioned per account/message. */
+/** Canonical raw-RFC822 (.eml) archive (ARCHITECTURE §4), partitioned per account/message. */
 const sourceDir = resolve(dataDir, 'source');
 /** WAL-safe SQLite snapshot dir — the off-host backup (backrest) grabs this, not the live DB. */
 const backupDir = resolve(dataDir, 'backups');
@@ -76,7 +76,7 @@ function caldavConfig(): { url: string; user: string; password: string } | null 
 }
 
 /**
- * Local Ollama runtime config for LLM enrichment (ROADMAP Phase 5), or null when unset.
+ * Local Ollama runtime config for LLM enrichment, or null when unset.
  * LLM features are OFF unless `OLLAMA_URL` is explicitly set — privacy-first: a local-only
  * provider, no Claude/OpenAI/cloud path. When null no LLM enricher should register.
  * `model` defaults to `qwen2.5` (strong multilingual EN/NO, runs on modest CPU like the
@@ -145,7 +145,7 @@ export const env = {
   /** Local SQLite cache window: how many days back the sync `since` filter reaches (0 = all). */
   cacheWindowDays: Number(optional('MAILY_CACHE_WINDOW_DAYS', '365')),
   /**
-   * Per-day IMAP download byte budget (ROADMAP §3.7.E) — the governing throttle for
+   * Per-day IMAP download byte budget (ARCHITECTURE §4) — the governing throttle for
    * the full-source sweep, also drawn on by live capture so a burst of large new
    * mail can't breach it. Default ~2.4 GB, comfortably under Gmail's ~2.5 GB/day cap.
    */
@@ -153,7 +153,7 @@ export const env = {
     optional('MAILY_DAILY_DOWNLOAD_BUDGET_BYTES', String(2_400_000_000)),
   ),
   /**
-   * Full-source sweep (ROADMAP §3.7.E): the throttled, budgeted historical backfill that
+   * Full-source sweep (ARCHITECTURE §4): the throttled, budgeted historical backfill that
    * archives raw `.eml` for the backlog. On by default; set `MAILY_SOURCE_SWEEP=false` to
    * pause it (e.g. to spare the provider's daily IMAP download quota).
    */
@@ -171,15 +171,15 @@ export const env = {
   /** Retry cap before a poison enrichment row is parked as dead-letter (status='dead'). */
   pipelineMaxAttempts: Number(optional('MAILY_PIPELINE_MAX_ATTEMPTS', '5')),
   /**
-   * How many `llm`-cost enrichment rows a single worker nudge processes (ROADMAP Phase 5,
-   * the N150 guard). Ollama generations are serialised single-flight and take seconds, so
+   * How many `llm`-cost enrichment rows a single worker nudge processes (the N150
+   * guard). Ollama generations are serialised single-flight and take seconds, so
    * we trickle a small batch per nudge — the cheap deterministic pipeline always drains
    * fully first, and the slow LLM backlog catches up over many nudges without monopolising
    * the worker against mail sync. Raise it to catch up faster at the cost of longer
    * sweep-blocking windows.
    */
   pipelineLlmBatch: Number(optional('MAILY_PIPELINE_LLM_BATCH', '6')),
-  // Read lazily where needed so the app can boot in Phase 0 without them set:
+  // Read lazily where needed so the app can boot without them set:
   // When auth is disabled these are never used to gate access, so fall back to a
   // constant rather than forcing the operator to set them (see disableAuth above).
   jwtSecret: () =>
@@ -195,6 +195,6 @@ export const env = {
   vapid: vapidConfig,
   carddav: carddavConfig,
   caldav: caldavConfig,
-  /** Local Ollama LLM runtime config (ROADMAP Phase 5), or null when not configured. */
+  /** Local Ollama LLM runtime config, or null when not configured. */
   ollama: ollamaConfig,
 } as const;

@@ -1,5 +1,5 @@
 /**
- * Duplicate detection over the cached address books (ROADMAP §A2).
+ * Duplicate detection over the cached address books.
  *
  * Deliberately **passive**: this module only describes clusters that look like the same
  * person. Nothing here writes, queues, or nags — the UI shows the flag, and merging is a

@@ -1,5 +1,5 @@
 /**
- * Cleanup safety filter coverage (ROADMAP Phase 6 HARD safety rules). Pins the bilingual
+ * Cleanup safety filter coverage (the hard safety rules). Pins the bilingual
  * (EN + NO) protected-keyword detection — the gate that keeps financial / legal /
  * account-security / medical mail out of every delete-eligible slice — plus the user's
  * custom protected-keyword extension.

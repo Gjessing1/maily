@@ -20,7 +20,7 @@ declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: PrecacheManifest
 
 // Drop precaches written by older deploys before installing the new manifest, so
 // a redeploy can't keep serving a stale app shell (the cause of "must clear site
-// data to log in" — see ROADMAP daily-use bugs).
+// data to log in").
 cleanupOutdatedCaches();
 
 // __WB_MANIFEST is injected at build time with the precache list.

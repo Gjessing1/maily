@@ -1,5 +1,5 @@
 /**
- * Staging for outbound attachments uploaded from the composer (ROADMAP §3.7.B).
+ * Staging for outbound attachments uploaded from the composer.
  * Unlike incoming attachments (lazy, fetched from IMAP on demand — ARCHITECTURE
  * §4), these are user-provided files we hold briefly on disk until the message is
  * sent, then delete. Bytes are streamed to disk on upload, never buffered.

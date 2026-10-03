@@ -1,11 +1,11 @@
 /**
- * Cleanup keyword sets — English + Norwegian (ROADMAP Phase 6 "Master archive & Cleanup
- * Dashboard"). maily is bilingual, so every set carries both languages.
+ * Cleanup keyword sets — English + Norwegian, for the Cleanup Dashboard.
+ * maily is bilingual, so every set carries both languages.
  *
  * Two roles:
  *  - PROTECTED_KEYWORDS — the HARD safety filter. Financial, legal/contract,
  *    account/security and medical/identity mail is *never* delete-eligible and never
- *    appears in a delete preset (ROADMAP "Risk & safety filters — HARD RULES"). Used to
+ *    appears in a delete preset (the hard safety rules, `safety.ts`). Used to
  *    exclude these messages from every destructive slice.
  *  - COLD_KEEP_KEYWORDS — value markers (invoice/tax/contract …). A message carrying one
  *    is NOT a cold-storage-prune candidate even if old. A deliberate subset of the

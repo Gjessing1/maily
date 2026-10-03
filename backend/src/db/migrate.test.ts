@@ -1,5 +1,5 @@
 /**
- * Schema/migration coverage (Refactoring Phase 5c). Applies the real Drizzle
+ * Schema/migration coverage. Applies the real Drizzle
  * migrations against a throwaway SQLite file and pins the parts Drizzle can't
  * model and so can't typecheck for us: the hand-written FTS5 virtual table and
  * its sync triggers (migration 0003). The triggers are load-bearing — local

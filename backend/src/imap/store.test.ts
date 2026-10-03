@@ -1,5 +1,5 @@
 /**
- * Characterization net for the persistence engine (Refactoring Phase 1). These tests
+ * Characterization net for the persistence engine. These tests
  * PIN current behaviour of the highest-risk, lowest-covered store logic before any
  * restructuring touches it:
  *   - identity dedup (gm_msgid first, then account-scoped message_id),
@@ -535,7 +535,7 @@ test('relinkMessageToFolder replaces ALL mappings with the single destination', 
 });
 
 // ---------------------------------------------------------------------------
-// Phase 5b — broaden direct store coverage beyond the Phase-1 net:
+// Broader direct store coverage beyond the characterization net above:
 // attachment metadata, the source-path round-trip, the rebuild content rewrite
 // (state preserved), and the UID-mapping read/clear helpers.
 // ---------------------------------------------------------------------------

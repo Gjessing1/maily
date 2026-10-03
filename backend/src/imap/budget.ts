@@ -1,5 +1,5 @@
 /**
- * Per-day IMAP download byte budget (ROADMAP §3.7.E) — the single throttle authority
+ * Per-day IMAP download byte budget (ARCHITECTURE §4) — the single throttle authority
  * shared by the live full-source capture and the historical sweep. Gmail caps IMAP
  * downloads at ~2.5 GB/day; breaching it gets the account throttled, so every byte we
  * pull off the wire for *source* is accounted here.

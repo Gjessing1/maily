@@ -1,5 +1,5 @@
 /**
- * `ics` — deterministic calendar-invite enricher (ROADMAP Phase 4).
+ * `ics` — deterministic calendar-invite enricher (ARCHITECTURE §14).
  *
  * Parses the `text/calendar` MIME part (RFC 5545 `VCALENDAR`/`VEVENT`) that Google
  * Calendar, Outlook and friends embed in invite mail — captured at ingest into

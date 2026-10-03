@@ -1,7 +1,7 @@
 /**
  * The reader's add-sender offer is only anti-chore if it stays quiet for machine mail —
  * most unknown senders in a real mailbox are automated, and prompting on those is exactly
- * the backlog §A2 rules out. These pin both directions: a machine address is never
+ * the backlog the anti-chore stance rules out. These pin both directions: a machine address is never
  * offered, and an ordinary person always is (a missed prompt is a silently lost feature).
  */
 import { describe, expect, it } from 'vitest';

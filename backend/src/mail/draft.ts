@@ -1,5 +1,5 @@
 /**
- * Draft persistence (ROADMAP §B): "Save draft" APPENDs the composed MIME to the
+ * Draft persistence: "Save draft" APPENDs the composed MIME to the
  * account's \Drafts mailbox so drafts sync across devices, rather than living only
  * in the composer's local autosave. Unlike \Sent, drafts are APPENDed on *every*
  * provider (Gmail included) — there's no SMTP step, so nothing files a copy for us.

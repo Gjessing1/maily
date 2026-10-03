@@ -164,7 +164,7 @@ const NON_ARCHIVE_ROLES = ['inbox', 'sent', 'trash', 'junk', 'drafts'] as const;
  * NOT also in the inbox/sent/trash/junk/drafts. Gmail conflates archive with "All
  * Mail" (everything), so this subtraction is what makes "Archived" mean archived;
  * on providers with a real Archive folder the subtraction is a harmless no-op.
- * Tombstones hidden (§13); newest first, keyset-paginated by receivedAt.
+ * Tombstones hidden (ARCHITECTURE §13); newest first, keyset-paginated by receivedAt.
  */
 export function listArchived(
   accountId: string,
@@ -232,7 +232,7 @@ export function listStarred(
 
 /**
  * Estimated on-disk bytes of synced content for an account. When the message is archived
- * the raw `.eml` (`source_bytes`, ROADMAP §3.7.E) is AUTHORITATIVE — it already contains
+ * the raw `.eml` (`source_bytes`, ARCHITECTURE §4) is AUTHORITATIVE — it already contains
  * the body and attachments, so it is the whole content cost and the parsed-body terms must
  * NOT be added on top (that double-counted the body for every archived message). Only a
  * not-yet-archived message (null/0 `source_bytes`) falls back to the parsed body columns
@@ -380,7 +380,7 @@ export function getAttachment(id: string): AttachmentRow | undefined {
 
 /**
  * Every archived message (id + on-disk `.eml` path), oldest first — the input set for
- * the offline rebuild (ROADMAP §3.7.E). Un-swept history (null `source_path`) is
+ * the offline rebuild (ARCHITECTURE §4). Un-swept history (null `source_path`) is
  * skipped: its parsed row is its only copy, so there is nothing to rebuild from.
  */
 export function messagesWithSource(): { id: string; sourcePath: string }[] {
@@ -393,7 +393,7 @@ export function messagesWithSource(): { id: string; sourcePath: string }[] {
     .filter((r): r is { id: string; sourcePath: string } => r.sourcePath !== null);
 }
 
-/** The owning account of a message — used to build its partitioned on-disk path (§3.7.E). */
+/** The owning account of a message — used to build its partitioned on-disk path (ARCHITECTURE §4). */
 export function accountIdForMessage(messageId: string): string | undefined {
   return db
     .select({ accountId: messages.accountId })

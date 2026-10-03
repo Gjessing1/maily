@@ -1,5 +1,5 @@
 /**
- * Field union for a contact merge (ROADMAP §A2). Pure and side-effect free: it decides
+ * Field union for a contact merge. Pure and side-effect free: it decides
  * *what* the surviving card should contain, while the route decides *when* — merging only
  * ever happens on an explicit, confirmed request, never as a background tidy-up.
  *

@@ -348,7 +348,7 @@ export function updateMessageFlags(
 }
 
 /**
- * Read a message's archived source path (ROADMAP §3.7.E). Non-null ⇒ the raw `.eml`
+ * Read a message's archived source path (ARCHITECTURE §4). Non-null ⇒ the raw `.eml`
  * is on disk and the full-source sweep can skip it; null ⇒ still body-only.
  */
 export function sourcePathForMessage(messageId: string): string | null {
@@ -363,7 +363,7 @@ export function sourcePathForMessage(messageId: string): string | null {
 
 /**
  * Mark a message as archived: record the on-disk path of its raw `.eml` and its byte
- * size (ROADMAP §3.7.E). The size feeds the cleanup storage metric (slices.ts).
+ * size (ARCHITECTURE §4). The size feeds the cleanup storage metric (slices.ts).
  */
 export function setMessageSourcePath(
   messageId: string,
@@ -374,8 +374,8 @@ export function setMessageSourcePath(
 }
 
 /**
- * Rewrite a message's derived **content** columns from its canonical `.eml` (ROADMAP
- * §3.7.E rebuild). Touches ONLY fields derivable from RFC822; mailbox-state columns
+ * Rewrite a message's derived **content** columns from its canonical `.eml` (the
+ * ARCHITECTURE §15 rebuild). Touches ONLY fields derivable from RFC822; mailbox-state columns
  * (flags, `deleted_at`, `received_at`, identity/thread keys) and `message_folders`
  * are left untouched — they aren't in the source. The FTS index follows automatically
  * via the messages-table UPDATE trigger (migration 0003), so this is all a full
@@ -411,7 +411,7 @@ export interface MissingSourceRef {
 
 /**
  * Live messages without an archived source, with every (folder, uid) mapping each one
- * holds (ROADMAP §3.7.E repair pass). These are rows whose live capture fell back to
+ * holds (the source repair pass). These are rows whose live capture fell back to
  * body-only (budget exhausted, transient fetch failure) inside a folder the historical
  * sweep has already completed — the sweep's downward-walking watermark never revisits
  * those, so they need a targeted re-fetch. Multiple mappings per message are deliberate:

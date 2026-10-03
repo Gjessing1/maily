@@ -1,10 +1,10 @@
 /**
- * `invoice` — deterministic invoice / receipt enricher (ROADMAP Phase 4).
+ * `invoice` — deterministic invoice / receipt enricher (ARCHITECTURE §14).
  *
  * Extracts the payment-relevant facts an invoice or receipt carries in its body
  * text — Norwegian **KID**, **IBAN**, Norwegian **account number** (kontonummer),
  * the **amount** to pay, and the **due date** (forfallsdato) — by deterministic
- * regex + **check-digit validation**. No LLM (Phase 5), no PDF-text extraction
+ * regex + **check-digit validation**. No LLM, no PDF-text extraction
  * (deferred): body text/HTML, subject and attachment *names* only.
  *
  * It first decides what the message **is** — an `invoice` (a bill, its reminder, a
@@ -12,16 +12,18 @@
  * document; only a message that is one keeps its identifiers (see Classification
  * below). Anything else yields `invoice: null`.
  *
- * Classification: `search` (passive-by-default, ARCHITECTURE §14 / the ROADMAP
- * anti-chore guardrail). The extracted facts feed the search index + provenance and
- * the future Purchase Object / Evidence Locker — surfaced in-message ("what's the
- * KID for this bill"), NOT a notification stream and NOT a payment chore. Because it
+ * Classification: `search` (passive-by-default, ARCHITECTURE §14 / the
+ * anti-chore guardrail). The extracted facts are read through `pipeline/facts-read.ts`
+ * by the reader's payment card ("what's the KID for this bill"), the `is:invoice` /
+ * `is:receipt` / `is:bill` / `has:kid` search operators, and the read-only billing
+ * export (`pipeline/billing-export.ts`) — NOT a notification stream and NOT a payment
+ * chore. Because it
  * is `search`-kind it runs on ALL tiers (old receipts stay searchable) and emits NO
  * proposals — an operational "this bill is due" reminder would be a separate
  * opt-in, Tier-0-gated enricher (not built here), so a years-deep backfill can never
  * fire a stale "pay this now" nudge.
  *
- * False-positive discipline (the explicit ROADMAP gripe that `package` "lacks a
+ * False-positive discipline (the original gripe that `package` "lacked a
  * digit check"): every numeric identifier is **checksum-validated** before it is
  * trusted — KID by MOD-10 (Luhn) *or* MOD-11, IBAN by MOD-97, the account number by
  * the Norwegian MOD-11. Bare digit runs that fail their check are discarded, so an

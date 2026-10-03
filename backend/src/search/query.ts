@@ -1,6 +1,6 @@
 /**
- * Canonical query IR + parser (ROADMAP §3.7.D, Query Contract Layer seam for
- * Phase 4). Advanced search is the IR's first consumer: the UI search string is
+ * Canonical query IR + parser (the Query Contract Layer seam for the enrichment
+ * pipeline). Advanced search is the IR's first consumer: the UI search string is
  * parsed into this structured, backend-agnostic shape *here*, and compiled to
  * FTS5 MATCH + SQL predicates separately (see `search/local.ts` `searchLocalIR`).
  * Keeping parse and compile apart is what lets later consumers (NL→query, vector

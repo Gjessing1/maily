@@ -1,5 +1,5 @@
 /**
- * Cleanup drill-down screen (ROADMAP Phase 6b review + execute surface). A dedicated,
+ * Cleanup drill-down screen (the review + execute surface). A dedicated,
  * full-screen list of the individual messages a delete-eligible slice would trash for one
  * sender. Selectable: every message starts checked (the user's confirmed default), with a
  * Select all / Deselect all toggle and single-message toggling, so the user trashes exactly
