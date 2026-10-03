@@ -531,6 +531,41 @@ async function moveOrRelink(
 const IMAP_FLAG: Record<FlagName, FlagStore['flag']> = { seen: '\\Seen', flagged: '\\Flagged' };
 
 /**
+ * Where a flag STORE has to go. An archive or move relinks the message locally when it is
+ * enqueued but MOVEs it only when it runs, so until then the server copy is still in the source
+ * folder, which the message no longer maps to. Without this, a read flag set together with a
+ * move (a rule that marks read and moves to spam, or unread just after Report spam) found no
+ * placement, was marked done without reaching the server, and the next sync of the destination
+ * undid it. Rows run one drain at a time, so a pending or claimed-but-unrun move hasn't moved yet.
+ */
+export function flagPlacement(messageId: string): ServerPlacement {
+  if (isMessageLocalOnly(messageId)) return { kind: 'local-only' };
+  const moving = db
+    .select({ payload: outbox.payload })
+    .from(outbox)
+    .where(
+      and(
+        eq(outbox.messageId, messageId),
+        inArray(outbox.kind, ['archive', 'move']),
+        inArray(outbox.status, ['pending', 'sending']),
+      ),
+    )
+    .orderBy(sql`${outbox}.rowid`)
+    .get();
+  const from = parsePayload<MovePayload>(moving?.payload ?? null)?.from;
+  if (from?.uid != null) {
+    const src = db
+      .select({ accountId: folders.accountId, path: folders.path })
+      .from(folders)
+      .where(eq(folders.id, from.folderId))
+      .get();
+    if (src)
+      return { kind: 'server', accountId: src.accountId, folderPath: src.path, uid: from.uid };
+  }
+  return serverPlacement(messageId);
+}
+
+/**
  * Execute claimed flags rows as batched STOREs: one transient connection per account and one
  * STORE per (folder, flag, value). Rows are in insertion order, so when several set the same
  * flag on the same message the last one decides the value sent, and all of them share its
@@ -550,7 +585,7 @@ async function executeFlags(rows: DueRow[], now: Date): Promise<number> {
 
   for (const row of rows) {
     const p = parsePayload<FlagsPayload>(row.payload);
-    const loc = row.messageId && p ? serverPlacement(row.messageId) : { kind: 'unplaced' as const };
+    const loc = row.messageId && p ? flagPlacement(row.messageId) : { kind: 'unplaced' as const };
     if (loc.kind !== 'server' || !p) continue; // marked done below
     let finals = perAccount.get(row.accountId);
     if (!finals) perAccount.set(row.accountId, (finals = new Map()));

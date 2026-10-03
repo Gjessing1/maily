@@ -34,6 +34,8 @@ export interface FlagChange {
 export interface ResyncResult {
   /** Internal ids of newly inserted messages (for live new-mail signals). */
   insertedIds: string[];
+  /** The subset of `insertedIds` a mail rule moved out or marked read (no `mail:new`). */
+  handledIds: string[];
   updated: number;
   expunged: number;
   /** Messages whose seen/flagged actually changed (for live `mail:flags` signals). */

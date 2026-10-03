@@ -239,6 +239,13 @@
       "when": 1789679200000,
       "tag": "0033_messages_list_cover_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1789765600000,
+      "tag": "0034_mail_rules",
+      "breakpoints": true
     }
   ]
 }

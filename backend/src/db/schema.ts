@@ -457,3 +457,27 @@ export const outbox = sqliteTable(
     index('outbox_message_idx').on(t.messageId),
   ],
 );
+
+/**
+ * Per-sender / per-domain mail rules (migration 0034, src/rules). Passive routing for new INBOX
+ * mail: a rule matches a sender address exactly or a domain with its subdomains, and its
+ * actions run through the same outbox intents as the user's own clicks. `accountId` null = every
+ * account. The unique index on (IFNULL(account_id, ''), match_kind, match_value) is an
+ * expression index, so it lives only in the migration.
+ */
+export const mailRules = sqliteTable('mail_rules', {
+  id: uuid(),
+  accountId: text('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  matchKind: text('match_kind', { enum: ['sender', 'domain'] }).notNull(),
+  /** Lowercased address (sender) or bare domain (domain). */
+  matchValue: text('match_value').notNull(),
+  move: text('move', { enum: ['spam', 'archive', 'trash'] }),
+  markRead: integer('mark_read', { mode: 'boolean' }).notNull().default(false),
+  star: integer('star', { mode: 'boolean' }).notNull().default(false),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  hits: integer('hits').notNull().default(0),
+  lastHitAt: integer('last_hit_at', { mode: 'timestamp_ms' }),
+  /** Rules fire only on mail received at or after this instant. */
+  createdAt: now(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`),
+});

@@ -793,6 +793,59 @@ export type MailboxAction = 'delete' | 'archive' | 'move' | 'flags' | 'cleanup';
 /** Role folders a message can be moved into with `POST /api/messages/:id/move`. */
 export type MoveTargetRole = 'junk' | 'inbox';
 
+/** What a mail rule matches: one sender address exactly, or a domain and its subdomains. */
+export type RuleMatchKind = 'sender' | 'domain';
+
+/** Where a mail rule moves a matching message. Blocking a sender is a `spam` rule. */
+export type RuleMove = 'spam' | 'archive' | 'trash';
+
+/**
+ * A per-sender / per-domain rule acting on new INBOX mail (`/api/rules`). The actions are
+ * independent. When rules conflict, a sender rule's `move` beats a domain rule's, and the
+ * read/star flags are OR-ed across every matching rule.
+ */
+export interface MailRule {
+  id: string;
+  /** Null = every account. */
+  accountId: string | null;
+  matchKind: RuleMatchKind;
+  /** Lowercased address, or a bare domain. */
+  matchValue: string;
+  move: RuleMove | null;
+  markRead: boolean;
+  star: boolean;
+  enabled: boolean;
+  hits: number;
+  lastHitAt: number | null;
+  /** Epoch ms. The rule acts only on mail received from this point on. */
+  createdAt: number;
+}
+
+/** Create/replace body for `POST /api/rules` and `PUT /api/rules/:id`. */
+export interface MailRuleInput {
+  accountId?: string | null;
+  matchKind: RuleMatchKind;
+  matchValue: string;
+  move?: RuleMove | null;
+  markRead?: boolean;
+  star?: boolean;
+  enabled?: boolean;
+}
+
+/** `POST /api/rules/preview`: how much existing INBOX mail a match would touch. */
+export interface RulePreview {
+  count: number;
+  /** A few of the newest matches, so the user can see what the count means. */
+  sample: { id: string; fromAddress: string | null; subject: string | null; receivedAt: number }[];
+}
+
+/** `POST /api/rules/:id/apply`: one bounded pass over existing INBOX mail. */
+export interface RuleApplyResult {
+  applied: number;
+  /** Matching INBOX mail left for another pass (the call is bounded). */
+  remaining: number;
+}
+
 /** A pending/queued outbox row, surfaced to the client (e.g. the Scheduled/Outbox view). */
 export interface OutboxEntry {
   id: string;

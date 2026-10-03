@@ -47,6 +47,13 @@ export interface SyncContext {
   accountId: string;
   caps: Capabilities;
   log: Logger;
+  /**
+   * Called right after a message is inserted into the INBOX, before anything else can read it.
+   * Only the persistent INBOX engine sets it (mail rules), so the folder cron and the source
+   * sweep never trigger it. Returns true when the message was handled — moved out or marked
+   * read — and so must not announce itself as new mail.
+   */
+  onInboxInsert?: (messageId: string, inboxId: string) => boolean;
 }
 
 /**
@@ -227,6 +234,8 @@ async function archiveSourceForExisting(
 export interface StoreCounts {
   /** Internal ids of newly inserted messages (for live new-mail signals). */
   insertedIds: string[];
+  /** The subset of `insertedIds` that `onInboxInsert` handled — no `mail:new` for these. */
+  handledIds: string[];
   updated: number;
 }
 
@@ -246,6 +255,7 @@ export async function fetchAndStore(
   mode: FetchMode = 'bulk',
 ): Promise<StoreCounts> {
   const insertedIds: string[] = [];
+  const handledIds: string[] = [];
   let updated = 0;
 
   for (let i = 0; i < uids.length; i += FETCH_BATCH) {
@@ -293,6 +303,11 @@ export async function fetchAndStore(
         // Ingest hook (ARCHITECTURE §14): queue the new message for enrichment. Pure DB write,
         // safe from either thread; the worker nudge that actually runs it is separate.
         enqueueMessage(result.id, parsed.receivedAt);
+        // Synchronously after the insert, with no await in between: nothing (the APK's pending
+        // poll included) can see a rule-handled message as unread inbox mail first.
+        if (folder.role === 'inbox' && ctx.onInboxInsert?.(result.id, folder.id)) {
+          handledIds.push(result.id);
+        }
       } else {
         updated += 1;
         // Dedup race: the row already existed, so the staged `.eml` is orphaned.
@@ -301,7 +316,7 @@ export async function fetchAndStore(
     }
   }
 
-  return { insertedIds, updated };
+  return { insertedIds, handledIds, updated };
 }
 
 /**
@@ -346,11 +361,13 @@ export async function fullSyncFolder(
   });
 
   const insertedIds: string[] = [];
+  const handledIds: string[] = [];
   let updated = 0;
   for (let i = 0; i < uids.length; i += FETCH_BATCH) {
     const batch = uids.slice(i, i + FETCH_BATCH);
     const counts = await fetchAndStore(ctx, folder, batch);
     insertedIds.push(...counts.insertedIds);
+    handledIds.push(...counts.handledIds);
     updated += counts.updated;
     // Advance the resume floor as each batch lands (UIDs are ascending).
     const batchTop = batch[batch.length - 1];
@@ -359,7 +376,7 @@ export async function fullSyncFolder(
 
   // Caught up: future incremental passes fetch only mail at/after UIDNEXT.
   updateFolderSyncState(folder.id, { lastUid: state.uidNext });
-  return { insertedIds, updated };
+  return { insertedIds, handledIds, updated };
 }
 
 /** Pause between sweep batches so the historical backfill stays gentle on the server. */

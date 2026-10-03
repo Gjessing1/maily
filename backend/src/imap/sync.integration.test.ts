@@ -537,3 +537,35 @@ test('mail delivered during the expunge scan is not skipped by the stored cursor
   assert.equal(second.insertedIds.length, 1, 'picked up on the next pass');
   assert.equal(reload().lastUid, 703);
 });
+
+// ---------------------------------------------------------------------------
+// INBOX insert hook (mail rules)
+// ---------------------------------------------------------------------------
+
+test('onInboxInsert runs once per INBOX insert, never on a re-sight, and reports handled ids', async () => {
+  const { accountId, folderId, reload } = seedInbox();
+  const client = new FakeImap([
+    altFixture(801, '<hook-1@example.com>', 'Ruled'),
+    altFixture(802, '<hook-2@example.com>', 'Delivered as is'),
+  ]);
+  const calls: [string, string][] = [];
+  const ctx: SyncNS.SyncContext = {
+    ...ctxFor(client, accountId),
+    onInboxInsert: (messageId, inboxId) => {
+      calls.push([messageId, inboxId]);
+      return calls.length === 1;
+    },
+  };
+
+  const first = await sync.fetchAndStore(ctx, reload(), [801, 802], 'live');
+  assert.equal(first.insertedIds.length, 2);
+  assert.deepEqual(
+    calls.map((c) => c[1]),
+    [folderId, folderId],
+  );
+  assert.deepEqual(first.handledIds, [first.insertedIds[0]], 'only what the hook handled');
+
+  const again = await sync.fetchAndStore(ctx, reload(), [801], 'live');
+  assert.equal(again.insertedIds.length, 0);
+  assert.equal(calls.length, 2, 'a re-sighted message is not ruled again');
+});

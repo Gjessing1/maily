@@ -22,6 +22,7 @@ import { registerEngine } from './registry.js';
 import { resyncFolder } from './resync.js';
 import { syncContext, type SyncContext } from './sync.js';
 import { enqueueEnrichPass, enqueueSweep } from '../worker/host.js';
+import { applyRulesOnIngest } from '../rules/apply.js';
 
 const INITIAL_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
@@ -116,8 +117,16 @@ export class AccountEngine {
   }
 
   private ctx(client: ImapFlow): SyncContext {
-    // Persistent INBOX connection: reuse the caps detected on connect.
-    return syncContext(client, this.account!.id, this.log, this.caps);
+    // Persistent INBOX connection: reuse the caps detected on connect. Mail rules act on what
+    // this context inserts — live IDLE and the reconnect resync, never the cron or the sweep.
+    const accountId = this.account!.id;
+    return {
+      ...syncContext(client, accountId, this.log, this.caps),
+      onInboxInsert: (messageId, inboxId) => {
+        const outcome = applyRulesOnIngest(accountId, messageId, inboxId);
+        return outcome !== null && (outcome.moved || outcome.read);
+      },
+    };
   }
 
   private async connect(): Promise<void> {
@@ -207,8 +216,13 @@ export class AccountEngine {
       const result = await resyncFolder(this.ctx(this.client), inbox);
       this.lastSyncAt = Date.now();
 
-      // Live new mail → precise per-message signal (drives Socket.io + Web Push).
+      // Live new mail → precise per-message signal (drives Socket.io + Web Push). Mail a rule
+      // moved out or marked read gets none, so it never buzzes the phone; the rule's own intent
+      // already signalled the move, and a read message that stayed in the inbox is picked up by
+      // the inbox refresh below.
+      const handled = new Set(result.handledIds);
       for (const messageId of result.insertedIds) {
+        if (handled.has(messageId)) continue;
         emitSignal({ type: 'mail:new', accountId: this.id, messageId });
       }
       // New mail was enqueued for enrichment by the ingest hook — wake the worker now.
@@ -231,6 +245,8 @@ export class AccountEngine {
       if (result.updated || result.expunged) {
         const changed = result.updated + result.expunged;
         emitSignal({ type: 'sync:progress', accountId: this.id, done: changed, total: changed });
+      }
+      if (result.updated || result.expunged || handled.size) {
         emitSignal({ type: 'mail:folder', accountId: this.id, folderId: inbox.id });
       }
       if (result.insertedIds.length || result.updated || result.expunged) {
