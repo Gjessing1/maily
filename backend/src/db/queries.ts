@@ -7,7 +7,6 @@ import {
   and,
   desc,
   eq,
-  getTableColumns,
   gte,
   inArray,
   isNotNull,
@@ -15,6 +14,7 @@ import {
   lt,
   notExists,
   sql,
+  type SQL,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { db } from './client.js';
@@ -74,6 +74,32 @@ export function getMessage(id: string): MessageRow | undefined {
  */
 const unseen = sql`${messages.seen} = 0`;
 
+/**
+ * One newest-first page of full rows. The ids are picked first by an inner query that reads
+ * `messages` only through its list covering index (migration 0033); only the page's own rows are
+ * then fetched from the table. Sorting full rows directly reads every candidate's `received_at`,
+ * which sits after the bodies in each record — ~300 ms for the 17k-row Gmail Trash on the N150.
+ *
+ * Every `messages` column that `where` / `joins` read MUST be in that index, or SQLite falls back
+ * to the table and walks the body overflow pages the index exists to skip. The index is named
+ * with INDEXED BY because the planner otherwise prefers the unique PK index for the join's
+ * `id = ?` lookup; raw SQL because Drizzle's builder has no index hints for SQLite.
+ */
+function listPage(where: SQL | undefined, limit: number, joins: SQL = sql``): MessageRow[] {
+  const ids = sql`SELECT ${messages.id} FROM ${messages} INDEXED BY messages_list_cover_idx
+    ${joins} WHERE ${where ?? sql`1`} ORDER BY ${messages.receivedAt} DESC LIMIT ${limit}`;
+  return db
+    .select()
+    .from(messages)
+    .where(sql`${messages.id} IN (${ids})`)
+    .orderBy(desc(messages.receivedAt))
+    .all();
+}
+
+/** Joins a list query's `messages` to its folder mappings and their folders. */
+const folderJoins = sql`INNER JOIN ${messageFolders} ON ${eq(messageFolders.messageId, messages.id)}
+  INNER JOIN ${folders} ON ${eq(folders.id, messageFolders.folderId)}`;
+
 /** Visible messages in a folder, newest first, keyset-paginated by receivedAt. */
 export function listMessages(
   folderId: string,
@@ -87,14 +113,11 @@ export function listMessages(
     beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
     unseenOnly ? unseen : undefined,
   );
-  return db
-    .select(getTableColumns(messages))
-    .from(messages)
-    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
-    .where(where)
-    .orderBy(desc(messages.receivedAt))
-    .limit(limit)
-    .all();
+  return listPage(
+    where,
+    limit,
+    sql`INNER JOIN ${messageFolders} ON ${eq(messageFolders.messageId, messages.id)}`,
+  );
 }
 
 /**
@@ -129,22 +152,16 @@ export function listUnifiedByRole(
   beforeMs?: number,
   unseenOnly = false,
 ): MessageRow[] {
-  return db
-    .select(getTableColumns(messages))
-    .from(messages)
-    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
-    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
-    .where(
-      and(
-        eq(folders.role, role),
-        visible(scopeForRole(role)),
-        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
-        unseenOnly ? unseen : undefined,
-      ),
-    )
-    .orderBy(desc(messages.receivedAt))
-    .limit(limit)
-    .all();
+  return listPage(
+    and(
+      eq(folders.role, role),
+      visible(scopeForRole(role)),
+      beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      unseenOnly ? unseen : undefined,
+    ),
+    limit,
+    folderJoins,
+  );
 }
 
 /** Back-compat alias for the unified inbox (the `/api/inbox` endpoint). */
@@ -174,30 +191,24 @@ export function listArchived(
 ): MessageRow[] {
   const mf2 = alias(messageFolders, 'mf2');
   const f2 = alias(folders, 'f2');
-  return db
-    .select(getTableColumns(messages))
-    .from(messages)
-    .innerJoin(messageFolders, eq(messageFolders.messageId, messages.id))
-    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        eq(folders.role, 'archive'),
-        visible(),
-        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
-        unseenOnly ? unseen : undefined,
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(mf2)
-            .innerJoin(f2, eq(f2.id, mf2.folderId))
-            .where(and(eq(mf2.messageId, messages.id), inArray(f2.role, [...NON_ARCHIVE_ROLES]))),
-        ),
+  return listPage(
+    and(
+      eq(messages.accountId, accountId),
+      eq(folders.role, 'archive'),
+      visible(),
+      beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      unseenOnly ? unseen : undefined,
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(mf2)
+          .innerJoin(f2, eq(f2.id, mf2.folderId))
+          .where(and(eq(mf2.messageId, messages.id), inArray(f2.role, [...NON_ARCHIVE_ROLES]))),
       ),
-    )
-    .orderBy(desc(messages.receivedAt))
-    .limit(limit)
-    .all();
+    ),
+    limit,
+    folderJoins,
+  );
 }
 
 /**
@@ -213,21 +224,16 @@ export function listStarred(
   beforeMs?: number,
   unseenOnly = false,
 ): MessageRow[] {
-  return db
-    .select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        eq(messages.flagged, true),
-        visible(),
-        beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
-        unseenOnly ? unseen : undefined,
-      ),
-    )
-    .orderBy(desc(messages.receivedAt))
-    .limit(limit)
-    .all();
+  return listPage(
+    and(
+      eq(messages.accountId, accountId),
+      eq(messages.flagged, true),
+      visible(),
+      beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
+      unseenOnly ? unseen : undefined,
+    ),
+    limit,
+  );
 }
 
 /**

@@ -232,6 +232,13 @@
       "when": 1789592800000,
       "tag": "0032_cleanup_version_invoice_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1789679200000,
+      "tag": "0033_messages_list_cover_idx",
+      "breakpoints": true
     }
   ]
 }
