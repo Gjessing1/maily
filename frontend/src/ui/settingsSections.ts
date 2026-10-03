@@ -19,6 +19,7 @@ export type SettingsSectionId =
   | 'list'
   | 'reading'
   | 'composing'
+  | 'rules'
   | 'contacts'
   | 'notifications'
   | 'sync'
@@ -44,6 +45,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'list', label: 'Message list', hint: 'Ordering, page size and swipe actions' },
   { id: 'reading', label: 'Reading', hint: 'Remote images, conversations and mark-as-read' },
   { id: 'composing', label: 'Composing', hint: 'Undo send, default account and signature' },
+  { id: 'rules', label: 'Rules', hint: 'Blocked senders and what happens to new mail' },
   {
     id: 'contacts',
     label: 'Contacts & calendars',

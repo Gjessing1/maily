@@ -207,6 +207,19 @@ export const SpamIcon = (p: IconProps) => (
   </Base>
 );
 
+export const BlockIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m5.6 5.6 12.8 12.8" />
+  </Base>
+);
+
+export const FilterIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3 5h18l-7 8.5V19l-4 2v-7.5Z" />
+  </Base>
+);
+
 export const MoreIcon = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="5" r="1" />

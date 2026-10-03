@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { MailRule, RuleMatchKind } from '@maily/shared';
 import { api } from '../api/client';
 import { mutateFlags } from '../state/mutate';
 import {
@@ -30,14 +31,18 @@ import {
 } from '../components/MessageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { OverflowMenu, type OverflowItem } from '../components/OverflowMenu';
+import { RuleEditor, type RuleSeed } from '../components/RuleEditor';
+import { blockSender, isSharedMailDomain, ruleErrorMessage } from '../state/rules';
 import { Spinner } from '../ui/Spinner';
 import {
   ArchiveIcon,
   BackIcon,
+  BlockIcon,
   CalendarIcon,
   ChevronDownIcon,
   CloseIcon,
   ExpandIcon,
+  FilterIcon,
   ForwardIcon,
   InboxIcon,
   MailIcon,
@@ -87,6 +92,13 @@ export function ReaderView({
   const [addToCalendar, setAddToCalendar] = useState(false);
   // Android Back closes the sheet instead of leaving the message behind it.
   useBackHandler(addToCalendar, () => setAddToCalendar(false));
+  // "Block sender/domain" awaiting confirmation, and the "Rule for this sender…" sheet.
+  const [blockTarget, setBlockTarget] = useState<{ kind: RuleMatchKind; value: string } | null>(
+    null,
+  );
+  const [ruleEditor, setRuleEditor] = useState<{ rule: MailRule | null; seed: RuleSeed } | null>(
+    null,
+  );
   const autoMarkedId = useRef<string | null>(null);
   // Detached-window affordance: desktop only, and never inside a popout (it's already one).
   const popout = isPopout();
@@ -115,6 +127,8 @@ export function ReaderView({
   // above), and that re-emit must not close the sheet while the user is editing.
   useEffect(() => {
     setAddToCalendar(false);
+    setBlockTarget(null);
+    setRuleEditor(null);
   }, [id]);
 
   // Auto-mark as read on open (optimistic; server is authoritative), honouring the
@@ -206,12 +220,41 @@ export function ReaderView({
 
   // Report spam / Not spam: same undo window and leave-the-reader flow as archive. A
   // conversation moves every message in the thread.
-  function moveSpam(spam: boolean) {
+  function moveSpam(spam: boolean, label?: string) {
     if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
     const ids = threaded ? threadIds : [detail.id];
-    void (spam ? requestSpamMany(ids) : requestNotSpamMany(ids));
+    void (spam ? requestSpamMany(ids, label) : requestNotSpamMany(ids, label));
     onClose();
+  }
+
+  // Block = a Spam rule for future mail (every account) + Report spam for this message. The
+  // rule is saved first, so a refused rule never leaves the user thinking the sender is blocked.
+  async function block() {
+    const target = blockTarget;
+    setBlockTarget(null);
+    if (!target) return;
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+    try {
+      await blockSender(target.kind, target.value);
+    } catch (e) {
+      return showNotice(`Couldn’t block — ${ruleErrorMessage(e)}`);
+    }
+    moveSpam(true, `Blocked ${target.value}`);
+  }
+
+  // Opens the sender's existing rule when there is one, so the sheet edits it instead of
+  // failing to save a duplicate.
+  async function openSenderRule() {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+    const address = detail?.fromAddress?.trim().toLowerCase();
+    if (!address) return;
+    const rules = await api.rules.list().catch(() => [] as MailRule[]);
+    const mine = rules.filter((r) => r.matchKind === 'sender' && r.matchValue === address);
+    setRuleEditor({
+      rule: mine.find((r) => r.accountId === null) ?? mine[0] ?? null,
+      seed: { matchKind: 'sender', matchValue: address },
+    });
   }
 
   function forward() {
@@ -259,7 +302,11 @@ export function ReaderView({
     Boolean(detail && folders?.some((f) => f.role === role && detail.folderIds.includes(f.id)));
   const isJunk = inRole('junk');
   // Less-used actions behind "⋯", so the bar fits a 360px phone. Your own Sent mail and
-  // drafts can't be spam; a draft is edited, not forwarded.
+  // drafts can't be spam or blocked; a draft is edited, not forwarded. Block domain is left
+  // out for webmail domains, where it would block everyone on that provider.
+  const ownMail = isDraft || inRole('sent');
+  const fromAddress = detail?.fromAddress?.trim().toLowerCase() || null;
+  const fromDomain = senderDomain(fromAddress);
   const overflowItems: OverflowItem[] = [
     ...(isDraft
       ? []
@@ -283,6 +330,33 @@ export function ReaderView({
                 icon: <SpamIcon className="size-4" />,
                 onClick: () => moveSpam(true),
               },
+        ]),
+    ...(ownMail || isJunk || !fromAddress
+      ? []
+      : [
+          {
+            label: 'Block sender',
+            icon: <BlockIcon className="size-4" />,
+            onClick: () => setBlockTarget({ kind: 'sender', value: fromAddress }),
+          },
+          ...(fromDomain && !isSharedMailDomain(fromDomain)
+            ? [
+                {
+                  label: 'Block domain',
+                  icon: <BlockIcon className="size-4" />,
+                  onClick: () => setBlockTarget({ kind: 'domain', value: fromDomain }),
+                },
+              ]
+            : []),
+        ]),
+    ...(ownMail || !fromAddress
+      ? []
+      : [
+          {
+            label: 'Rule for this sender…',
+            icon: <FilterIcon className="size-4" />,
+            onClick: () => void openSenderRule(),
+          },
         ]),
   ];
 
@@ -639,6 +713,28 @@ export function ReaderView({
 
       {addToCalendar && detail && (
         <AddToCalendar messageId={detail.id} onClose={() => setAddToCalendar(false)} />
+      )}
+
+      <ConfirmDialog
+        open={blockTarget !== null}
+        title={`Block ${blockTarget?.value ?? ''}?`}
+        message={
+          blockTarget?.kind === 'domain'
+            ? `This message and all future mail from ${blockTarget.value} and its subdomains go to Spam, on every account. You can remove the rule in Settings → Rules.`
+            : `This message and all future mail from this address go to Spam, on every account. You can remove the rule in Settings → Rules.`
+        }
+        confirmLabel="Block"
+        danger
+        onConfirm={() => void block()}
+        onCancel={() => setBlockTarget(null)}
+      />
+
+      {ruleEditor && (
+        <RuleEditor
+          rule={ruleEditor.rule}
+          seed={ruleEditor.seed}
+          onClose={() => setRuleEditor(null)}
+        />
       )}
     </div>
   );

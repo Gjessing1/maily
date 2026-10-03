@@ -7,6 +7,7 @@ import type {
   AddressbookSettingsDto,
   CalendarSettingsDto,
   EnrichmentStatusDto,
+  MailRule,
   ServerConfigDto,
 } from '@maily/shared';
 import { api } from '../api/client';
@@ -21,7 +22,10 @@ import { untrustImageDomain } from '../state/trustedImages';
 import { checkForUpdate, type UpdateCheckResult } from '../pwa';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DetachSection } from '../components/DetachSection';
-import { BackIcon, ChevronRightIcon, CloseIcon } from '../ui/icons';
+import { RuleEditor } from '../components/RuleEditor';
+import { describeActions, ruleErrorMessage } from '../state/rules';
+import { showNotice } from '../state/undo';
+import { BackIcon, ChevronRightIcon, CloseIcon, PlusIcon } from '../ui/icons';
 import { useMediaQuery } from '../ui/useMediaQuery';
 import { SETTINGS_SECTIONS, settingsSection, type SettingsSectionId } from '../ui/settingsSections';
 import {
@@ -216,8 +220,9 @@ function Switch({ on }: { on: boolean }) {
     <span
       className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${on ? 'bg-accent' : 'bg-surface-2'}`}
     >
+      {/* left-0: a button's centred text-align would otherwise shift the knob's static position. */}
       <span
-        className={`absolute top-0.5 size-5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
+        className={`absolute left-0 top-0.5 size-5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
       />
     </span>
   );
@@ -988,6 +993,115 @@ function ComposingSection({ accounts }: { accounts: AccountDto[] | undefined }) 
   );
 }
 
+/**
+ * Mail rules: every per-sender / per-domain rule with what it does and how often it has fired,
+ * an enable switch, and the add/edit sheet (which also deletes). Server-side state, so the list
+ * is fetched when the section opens rather than kept in prefs.
+ */
+function RulesSection({ accounts }: { accounts: AccountDto[] | undefined }) {
+  const [rules, setRules] = useState<MailRule[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  // undefined = closed, null = new rule.
+  const [editing, setEditing] = useState<MailRule | null | undefined>(undefined);
+
+  const load = () =>
+    api.rules
+      .list()
+      .then((r) => {
+        setRules(r);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  // Optimistic; the server's copy replaces it, and a refusal puts the old one back.
+  const setEnabled = async (rule: MailRule, enabled: boolean) => {
+    const patch = (next: MailRule) =>
+      setRules((list) => list?.map((r) => (r.id === next.id ? next : r)) ?? list);
+    patch({ ...rule, enabled });
+    try {
+      patch(await api.rules.setEnabled(rule.id, enabled));
+    } catch (e) {
+      patch(rule);
+      showNotice(ruleErrorMessage(e) || 'Couldn’t update the rule');
+    }
+  };
+
+  const accountName = (id: string) => {
+    const a = accounts?.find((x) => x.id === id);
+    return a ? a.displayName || a.email : 'one account';
+  };
+
+  return (
+    <>
+      <Group note="Rules act on new mail as it reaches your inbox, on every device. When rules disagree, an address rule wins over a domain rule. Block a sender from a message’s ⋯ menu, or add a rule here.">
+        {rules === null ? (
+          <p className="px-4 py-3 text-sm text-faint">
+            {failed ? 'Couldn’t load your rules.' : 'Loading…'}
+          </p>
+        ) : rules.length === 0 ? (
+          <p className="px-4 py-3 text-sm text-faint">No rules yet.</p>
+        ) : (
+          <ul>
+            {rules.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 pr-4">
+                <button
+                  onClick={() => setEditing(r)}
+                  className={`min-w-0 flex-1 py-3 pl-4 text-left active:bg-surface-2 ${r.enabled ? '' : 'opacity-50'}`}
+                >
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate text-[15px]">{r.matchValue}</span>
+                    {r.matchKind === 'domain' && (
+                      <span className="shrink-0 text-xs text-faint">domain</span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-muted">
+                    {describeActions(r)}
+                    {r.accountId && ` · ${accountName(r.accountId)}`}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-faint tabular-nums">
+                    {r.hits > 0
+                      ? `${r.hits.toLocaleString()} message${r.hits === 1 ? '' : 's'} · last ${timeAgo(r.lastHitAt)}`
+                      : 'Hasn’t matched anything yet'}
+                  </span>
+                </button>
+                <button
+                  onClick={() => void setEnabled(r, !r.enabled)}
+                  role="switch"
+                  aria-checked={r.enabled}
+                  aria-label={`${r.enabled ? 'Turn off' : 'Turn on'} rule for ${r.matchValue}`}
+                  className="flex shrink-0 py-3"
+                >
+                  <Switch on={r.enabled} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button
+          onClick={() => setEditing(null)}
+          className="flex w-full items-center gap-2 border-t border-border px-4 py-3 text-left text-[15px] text-accent active:bg-surface-2"
+        >
+          <PlusIcon className="size-5" />
+          Add rule
+        </button>
+      </Group>
+
+      {editing !== undefined && (
+        <RuleEditor
+          rule={editing}
+          onClose={() => setEditing(undefined)}
+          onSaved={() => void load()}
+          onDeleted={(id) => setRules((list) => list?.filter((r) => r.id !== id) ?? list)}
+        />
+      )}
+    </>
+  );
+}
+
 /** CardDAV books to sync, and the CalDAV calendar new events land in. */
 function ContactsSection() {
   return (
@@ -1403,6 +1517,7 @@ export function Settings() {
               {current.id === 'list' && <ListSection />}
               {current.id === 'reading' && <ReadingSection />}
               {current.id === 'composing' && <ComposingSection accounts={accounts} />}
+              {current.id === 'rules' && <RulesSection accounts={accounts} />}
               {current.id === 'contacts' && <ContactsSection />}
               {current.id === 'notifications' && <NotificationsSection />}
               {current.id === 'sync' && <SyncSection />}

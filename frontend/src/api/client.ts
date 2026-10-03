@@ -33,11 +33,15 @@ import type {
   EnrichmentStatusDto,
   EventDraftDto,
   FolderDto,
+  MailRule,
+  MailRuleInput,
   MessageDetailDto,
   MessageDto,
   OutboxEntry,
   PushSubscriptionDto,
   QueuedSendResult,
+  RuleApplyResult,
+  RulePreview,
   SaveDraftRequest,
   SaveDraftResult,
   SendMessageRequest,
@@ -729,6 +733,36 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(req),
       }),
+  },
+
+  /** Per-sender / per-domain mail rules acting on new INBOX mail. */
+  rules: {
+    list: () => request<{ rules: MailRule[] }>('/api/rules').then((r) => r.rules),
+    create: (input: MailRuleInput) =>
+      request<{ rule: MailRule }>('/api/rules', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }).then((r) => r.rule),
+    /** Full replace of match + actions; the arrival cut-off is kept. */
+    update: (id: string, input: MailRuleInput) =>
+      request<{ rule: MailRule }>(`/api/rules/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }).then((r) => r.rule),
+    setEnabled: (id: string, enabled: boolean) =>
+      request<{ rule: MailRule }>(`/api/rules/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }).then((r) => r.rule),
+    remove: (id: string) => request<{ ok: true }>(`/api/rules/${id}`, { method: 'DELETE' }),
+    /** How much existing INBOX mail a rule (saved or not) would change. */
+    preview: (input: MailRuleInput) =>
+      request<RulePreview>('/api/rules/preview', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    /** One bounded pass over existing INBOX mail; call again while `remaining` > 0. */
+    apply: (id: string) => request<RuleApplyResult>(`/api/rules/${id}/apply`, { method: 'POST' }),
   },
 
   pushKey: () => request<{ publicKey: string | null }>('/api/push/key'),
