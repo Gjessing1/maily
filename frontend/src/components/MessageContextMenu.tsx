@@ -8,10 +8,12 @@ import {
   ArchiveIcon,
   CheckIcon,
   ForwardIcon,
+  InboxIcon,
   MailIcon,
   MailOpenIcon,
   ReplyAllIcon,
   ReplyIcon,
+  SpamIcon,
   TrashIcon,
 } from '../ui/icons';
 
@@ -31,7 +33,9 @@ interface Item {
  * Right-click action menu for a single inbox row. Reply/Reply-all/Forward need the
  * full message (body for quoting), so they lazy-fetch the detail then navigate to
  * compose via the shared `replyPrefill` builders — identical to the reader's bar.
- * Mark/Archive/Delete/Select only need the id and run through the caller's handlers.
+ * Mark/Archive/Spam/Delete/Select only need the id and run through the caller's handlers.
+ * `spam` says which spam action the current folder offers: Report spam, Not spam (in Spam),
+ * or none (Sent/Drafts).
  */
 export function MessageContextMenu({
   message,
@@ -41,6 +45,8 @@ export function MessageContextMenu({
   onClose,
   onToggleRead,
   onArchive,
+  onSpam,
+  spam,
   onDelete,
   onSelect,
 }: {
@@ -51,6 +57,8 @@ export function MessageContextMenu({
   onClose: () => void;
   onToggleRead: (id: string, seen: boolean) => void;
   onArchive: (id: string) => void;
+  onSpam: (id: string, spam: boolean) => void;
+  spam: 'report' | 'not' | null;
   onDelete: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
@@ -120,6 +128,21 @@ export function MessageContextMenu({
       icon: <ArchiveIcon className="size-4" />,
       onClick: run(() => onArchive(message.id)),
     },
+    ...(spam === null
+      ? []
+      : [
+          spam === 'report'
+            ? {
+                label: 'Report spam',
+                icon: <SpamIcon className="size-4" />,
+                onClick: run(() => onSpam(message.id, true)),
+              }
+            : {
+                label: 'Not spam',
+                icon: <InboxIcon className="size-4" />,
+                onClick: run(() => onSpam(message.id, false)),
+              },
+        ]),
     {
       label: 'Delete',
       icon: <TrashIcon className="size-4" />,

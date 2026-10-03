@@ -1,5 +1,5 @@
 /**
- * Undo window for deferred actions — delete, archive, and send. The window is now **server
+ * Undo window for deferred actions — delete, archive, Report spam / Not spam, and send. The window is now **server
  * owned**: staging an action enqueues it in the backend outbox (which returns the `dueAt` when
  * it will actually commit) and optimistically hides the rows locally. This snackbar only mirrors
  * that window visually — the backend commits at `dueAt` whether or not the PWA stays open, so a
@@ -29,7 +29,32 @@ const FALLBACK_WINDOW_MS = 5000;
 /** How long a transient error notice lingers. */
 const NOTICE_MS = 4000;
 
-type ActionKind = 'delete' | 'archive' | 'send';
+type ActionKind = 'delete' | 'archive' | 'spam' | 'unspam' | 'send';
+type MailboxKind = Exclude<ActionKind, 'send'>;
+
+/** The server call that queues each mailbox action. */
+const QUEUE: Record<MailboxKind, (id: string) => ReturnType<typeof api.archiveMessage>> = {
+  delete: (id) => api.deleteMessage(id),
+  archive: (id) => api.archiveMessage(id),
+  spam: (id) => api.moveMessage(id, 'junk'),
+  unspam: (id) => api.moveMessage(id, 'inbox'),
+};
+
+/** Past tense for the snackbar ("Message archived"). */
+const DONE: Record<MailboxKind, string> = {
+  delete: 'deleted',
+  archive: 'archived',
+  spam: 'moved to Spam',
+  unspam: 'moved to Inbox',
+};
+
+/** Notice when the server couldn't queue the action ("Couldn’t archive — restored"). */
+const VERB: Record<MailboxKind, string> = {
+  delete: 'delete',
+  archive: 'archive',
+  spam: 'move to Spam',
+  unspam: 'move to Inbox',
+};
 
 export interface PendingAction {
   kind: ActionKind;
@@ -103,6 +128,8 @@ export function failedActionNotice(action: MailboxAction, count: number): string
       return `Couldn’t delete ${what} on the server — restored`;
     case 'archive':
       return `Couldn’t archive ${what} on the server — restored`;
+    case 'move':
+      return `Couldn’t move ${what} on the server — restored`;
     case 'cleanup':
       return `Couldn’t move ${what} to Trash on the server — restored`;
     case 'flags':
@@ -113,7 +140,7 @@ export function failedActionNotice(action: MailboxAction, count: number): string
 function defaultLabel(kind: ActionKind, count: number): string {
   if (kind === 'send') return 'Message sent';
   const noun = count === 1 ? 'Message' : `${count} messages`;
-  return `${noun} ${kind === 'archive' ? 'archived' : 'deleted'}`;
+  return `${noun} ${DONE[kind]}`;
 }
 
 /**
@@ -129,11 +156,11 @@ function commit(): void {
 }
 
 /**
- * Stage a batch delete/archive: snapshot + optimistically remove the rows, enqueue the deferred
- * MOVE server-side (returns the outbox id + dueAt), then arm the snackbar to that dueAt. Rows the
- * server couldn't queue are restored with a notice.
+ * Stage a batch delete/archive/move: snapshot + optimistically remove the rows, enqueue the
+ * deferred MOVE server-side (returns the outbox id + dueAt), then arm the snackbar to that dueAt.
+ * Rows the server couldn't queue are restored with a notice.
  */
-async function stage(kind: 'delete' | 'archive', ids: string[], label?: string): Promise<void> {
+async function stage(kind: MailboxKind, ids: string[], label?: string): Promise<void> {
   if (ids.length === 0) return;
   commit(); // a second action while one is pending finalises the first immediately
 
@@ -147,7 +174,7 @@ async function stage(kind: 'delete' | 'archive', ids: string[], label?: string):
     await removeCachedMessage(id);
   }
 
-  const call = kind === 'archive' ? api.archiveMessage : api.deleteMessage;
+  const call = QUEUE[kind];
   const outboxIds: string[] = [];
   const okIds: string[] = [];
   const failed: string[] = [];
@@ -174,7 +201,7 @@ async function stage(kind: 'delete' | 'archive', ids: string[], label?: string):
       if (m) await cache.messages.put(m);
       if (b) await cache.bodies.put(b);
     }
-    showNotice(kind === 'archive' ? 'Couldn’t archive — restored' : 'Couldn’t delete — restored');
+    showNotice(`Couldn’t ${VERB[kind]} — restored`);
   }
   if (okIds.length === 0) {
     notify();
@@ -208,6 +235,15 @@ export async function requestArchive(id: string, label?: string): Promise<void> 
 /** Stage a batch archive (multi-select). */
 export async function requestArchiveMany(ids: string[], label?: string): Promise<void> {
   return stage('archive', ids, label);
+}
+
+/** Stage Report spam: move the messages out of where they are into Spam. */
+export async function requestSpamMany(ids: string[], label?: string): Promise<void> {
+  return stage('spam', ids, label);
+}
+/** Stage Not spam: move the messages out of Spam back into the inbox. */
+export async function requestNotSpamMany(ids: string[], label?: string): Promise<void> {
+  return stage('unspam', ids, label);
 }
 
 /**

@@ -750,6 +750,11 @@ export type SocketSignal =
   | { type: 'mail:flags'; accountId: string; messageId: string; seen: boolean; flagged: boolean }
   | { type: 'mail:deleted'; accountId: string; messageId: string }
   | { type: 'mail:archived'; accountId: string; messageId: string }
+  /**
+   * Moved into another role folder (Report spam → junk, Not spam → inbox). Clients drop it
+   * from whatever list showed it, and re-pull it when it lands in the inbox.
+   */
+  | { type: 'mail:moved'; accountId: string; messageId: string; role: FolderRole }
   // Outbox lifecycle (src/outbox): a deferred delete/archive was canceled (undo) and the
   // message should reappear; or a queued send committed / failed server-side.
   | { type: 'mail:restored'; accountId: string; messageId: string }
@@ -780,10 +785,13 @@ export type SocketSignal =
   | { type: 'settings:changed' };
 
 /** The kind of action queued in the server-side outbox. */
-export type OutboxKind = 'send' | 'delete' | 'archive' | 'flags';
+export type OutboxKind = 'send' | 'delete' | 'archive' | 'move' | 'flags';
 
 /** A user change to mailbox state that the server pushes to the provider. */
-export type MailboxAction = 'delete' | 'archive' | 'flags' | 'cleanup';
+export type MailboxAction = 'delete' | 'archive' | 'move' | 'flags' | 'cleanup';
+
+/** Role folders a message can be moved into with `POST /api/messages/:id/move`. */
+export type MoveTargetRole = 'junk' | 'inbox';
 
 /** A pending/queued outbox row, surfaced to the client (e.g. the Scheduled/Outbox view). */
 export interface OutboxEntry {

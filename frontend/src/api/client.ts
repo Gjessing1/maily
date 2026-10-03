@@ -5,6 +5,7 @@
  */
 import type {
   AccountDto,
+  MoveTargetRole,
   AccountSyncStatusDto,
   AddressbookSettingsDto,
   CalendarEventInput,
@@ -486,6 +487,16 @@ export const api = {
   archiveMessage: (id: string) =>
     request<{ ok: boolean; outboxId?: string; dueAt?: number }>(`/api/messages/${id}/archive`, {
       method: 'POST',
+    }),
+
+  /**
+   * Report spam (`junk`) / Not spam (`inbox`) → queue a deferred MOVE between role folders.
+   * Same outbox id + `dueAt` contract as archive, so it's undoable from the snackbar.
+   */
+  moveMessage: (id: string, role: MoveTargetRole) =>
+    request<{ ok: boolean; outboxId?: string; dueAt?: number }>(`/api/messages/${id}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
     }),
 
   /** Restore a trashed message → MOVE back to the Inbox and clear the tombstone (awaited). */

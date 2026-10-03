@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { mutateFlags } from '../state/mutate';
-import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
+import {
+  requestArchiveMany,
+  requestDeleteMany,
+  requestNotSpamMany,
+  requestSpamMany,
+  showNotice,
+} from '../state/undo';
 import { useAccounts, useFolders, useMessageDetail, useThread } from '../state/data';
 import { useBackHandler } from '../state/backButton';
 import { ConversationThread } from '../components/ConversationThread';
@@ -23,6 +29,7 @@ import {
   SenderAvatar,
 } from '../components/MessageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { OverflowMenu, type OverflowItem } from '../components/OverflowMenu';
 import { Spinner } from '../ui/Spinner';
 import {
   ArchiveIcon,
@@ -39,6 +46,7 @@ import {
   PencilIcon,
   ReplyAllIcon,
   ReplyIcon,
+  SpamIcon,
   StarIcon,
   TrashIcon,
 } from '../ui/icons';
@@ -196,6 +204,16 @@ export function ReaderView({
     onClose();
   }
 
+  // Report spam / Not spam: same undo window and leave-the-reader flow as archive. A
+  // conversation moves every message in the thread.
+  function moveSpam(spam: boolean) {
+    if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+    if (!detail) return;
+    const ids = threaded ? threadIds : [detail.id];
+    void (spam ? requestSpamMany(ids) : requestNotSpamMany(ids));
+    onClose();
+  }
+
   function forward() {
     if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
     if (!detail) return;
@@ -237,6 +255,36 @@ export function ReaderView({
   const isTrashed = Boolean(
     detail && folders?.some((f) => f.role === 'trash' && detail.folderIds.includes(f.id)),
   );
+  const inRole = (role: string) =>
+    Boolean(detail && folders?.some((f) => f.role === role && detail.folderIds.includes(f.id)));
+  const isJunk = inRole('junk');
+  // Less-used actions behind "⋯", so the bar fits a 360px phone. Your own Sent mail and
+  // drafts can't be spam; a draft is edited, not forwarded.
+  const overflowItems: OverflowItem[] = [
+    ...(isDraft
+      ? []
+      : [{ label: 'Forward', icon: <ForwardIcon className="size-4" />, onClick: forward }]),
+    {
+      label: 'Add to calendar',
+      icon: <CalendarIcon className="size-4" />,
+      onClick: () => setAddToCalendar(true),
+    },
+    ...(isDraft || inRole('sent')
+      ? []
+      : [
+          isJunk
+            ? {
+                label: 'Not spam',
+                icon: <InboxIcon className="size-4" />,
+                onClick: () => moveSpam(false),
+              }
+            : {
+                label: 'Report spam',
+                icon: <SpamIcon className="size-4" />,
+                onClick: () => moveSpam(true),
+              },
+        ]),
+  ];
 
   // Restore a trashed message: MOVE it back to the Inbox + clear the tombstone (awaited server-side),
   // then leave the reader. The `mail:restored` signal re-pulls it so it reappears in the inbox.
@@ -374,14 +422,6 @@ export function ReaderView({
                 <StarIcon className={flagged ? 'fill-accent text-accent' : 'text-fg'} />
               </button>
               <button
-                onClick={() => setAddToCalendar(true)}
-                disabled={!online}
-                className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                aria-label="Add to calendar"
-              >
-                <CalendarIcon className="text-fg" />
-              </button>
-              <button
                 onClick={archive}
                 disabled={!online}
                 className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
@@ -424,16 +464,9 @@ export function ReaderView({
                   >
                     <ReplyAllIcon className="text-fg" />
                   </button>
-                  <button
-                    onClick={forward}
-                    disabled={!online}
-                    className="rounded-full p-2 active:bg-surface-2 disabled:opacity-35"
-                    aria-label="Forward"
-                  >
-                    <ForwardIcon className="text-fg" />
-                  </button>
                 </>
               )}
+              <OverflowMenu items={overflowItems} disabled={!online} />
             </>
           )}
         </div>

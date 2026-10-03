@@ -52,6 +52,20 @@ export function useSignals(): { progress: SyncProgress | null } {
           // the Archive folder when that folder is next viewed.
           void removeCachedMessage(signal.messageId);
           break;
+        case 'mail:moved':
+          // Report spam / Not spam. Into the inbox it's back where lists cache it, so re-pull
+          // it (like a restore); anywhere else, drop it — that folder refetches when viewed.
+          if (signal.role === 'inbox') {
+            clearRemovalTombstone(signal.messageId);
+            unhide(signal.messageId);
+            api
+              .message(signal.messageId)
+              .then(cacheBody)
+              .catch(() => undefined);
+          } else {
+            void removeCachedMessage(signal.messageId);
+          }
+          break;
         case 'mail:restored':
           // A delete/archive was undone (possibly on another device), or the provider never
           // took it and the server put it back — re-pull the message so it reappears where it

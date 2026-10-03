@@ -13,6 +13,7 @@ import {
   isNull,
   lt,
   notExists,
+  notInArray,
   sql,
   type SQL,
 } from 'drizzle-orm';
@@ -60,6 +61,29 @@ export function folderByRole(
     .select()
     .from(folders)
     .where(and(eq(folders.accountId, accountId), eq(folders.role, role)))
+    .get();
+}
+
+/**
+ * The folder a role move (Report spam / Not spam) takes a message out of: its inbox copy when
+ * it has one, else its other durable home — a role folder before a custom label. Trash and the
+ * destination never count: trashed mail is restored, not moved.
+ */
+export function moveSourceFolder(
+  messageId: string,
+  destRole: (typeof folders.$inferSelect)['role'],
+): { id: string; role: (typeof folders.$inferSelect)['role'] } | undefined {
+  return db
+    .select({ id: folders.id, role: folders.role })
+    .from(messageFolders)
+    .innerJoin(folders, eq(folders.id, messageFolders.folderId))
+    .where(
+      and(eq(messageFolders.messageId, messageId), notInArray(folders.role, ['trash', destRole])),
+    )
+    .orderBy(
+      sql`CASE ${folders.role} WHEN 'inbox' THEN 0 WHEN 'custom' THEN 2 ELSE 1 END`,
+      folders.path,
+    )
     .get();
 }
 

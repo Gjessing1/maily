@@ -1,7 +1,8 @@
 /**
- * Message mutations: flag, delete (→ Trash), archive, restore, delete forever.
+ * Message mutations: flag, delete (→ Trash), archive, move (Report spam / Not spam), restore,
+ * delete forever.
  *
- * Flag, delete and archive are mailbox intents in the **server-owned outbox** (src/outbox): the
+ * Flag, delete, archive and move are mailbox intents in the **server-owned outbox** (src/outbox): the
  * enqueue applies the local effect (flag / tombstone / leave the inbox) and signals, the runner
  * pushes it to the provider, and if the provider never takes it the inverse is applied. Delete
  * and archive get a short `dueAt` undo window; the response carries the outbox id + dueAt so the
@@ -11,18 +12,21 @@
  * failure is visible in the response, with nothing local changed.
  */
 import type { FastifyInstance } from 'fastify';
+import type { MoveTargetRole } from '@maily/shared';
 import { emitSignal } from '../../events.js';
-import { folderByRole, getMessage } from '../../db/queries.js';
+import { folderByRole, getMessage, moveSourceFolder } from '../../db/queries.js';
 import { serverPlacement } from '../../db/placement.js';
 import { relinkMessageToFolder, restoreMessageDeleted } from '../../imap/store.js';
 import { withTransientConnection } from '../../imap/connection.js';
 import { moveToFolderOnServer } from '../../imap/move.js';
 import { getEngine } from '../../imap/registry.js';
 import { purgeMessage } from '../../cleanup/purge.js';
-import { enqueueArchive, enqueueDelete, enqueueFlags } from '../../outbox/runner.js';
+import { enqueueArchive, enqueueDelete, enqueueFlags, enqueueMove } from '../../outbox/runner.js';
 
-/** Undo window (ms) for a deferred delete/archive — how long the move is cancelable. */
+/** Undo window (ms) for a deferred delete/archive/move — how long the move is cancelable. */
 const UNDO_WINDOW_MS = 5000;
+
+const MOVE_TARGETS: readonly MoveTargetRole[] = ['junk', 'inbox'];
 
 export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string }; Body: { seen?: boolean; flagged?: boolean } }>(
@@ -144,4 +148,34 @@ export async function messageActionRoutes(app: FastifyInstance): Promise<void> {
     const outboxId = enqueueArchive(m.accountId, m.id, archive.id, dueAt);
     return { ok: true, outboxId, dueAt };
   });
+
+  // Report spam (role 'junk') / Not spam (role 'inbox'). Same deferred, undoable intent as
+  // archive: the message leaves its source folder locally now and the runner MOVEs it at dueAt.
+  // Report spam takes the inbox copy, or the message's other home when it was already archived;
+  // Not spam only applies to mail that is in Spam. On Gmail the MOVE into Spam is what reports it.
+  app.post<{ Params: { id: string }; Body: { role?: unknown } }>(
+    '/api/messages/:id/move',
+    async (req, reply) => {
+      const role = req.body?.role as MoveTargetRole;
+      if (!MOVE_TARGETS.includes(role)) {
+        return reply.code(400).send({ error: `role must be one of ${MOVE_TARGETS.join(', ')}` });
+      }
+      const m = getMessage(req.params.id);
+      if (!m) return reply.code(404).send({ error: 'not found' });
+      if (m.deletedAt) return reply.code(409).send({ error: 'message is in Trash' });
+
+      const dest = folderByRole(m.accountId, role);
+      if (!dest) return reply.code(409).send({ error: `no ${role} folder` });
+      const from = moveSourceFolder(m.id, role);
+      if (!from || (role === 'inbox' && from.role !== 'junk')) {
+        return reply
+          .code(409)
+          .send({ error: role === 'inbox' ? 'not in Spam' : 'nothing to move' });
+      }
+
+      const dueAt = Date.now() + UNDO_WINDOW_MS;
+      const outboxId = enqueueMove(m.accountId, m.id, from.id, dest, dueAt);
+      return { ok: true, outboxId, dueAt };
+    },
+  );
 }

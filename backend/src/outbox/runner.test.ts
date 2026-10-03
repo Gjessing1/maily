@@ -206,6 +206,7 @@ function seedInInbox(opts: { deleted?: boolean; seen?: boolean; flagged?: boolea
     inbox: randomUUID(),
     archive: randomUUID(),
     trash: randomUUID(),
+    junk: randomUUID(),
     label: randomUUID(),
   };
   db.insert(schema.folders)
@@ -213,6 +214,7 @@ function seedInInbox(opts: { deleted?: boolean; seen?: boolean; flagged?: boolea
       { id: f.inbox, accountId, path: 'INBOX', name: 'Inbox', role: 'inbox' },
       { id: f.archive, accountId, path: 'Archive', name: 'Archive', role: 'archive' },
       { id: f.trash, accountId, path: 'Trash', name: 'Trash', role: 'trash' },
+      { id: f.junk, accountId, path: 'Junk', name: 'Junk', role: 'junk' },
       { id: f.label, accountId, path: 'Work', name: 'Work', role: 'custom' },
     ])
     .run();
@@ -285,6 +287,58 @@ test('archive that goes dead is taken back and reported', async () => {
     signals.map((s) => s.type),
     ['mail:restored', 'mail:action-failed'],
   );
+});
+
+test('report spam leaves the inbox at enqueue and announces the destination; cancel puts it back', () => {
+  const { accountId, msg, f } = seedInInbox();
+  const signals: SocketSignal[] = [];
+  const off = onSignal((s) => signals.push(s));
+  const id = R.enqueueMove(
+    accountId,
+    msg,
+    f.inbox,
+    { id: f.junk, role: 'junk' },
+    Date.now() + 60_000,
+  );
+  off();
+
+  assert.deepEqual(mappings(msg), [{ folderId: f.junk, uid: null }], 'in Spam at once');
+  assert.deepEqual(signals, [{ type: 'mail:moved', accountId, messageId: msg, role: 'junk' }]);
+  const row = db.select().from(schema.outbox).where(eq(schema.outbox.id, id)).get();
+  assert.equal(row!.kind, 'move');
+
+  assert.equal(R.cancelOutbox(id), 'canceled');
+  assert.deepEqual(mappings(msg), [{ folderId: f.inbox, uid: 3 }], 'back in the inbox');
+});
+
+test('not spam that goes dead returns the message to Spam and is reported as a move', async () => {
+  const { accountId, msg, f } = seedInInbox();
+  db.delete(schema.messageFolders).where(eq(schema.messageFolders.messageId, msg)).run();
+  db.insert(schema.messageFolders).values({ messageId: msg, folderId: f.junk, uid: 9 }).run();
+  R.enqueueMove(accountId, msg, f.junk, { id: f.inbox, role: 'inbox' }, Date.now() - 1_000);
+  assert.deepEqual(mappings(msg), [{ folderId: f.inbox, uid: null }], 'in the inbox at once');
+  lastAttempt();
+
+  const signals: SocketSignal[] = [];
+  const off = onSignal((s) => signals.push(s));
+  assert.equal(await R.runOutboxOnce(), 0, 'no engine — the MOVE fails');
+  off();
+
+  assert.deepEqual(mappings(msg), [{ folderId: f.junk, uid: 9 }], 'still in Spam');
+  assert.deepEqual(
+    signals.map((s) => (s.type === 'mail:action-failed' ? `${s.type}:${s.action}` : s.type)),
+    ['mail:restored', 'mail:action-failed:move'],
+  );
+});
+
+test('due move of detached mail relinks it locally — no engine needed', async () => {
+  const { accountId, msg, f } = seedInInbox();
+  db.update(schema.messages).set({ localOnly: true }).where(eq(schema.messages.id, msg)).run();
+  R.enqueueMove(accountId, msg, f.inbox, { id: f.junk, role: 'junk' }, Date.now() - 1_000);
+  assert.equal(await R.runOutboxOnce(), 1);
+  assert.deepEqual(mappings(msg), [{ folderId: f.junk, uid: null }]);
+  const row = db.select().from(schema.outbox).where(eq(schema.outbox.messageId, msg)).get();
+  assert.equal(row!.status, 'done');
 });
 
 test('delete that goes dead clears its tombstone — unless it was already tombstoned', async () => {

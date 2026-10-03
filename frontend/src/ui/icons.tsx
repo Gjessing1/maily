@@ -207,6 +207,14 @@ export const SpamIcon = (p: IconProps) => (
   </Base>
 );
 
+export const MoreIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </Base>
+);
+
 export const FolderIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />

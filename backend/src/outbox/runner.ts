@@ -1,12 +1,13 @@
 /**
  * Outbox runner — the server-owned, restart-safe execution path for every action that reaches
- * the provider on the user's behalf (migration 0020). Four kinds share one queue:
+ * the provider on the user's behalf (migration 0020). Five kinds share one queue:
  *   - `send`    — undo-send (queued with a short window) and scheduled "send later".
  *   - `delete`  — the MOVE-to-Trash behind a delete, deferred so it's undoable.
  *   - `archive` — the MOVE-to-Archive behind an archive, deferred so it's undoable.
+ *   - `move`    — a MOVE between role folders (Report spam / Not spam), deferred likewise.
  *   - `flags`   — a read/star STORE, due immediately; due rows are batched per folder.
  *
- * delete/archive/flags are mailbox intents (./intents.ts): the local effect is applied in the
+ * delete/archive/move/flags are mailbox intents (./intents.ts): the local effect is applied in the
  * enqueue transaction and the inverse runs on cancel and on `dead`, followed by a signal, so a
  * provider that never takes the change can't leave maily showing something it doesn't have.
  *
@@ -17,7 +18,13 @@
  * flip so a concurrent cancel and the runner can never both win.
  */
 import { and, asc, eq, lte, or, isNull, count, inArray, lt, sql } from 'drizzle-orm';
-import type { SendMessageRequest, OutboxEntry, OutboxKind, MailboxAction } from '@maily/shared';
+import type {
+  FolderRole,
+  MailboxAction,
+  OutboxEntry,
+  OutboxKind,
+  SendMessageRequest,
+} from '@maily/shared';
 import { db, withWriteRetry } from '../db/client.js';
 import { folders, outbox } from '../db/schema.js';
 import { folderByRole } from '../db/queries.js';
@@ -26,19 +33,19 @@ import { relinkMessageToFolder } from '../imap/store.js';
 import { moveToFolderOnServer } from '../imap/move.js';
 import { storeFlagsOnServer, type FlagStore } from '../imap/flags.js';
 import {
-  applyArchive,
   applyDelete,
   applyFlags,
+  applyMove,
   currentFlags,
   parsePayload,
-  revertArchive,
   revertDelete,
   revertFlags,
-  type ArchivePayload,
+  revertMove,
   type DeletePayload,
   type FlagName,
   type FlagSet,
   type FlagsPayload,
+  type MovePayload,
 } from './intents.js';
 import { getEngine } from '../imap/registry.js';
 import { sendMessage } from '../mail/send.js';
@@ -94,7 +101,7 @@ function insertRow(action: NewAction): string {
  */
 function enqueueIntent<P>(
   accountId: string,
-  kind: 'delete' | 'archive' | 'flags',
+  kind: 'delete' | 'archive' | 'move' | 'flags',
   messageId: string,
   dueAt: number,
   apply: () => P,
@@ -130,9 +137,27 @@ export function enqueueArchive(
 ): string {
   const inboxId = folderByRole(accountId, 'inbox')?.id;
   const { id } = enqueueIntent(accountId, 'archive', messageId, dueAt, () =>
-    applyArchive(messageId, inboxId, archiveId),
+    applyMove(messageId, inboxId, archiveId),
   );
   emitSignal({ type: 'mail:archived', accountId, messageId });
+  return id;
+}
+
+/**
+ * Move between role folders (Report spam: → junk; Not spam: junk → inbox). Leaves `fromId`
+ * now (local relink), MOVEs that copy at `dueAt` unless undone.
+ */
+export function enqueueMove(
+  accountId: string,
+  messageId: string,
+  fromId: string,
+  dest: { id: string; role: FolderRole },
+  dueAt: number,
+): string {
+  const { id } = enqueueIntent(accountId, 'move', messageId, dueAt, () =>
+    applyMove(messageId, fromId, dest.id),
+  );
+  emitSignal({ type: 'mail:moved', accountId, messageId, role: dest.role });
   return id;
 }
 
@@ -173,7 +198,8 @@ function revertIntent(row: IntentRow): void {
         case 'delete':
           return revertDelete(messageId, parsePayload<DeletePayload>(row.payload));
         case 'archive':
-          return revertArchive(messageId, parsePayload<ArchivePayload>(row.payload));
+        case 'move':
+          return revertMove(messageId, parsePayload<MovePayload>(row.payload));
         case 'flags':
           return revertFlags(row.id, messageId, parsePayload<FlagsPayload>(row.payload));
         default:
@@ -343,6 +369,7 @@ function markDone(id: string): void {
 const ACTION_OF: Partial<Record<OutboxKind, MailboxAction>> = {
   delete: 'delete',
   archive: 'archive',
+  move: 'move',
   flags: 'flags',
 };
 
@@ -391,7 +418,7 @@ function markFailed(row: DueRow, message: string, now: Date): void {
   }
 }
 
-/** Execute one claimed send/delete/archive row. Throws on a retryable failure. */
+/** Execute one claimed send/delete/archive/move row. Throws on a retryable failure. */
 async function execute(row: DueRow): Promise<void> {
   if (row.kind === 'send') {
     const engine = requireEngine(row.accountId);
@@ -424,25 +451,31 @@ async function execute(row: DueRow): Promise<void> {
     return;
   }
 
-  if (row.kind === 'archive') {
-    // Only the inbox copy moves; anything not in the inbox is already archived/elsewhere.
-    const dest = archiveDest(row);
+  if (row.kind === 'archive' || row.kind === 'move') {
+    // Only the source copy moves (the inbox, for archive); a message no longer there is
+    // already elsewhere.
+    const dest = moveDest(row);
     if (dest) await moveOrRelink(row, row.messageId, dest.placement, dest.folder);
     markDone(row.id);
+    // Gmail drops every other label when a message enters Spam (and gives them back on the way
+    // out); reconcile now so label views agree without waiting for the next cron pass.
+    if (dest && row.kind === 'move') getEngine(row.accountId)?.reconcileFoldersNow();
   }
 }
 
 /**
- * Where an archive moves from and to. The enqueue already took the message out of the inbox
- * locally, so the inbox copy's UID comes from the intent's payload, not from the mappings. A
- * row queued before intents existed carries no payload and still has its inbox mapping.
+ * Where an archive or move goes from and to. The enqueue already took the message out of the
+ * source folder locally, so the source copy's UID comes from the intent's payload, not from the
+ * mappings. An archive queued before intents existed carries no payload and still has its inbox
+ * mapping.
  */
-function archiveDest(
+function moveDest(
   row: DueRow,
 ): { placement: ServerPlacement; folder: { id: string; path: string } } | null {
   const messageId = row.messageId!;
-  const p = parsePayload<ArchivePayload>(row.payload);
+  const p = parsePayload<MovePayload>(row.payload);
   if (!p) {
+    if (row.kind !== 'archive') return null;
     const inbox = folderByRole(row.accountId, 'inbox');
     const archive = folderByRole(row.accountId, 'archive');
     if (!inbox || !archive) return null;

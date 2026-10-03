@@ -1,6 +1,6 @@
 /**
  * Mailbox intents — the local half of every server-facing mailbox mutation (delete, archive,
- * flags). Each one is an outbox row whose local effect is applied in the same transaction that
+ * move, flags). Each one is an outbox row whose local effect is applied in the same transaction that
  * enqueues it, and whose payload records what that effect replaced. The runner applies the
  * inverse on undo (cancel) and when the server action goes `dead`, so the local mailbox always
  * converges back on what the provider still has instead of silently diverging from it.
@@ -20,10 +20,11 @@ export interface DeletePayload {
   wasDeleted: boolean;
 }
 
-export interface ArchivePayload {
-  /** The inbox mapping the archive removed; null when the message wasn't in the inbox. */
+/** Archive and move share one shape: archive is a move out of the inbox into the archive. */
+export interface MovePayload {
+  /** The source mapping the move removed; null when the message wasn't in that folder. */
   from: { folderId: string; uid: number | null } | null;
-  /** The archive-role folder the message was mapped into. */
+  /** The folder the message was mapped into. */
   destId: string;
   /** Whether that mapping is new — only then does the inverse remove it. */
   addedDest: boolean;
@@ -66,40 +67,41 @@ export function revertDelete(messageId: string, p: DeletePayload | null): boolea
   return true;
 }
 
-// ── archive ─────────────────────────────────────────────────────────────────
+// ── archive / move ──────────────────────────────────────────────────────────
 
 /**
- * Take the message out of the inbox locally: drop the inbox mapping and map it into the archive
- * folder (UID unknown until the server MOVE reports it). Other labels are left alone. Without
- * this the server's read model kept listing an archived message in INBOX for the whole window.
+ * Move the message locally: drop its mapping in `fromId` and map it into `destId` (UID unknown
+ * until the server MOVE reports it). Other labels are left alone. Archive passes the inbox as
+ * `fromId`; without this the server's read model kept listing an archived message in INBOX for
+ * the whole window.
  */
-export function applyArchive(
+export function applyMove(
   messageId: string,
-  inboxId: string | undefined,
-  archiveId: string,
-): ArchivePayload {
-  const from = inboxId
+  fromId: string | undefined,
+  destId: string,
+): MovePayload {
+  const from = fromId
     ? db
         .select({ folderId: messageFolders.folderId, uid: messageFolders.uid })
         .from(messageFolders)
-        .where(and(eq(messageFolders.messageId, messageId), eq(messageFolders.folderId, inboxId)))
+        .where(and(eq(messageFolders.messageId, messageId), eq(messageFolders.folderId, fromId)))
         .get()
     : undefined;
-  if (!from) return { from: null, destId: archiveId, addedDest: false };
+  if (!from) return { from: null, destId, addedDest: false };
 
   db.delete(messageFolders)
-    .where(and(eq(messageFolders.messageId, messageId), eq(messageFolders.folderId, inboxId!)))
+    .where(and(eq(messageFolders.messageId, messageId), eq(messageFolders.folderId, fromId!)))
     .run();
   const added = db
     .insert(messageFolders)
-    .values({ messageId, folderId: archiveId, uid: null })
+    .values({ messageId, folderId: destId, uid: null })
     .onConflictDoNothing()
     .run();
-  return { from, destId: archiveId, addedDest: added.changes === 1 };
+  return { from, destId, addedDest: added.changes === 1 };
 }
 
-/** Put the inbox mapping back and drop the archive mapping this intent created. */
-export function revertArchive(messageId: string, p: ArchivePayload | null): boolean {
+/** Put the source mapping back and drop the destination mapping this intent created. */
+export function revertMove(messageId: string, p: MovePayload | null): boolean {
   if (!p?.from) return false;
   db.insert(messageFolders)
     .values({ messageId, folderId: p.from.folderId, uid: p.from.uid })

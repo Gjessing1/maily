@@ -430,7 +430,7 @@ export const outbox = sqliteTable(
     id: uuid(),
     accountId: text('account_id').notNull(),
     // No CHECK constraint on the column, so a new kind needs no migration.
-    kind: text('kind', { enum: ['send', 'delete', 'archive', 'flags'] }).notNull(),
+    kind: text('kind', { enum: ['send', 'delete', 'archive', 'move', 'flags'] }).notNull(),
     /** Target message for delete/archive/flags; null for a send (which carries `payload`). */
     messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }),
     /**

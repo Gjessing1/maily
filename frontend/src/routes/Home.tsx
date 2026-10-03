@@ -4,7 +4,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
 import { cache } from '../db/cache';
-import { requestArchiveMany, requestDeleteMany, showNotice } from '../state/undo';
+import {
+  requestArchiveMany,
+  requestDeleteMany,
+  requestNotSpamMany,
+  requestSpamMany,
+  showNotice,
+} from '../state/undo';
 import { groupConversations } from '../state/threads';
 import { mutateFlags } from '../state/mutate';
 import { MessageRow } from '../components/MessageRow';
@@ -202,6 +208,15 @@ export function Home() {
     [expandIds, online],
   );
 
+  // Report spam / Not spam for the whole conversation (context menu), behind one undo window.
+  const handleSpam = useCallback(
+    (id: string, spam: boolean) => {
+      if (!online) return showNotice(OFFLINE_READ_ONLY_MESSAGE);
+      void (spam ? requestSpamMany : requestNotSpamMany)(expandIds(id));
+    },
+    [expandIds, online],
+  );
+
   // ── Right-click context menu (desktop) ──────────────────────────────────────
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const openMenu = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), []);
@@ -265,6 +280,13 @@ export function Home() {
   // Purge Trash (local only): shown when viewing a concrete account's trash folder. Reclaims the
   // disk used by everything in it, keeping a no-resync tombstone; the provider's Trash is untouched.
   const isTrashFolder = folder?.role === 'trash';
+  const viewRole = folder?.role ?? uRole;
+  const spamAction =
+    viewRole === 'junk'
+      ? 'not'
+      : viewRole === 'sent' || viewRole === 'drafts' || viewRole === 'trash'
+        ? null
+        : 'report';
   // Trash is hidden from normal search results, so opening Search from a trash view
   // (account or unified) pre-scopes the query with the `in:trash` operator.
   // (Trailing space so the user can type terms straight after the prefilled operator.)
@@ -572,6 +594,8 @@ export function Home() {
               onClose={closeMenu}
               onToggleRead={handleToggleRead}
               onArchive={handleArchive}
+              onSpam={handleSpam}
+              spam={spamAction}
               onDelete={handleDelete}
               onSelect={enterSelect}
             />
