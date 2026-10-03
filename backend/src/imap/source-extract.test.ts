@@ -246,3 +246,214 @@ test('legacy rows (no CID, no ordinal) fall back to the filename', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * A forwarded message (`message/rfc822`) with its own attachment, placed *before* an
+ * outer attachment. IMAP BODYSTRUCTURE always nests the forwarded message's parts, so
+ * `extractStructure` numbers `inner.pdf` 0 and `outer.pdf` 1. The `.eml` walk must
+ * descend the same way; if it treats the forwarded message as one leaf, `outer.pdf`
+ * becomes ordinal 0 and a request for `inner.pdf` is served `outer.pdf`'s bytes.
+ * Covers every disposition the wrapper shows up with in real mail: `attachment`
+ * (forward-as-attachment), none (a DSN bounce's copy of the original), and `inline`.
+ */
+const INNER_EML = [
+  'From: c@example.com',
+  'Subject: the original',
+  'MIME-Version: 1.0',
+  'Content-Type: multipart/mixed; boundary="IN"',
+  '',
+  '--IN',
+  'Content-Type: text/plain; charset="utf-8"',
+  '',
+  'inner body',
+  '--IN',
+  'Content-Type: application/pdf',
+  'Content-Disposition: attachment; filename="inner.pdf"',
+  'Content-Transfer-Encoding: base64',
+  '',
+  'aW5uZXI=',
+  '--IN--',
+  '',
+].join(CRLF);
+
+function forwardedEml(wrapperHeaders: string[], innerBody: string): string {
+  return [
+    'From: a@example.com',
+    'To: b@example.com',
+    'Subject: Fwd: the original',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="MIX"',
+    '',
+    '--MIX',
+    'Content-Type: text/plain; charset="utf-8"',
+    '',
+    'see forwarded',
+    '--MIX',
+    'Content-Type: message/rfc822',
+    ...wrapperHeaders,
+    '',
+    innerBody,
+    '--MIX',
+    'Content-Type: application/pdf',
+    'Content-Disposition: attachment; filename="outer.pdf"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    'b3V0ZXI=',
+    '--MIX--',
+    '',
+  ].join(CRLF);
+}
+
+/** imapflow's shape for the same message: the rfc822 node nests the inner structure. */
+function forwardedBodystructure(wrapper: Record<string, unknown>): MessageStructureObject {
+  return {
+    type: 'multipart/mixed',
+    childNodes: [
+      { type: 'text/plain', part: '1', size: 13 },
+      {
+        type: 'message/rfc822',
+        part: '2',
+        ...wrapper,
+        childNodes: [
+          {
+            type: 'multipart/mixed',
+            part: '2',
+            childNodes: [
+              { type: 'text/plain', part: '2.1', size: 10 },
+              {
+                type: 'application/pdf',
+                part: '2.2',
+                disposition: 'attachment',
+                dispositionParameters: { filename: 'inner.pdf' },
+                size: 8,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'application/pdf',
+        part: '3',
+        disposition: 'attachment',
+        dispositionParameters: { filename: 'outer.pdf' },
+        size: 8,
+      },
+    ],
+  } as unknown as MessageStructureObject;
+}
+
+const FORWARDED_VARIANTS: Array<{
+  name: string;
+  headers: string[];
+  wrapper: Record<string, unknown>;
+}> = [
+  {
+    name: 'forwarded as attachment',
+    headers: ['Content-Disposition: attachment; filename="original.eml"'],
+    wrapper: { disposition: 'attachment', dispositionParameters: { filename: 'original.eml' } },
+  },
+  { name: 'no disposition (bounce report)', headers: [], wrapper: {} },
+  {
+    name: 'inline',
+    headers: ['Content-Disposition: inline', 'Content-Transfer-Encoding: 7bit'],
+    wrapper: { disposition: 'inline', encoding: '7bit' },
+  },
+];
+
+for (const variant of FORWARDED_VARIANTS) {
+  test(`forwarded .eml (${variant.name}): walks agree and serve the right bytes`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'maily-forwarded-'));
+    const path = join(dir, 'source.eml');
+    await writeFile(path, forwardedEml(variant.headers, INNER_EML));
+    try {
+      const bs = extractStructure(forwardedBodystructure(variant.wrapper)).attachments;
+      const src = await enumerateSourceParts(path);
+
+      const expected = [
+        [0, 'application/pdf', 'inner.pdf'],
+        [1, 'application/pdf', 'outer.pdf'],
+      ];
+      assert.deepEqual(
+        bs.map((p) => [p.partOrdinal, p.mimeType, p.filename]),
+        expected,
+        'BODYSTRUCTURE walk',
+      );
+      assert.deepEqual(
+        src.map((p) => [p.partOrdinal, p.mimeType, p.filename]),
+        expected,
+        'raw-.eml walk',
+      );
+
+      // The stored ordinal from the BODYSTRUCTURE walk pulls the matching bytes.
+      for (const [ordinal, , filename] of expected) {
+        const out = join(dir, `out-${ordinal}.bin`);
+        const part = await extractPartFromSource(
+          path,
+          { contentId: null, partOrdinal: ordinal as number },
+          out,
+        );
+        assert.equal(part?.filename, filename, `ordinal ${ordinal} filename`);
+        assert.equal(
+          (await readFile(out)).toString(),
+          (filename as string).replace('.pdf', ''),
+          `ordinal ${ordinal} bytes`,
+        );
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+/**
+ * A transfer-encoded embedded message (malformed per RFC 2046, but it exists) can't be
+ * walked from the raw bytes, so both sides must treat it as one opaque leaf — even
+ * when the server's BODYSTRUCTURE nests its parts anyway.
+ */
+test('transfer-encoded forwarded .eml is one leaf on both walks', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'maily-forwarded-b64-'));
+  const path = join(dir, 'source.eml');
+  const encoded = Buffer.from(INNER_EML).toString('base64');
+  await writeFile(
+    path,
+    forwardedEml(
+      [
+        'Content-Disposition: attachment; filename="original.eml"',
+        'Content-Transfer-Encoding: base64',
+      ],
+      encoded,
+    ),
+  );
+  try {
+    const bs = extractStructure(
+      forwardedBodystructure({
+        disposition: 'attachment',
+        dispositionParameters: { filename: 'original.eml' },
+        encoding: 'base64',
+      }),
+    ).attachments;
+    const src = await enumerateSourceParts(path);
+
+    const expected = [
+      [0, 'message/rfc822', 'original.eml'],
+      [1, 'application/pdf', 'outer.pdf'],
+    ];
+    assert.deepEqual(
+      bs.map((p) => [p.partOrdinal, p.mimeType, p.filename]),
+      expected,
+      'BODYSTRUCTURE walk',
+    );
+    assert.deepEqual(
+      src.map((p) => [p.partOrdinal, p.mimeType, p.filename]),
+      expected,
+      'raw-.eml walk',
+    );
+
+    const out = join(dir, 'out-eml.bin');
+    const part = await extractPartFromSource(path, { contentId: null, partOrdinal: 0 }, out);
+    assert.equal(part?.mimeType, 'message/rfc822');
+    assert.equal((await readFile(out)).toString(), INNER_EML, 'decoded embedded message');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

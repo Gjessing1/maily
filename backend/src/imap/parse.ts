@@ -58,6 +58,19 @@ export function classifyPart(t: PartTraits): { selected: boolean; isInline: bool
   return { selected, isInline };
 }
 
+/**
+ * Whether an embedded `message/rfc822` part is walked into (its nested parts become
+ * attachment candidates) rather than treated as one opaque leaf. Matches the `.eml`
+ * walk's splitter, which parses an embedded message only when its body is not
+ * transfer-encoded — RFC 2046 forbids encoding message/rfc822 at all, so this only
+ * bites on malformed mail, but both walks must make the same call or the ordinals
+ * after it drift.
+ */
+export function embeddedMessageIsWalked(encoding: string | null | undefined): boolean {
+  const enc = (encoding || '').toLowerCase();
+  return !enc || enc === '7bit' || enc === '8bit' || enc === 'binary';
+}
+
 /** Walk the BODYSTRUCTURE tree, collecting body part ids and attachment metadata. */
 export function extractStructure(root: MessageStructureObject | undefined): ExtractedStructure {
   const out: ExtractedStructure = {
@@ -85,12 +98,13 @@ export function extractStructure(root: MessageStructureObject | undefined): Extr
   out.calendarPartId = selectedBody.calendar;
 
   const visit = (node: MessageStructureObject): void => {
-    if (node.childNodes && node.childNodes.length > 0) {
+    const type = (node.type || '').toLowerCase();
+    const opaqueMessage = type === 'message/rfc822' && !embeddedMessageIsWalked(node.encoding);
+    if (node.childNodes && node.childNodes.length > 0 && !opaqueMessage) {
       node.childNodes.forEach(visit);
       return;
     }
 
-    const type = (node.type || '').toLowerCase();
     const filename = filenameOf(node);
     // A non-multipart message has no `part`; its single body is part "1".
     const partId = node.part ?? '1';

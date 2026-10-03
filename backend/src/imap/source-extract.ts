@@ -80,15 +80,45 @@ function traitsOf(node: MimeNode): PartTraits {
 }
 
 /**
+ * A `Splitter` that walks into embedded `message/rfc822` parts the way IMAP
+ * BODYSTRUCTURE does. Stock mailsplit only parses into an embedded message when it is
+ * `disposition: inline`; a forwarded `.eml` *attachment* (or a bounce report's
+ * undisposed copy of the original) stays one opaque leaf. The server's BODYSTRUCTURE
+ * nests the forwarded message's parts regardless, so `extractStructure` numbers its
+ * attachments too, and every later ordinal would be shifted on this side — serving
+ * the wrong part's bytes. Clearing the disposition on the rfc822 node right after its
+ * headers parse makes mailsplit descend; its own transfer-encoding guard still keeps
+ * an encoded embedded message as a leaf, which `embeddedMessageIsWalked` mirrors on
+ * the BODYSTRUCTURE side. `newNode` is a mailsplit internal (absent from its typings);
+ * the forwarded-`.eml` case in `source-extract.test.ts` fails if it ever changes.
+ */
+class EmbeddedMessageSplitter extends Splitter {
+  newNode(parent?: MimeNode | false): void {
+    (Splitter.prototype as unknown as { newNode(p?: MimeNode | false): void }).newNode.call(
+      this,
+      parent,
+    );
+    const node = (this as unknown as { node: MimeNode }).node;
+    const parseHeaders = node.parseHeaders.bind(node);
+    node.parseHeaders = () => {
+      parseHeaders();
+      if (node.rfc822) node.disposition = 'inline';
+    };
+  }
+}
+
+/**
  * Decide whether one `mailsplit` node is a *selected* attachment part, returning its
- * descriptor or null. Container nodes (multipart/*, message/rfc822) carry no leaf
- * body and are skipped here, exactly as `extractStructure` skips anything with child
- * nodes — so the running ordinal counts only real leaf parts. This is the single
- * point of node→selection truth shared by the streaming extractor and the
- * enumerator below; both therefore agree with `extractStructure` by construction.
+ * descriptor or null. Container nodes (multipart/*, a walked message/rfc822) carry no
+ * leaf body and are skipped here, exactly as `extractStructure` skips anything it
+ * descends into — so the running ordinal counts only real leaf parts. An embedded
+ * message mailsplit did *not* walk (transfer-encoded) is a leaf on both sides and
+ * goes through the classifier like any other part. This is the single point of
+ * node→selection truth shared by the streaming extractor and the enumerator below;
+ * both therefore agree with `extractStructure` by construction.
  */
 function selectPart(node: MimeNode): Omit<SourcePart, 'partOrdinal'> | null {
-  if (node.multipart || node.rfc822) return null;
+  if (node.multipart || (node.rfc822 && node.messageNode)) return null;
   if (!classifyPart(traitsOf(node)).selected) return null;
   const cidRaw = node.headers ? node.headers.getFirst('content-id') : '';
   return {
@@ -130,7 +160,7 @@ function devNull(): Writable {
  */
 export async function enumerateSourceParts(sourcePath: string): Promise<SourcePart[]> {
   const parts: SourcePart[] = [];
-  const splitter = new Splitter();
+  const splitter = new EmbeddedMessageSplitter();
   splitter.on('data', (chunk) => {
     if (chunk.type !== 'node') return;
     const sel = selectPart(chunk as unknown as MimeNode);
@@ -188,7 +218,13 @@ export async function extractPartFromSource(
     data.done();
   });
 
-  await pipeline(createReadStream(sourcePath), new Splitter(), streamer, new Joiner(), devNull());
+  await pipeline(
+    createReadStream(sourcePath),
+    new EmbeddedMessageSplitter(),
+    streamer,
+    new Joiner(),
+    devNull(),
+  );
   const hit = matched as Omit<SourcePart, 'partOrdinal'> | null;
   if (!hit || !writePromise) return null;
   await writePromise;
