@@ -10,6 +10,7 @@ import { env } from './env.js';
 import { sqlite } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { startDbBackup } from './db/backup.js';
+import { startOrphanGc } from './storage/orphanGc.js';
 import { createLogger } from './logger.js';
 import { loadAccountConfigs } from './config/accounts.js';
 import { startSyncEngines, type AccountEngine } from './imap/engine.js';
@@ -109,6 +110,10 @@ async function main(): Promise<void> {
   // Periodic WAL-safe SQLite snapshot into backups/ for the off-host backup (backrest) to grab —
   // a plain copy of the live WAL-mode DB can be torn. The live source of truth (ARCHITECTURE §1).
   startDbBackup();
+
+  // Weekly reclaim of attachment/source files no DB row points at (permanent deletes,
+  // UIDVALIDITY clears, interrupted downloads). Async walk; never on the listen path.
+  startOrphanGc();
 
   const accounts = loadAccountConfigs();
   if (accounts.length === 0) {

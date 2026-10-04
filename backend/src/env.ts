@@ -142,6 +142,11 @@ export const env = {
     /** Rolling consistent snapshot file, atomically replaced each cycle. */
     path: resolve(backupDir, 'mail.sqlite.bak'),
   },
+  /**
+   * Weekly orphan-file GC over `attachments/` + `source/` (storage/orphanGc.ts). On by
+   * default; set `MAILY_ORPHAN_GC=false` to disable.
+   */
+  orphanGcEnabled: optional('MAILY_ORPHAN_GC', 'true') !== 'false',
   /** Local SQLite cache window: how many days back the sync `since` filter reaches (0 = all). */
   cacheWindowDays: Number(optional('MAILY_CACHE_WINDOW_DAYS', '365')),
   /**
