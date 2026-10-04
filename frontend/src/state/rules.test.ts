@@ -1,5 +1,5 @@
 /**
- * Blocking a sender never duplicates a rule, and apply-to-existing walks the bounded server
+ * Blocking or protecting a sender never duplicates a rule, and apply-to-existing walks the bounded server
  * passes until nothing is left — without spinning when a pass changes nothing.
  */
 import { beforeEach, expect, test, vi } from 'vitest';
@@ -21,7 +21,7 @@ vi.mock('../api/client', () => ({
 }));
 
 const { ApiError } = await import('../api/client');
-const { applyRuleToExisting, blockSender, describeActions, ruleErrorMessage } =
+const { applyRuleToExisting, blockSender, describeActions, protectSender, ruleErrorMessage } =
   await import('./rules');
 
 const rule = (over: Partial<MailRule> = {}): MailRule => ({
@@ -32,6 +32,7 @@ const rule = (over: Partial<MailRule> = {}): MailRule => ({
   move: null,
   markRead: true,
   star: false,
+  protect: false,
   enabled: false,
   hits: 3,
   lastHitAt: null,
@@ -67,8 +68,28 @@ test('blocking a sender that already has a rule turns that rule into an enabled 
     move: 'spam',
     markRead: true,
     star: false,
+    protect: false,
     enabled: true,
   });
+});
+
+test('protecting a sender group picks the rule kind from the key and merges into an existing rule', async () => {
+  api.rules.create.mockResolvedValue(rule({ protect: true }));
+  await protectSender('promo.example');
+  expect(api.rules.create).toHaveBeenCalledWith({
+    matchKind: 'domain',
+    matchValue: 'promo.example',
+    protect: true,
+  });
+
+  api.rules.create.mockRejectedValue(new ApiError(409, '{"error":"duplicate"}'));
+  api.rules.list.mockResolvedValue([rule({ move: 'archive' })]);
+  api.rules.update.mockResolvedValue(rule({ protect: true }));
+  await protectSender('Spam@Example.com');
+  expect(api.rules.update).toHaveBeenCalledWith(
+    'r1',
+    expect.objectContaining({ matchKind: 'sender', move: 'archive', protect: true, enabled: true }),
+  );
 });
 
 test('any other refusal is passed on', async () => {
@@ -94,6 +115,9 @@ test('apply-to-existing stops when a pass changes nothing', async () => {
 test('labels', () => {
   expect(describeActions({ move: 'spam', markRead: true, star: true })).toBe(
     'Move to Spam · Mark read · Star',
+  );
+  expect(describeActions({ move: null, markRead: false, star: false, protect: true })).toBe(
+    'Protect from cleanup',
   );
   expect(ruleErrorMessage(new Error('{"error":"a rule for this match already exists"}'))).toBe(
     'a rule for this match already exists',

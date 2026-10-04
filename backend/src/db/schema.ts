@@ -474,6 +474,8 @@ export const mailRules = sqliteTable('mail_rules', {
   move: text('move', { enum: ['spam', 'archive', 'trash'] }),
   markRead: integer('mark_read', { mode: 'boolean' }).notNull().default(false),
   star: integer('star', { mode: 'boolean' }).notNull().default(false),
+  /** Shield every message from this match from cleanup (a gate, not an ingest action). */
+  protect: integer('protect', { mode: 'boolean' }).notNull().default(false),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   hits: integer('hits').notNull().default(0),
   lastHitAt: integer('last_hit_at', { mode: 'timestamp_ms' }),

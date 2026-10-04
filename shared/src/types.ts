@@ -802,7 +802,8 @@ export type RuleMove = 'spam' | 'archive' | 'trash';
 /**
  * A per-sender / per-domain rule acting on new INBOX mail (`/api/rules`). The actions are
  * independent. When rules conflict, a sender rule's `move` beats a domain rule's, and the
- * read/star flags are OR-ed across every matching rule.
+ * read/star flags are OR-ed across every matching rule. `protect` is different: it is not an
+ * ingest action but a cleanup gate over ALL the match's mail, old and new.
  */
 export interface MailRule {
   id: string;
@@ -814,6 +815,8 @@ export interface MailRule {
   move: RuleMove | null;
   markRead: boolean;
   star: boolean;
+  /** Shield all mail from this match from cleanup (whole-sender Keep). */
+  protect: boolean;
   enabled: boolean;
   hits: number;
   lastHitAt: number | null;
@@ -829,6 +832,7 @@ export interface MailRuleInput {
   move?: RuleMove | null;
   markRead?: boolean;
   star?: boolean;
+  protect?: boolean;
   enabled?: boolean;
 }
 
@@ -837,6 +841,8 @@ export interface RulePreview {
   count: number;
   /** A few of the newest matches, so the user can see what the count means. */
   sample: { id: string; fromAddress: string | null; subject: string | null; receivedAt: number }[];
+  /** With `protect`: how much live mail (any folder) the rule shields from cleanup. */
+  protectedCount: number;
 }
 
 /** `POST /api/rules/:id/apply`: one bounded pass over existing INBOX mail. */

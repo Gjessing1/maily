@@ -8,6 +8,9 @@
  *
  * Safety is server-side: the execute endpoint re-runs the same slice + HARD safety predicates
  * and intersects them with whatever scope we send, so a stale/protected id is silently dropped.
+ *
+ * A sender drill also offers "Protect": a protect rule (Settings → Rules) that takes the whole
+ * sender out of every cleanup slice — the per-row Keep, for all of their mail at once.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GUTTER, NARROW_COLUMN, PAGE } from '../ui/layout';
@@ -20,8 +23,11 @@ import {
   getDrillState,
   setDrillState,
 } from '../state/cleanupDrill';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { protectSender, ruleErrorMessage } from '../state/rules';
+import { showNotice } from '../state/undo';
 import { Spinner } from '../ui/Spinner';
-import { BackIcon, SearchIcon, TrashIcon } from '../ui/icons';
+import { BackIcon, SearchIcon, ShieldIcon, TrashIcon } from '../ui/icons';
 import { CleanupMessageRow, SLICE_LABELS, formatBytes } from './Cleanup';
 
 /** Messages fetched per page; "Load more" pulls the next page. */
@@ -306,6 +312,25 @@ export function CleanupMessages() {
     }
   }
 
+  // Protect the whole sender group (a protect rule) — confirmed, since it outlives this screen.
+  const [confirmProtect, setConfirmProtect] = useState(false);
+  const [protecting, setProtecting] = useState(false);
+  const canProtect = actionable && !!domain && domain !== '(unknown)' && exec === 'idle';
+  async function protect() {
+    if (!domain) return;
+    setConfirmProtect(false);
+    setProtecting(true);
+    try {
+      await protectSender(domain);
+      deleteDrillState(stateKey);
+      showNotice(`${domain} is protected from cleanup`);
+      navigate(-1);
+    } catch (e) {
+      showNotice(`Couldn’t protect — ${ruleErrorMessage(e)}`);
+      setProtecting(false);
+    }
+  }
+
   const title = domain || SLICE_LABELS[slice] || 'Messages';
   // The selection-driven trash action bar; the keep-undo toast sits just above it when shown.
   const showActionBar = actionable && !loading && messages.length > 0 && exec !== 'done';
@@ -330,6 +355,18 @@ export function CleanupMessages() {
               {!loading && ` · ${total.toLocaleString()} message${total === 1 ? '' : 's'}`}
             </p>
           </div>
+          {canProtect && (
+            <button
+              type="button"
+              onClick={() => setConfirmProtect(true)}
+              disabled={protecting}
+              aria-label={`Protect ${domain} from cleanup`}
+              title="Protect sender from cleanup"
+              className="shrink-0 rounded-full p-2 text-accent active:bg-surface-2 disabled:opacity-50"
+            >
+              <ShieldIcon className="size-5" />
+            </button>
+          )}
           {actionable && !loading && messages.length > 0 && exec === 'idle' && (
             <button
               type="button"
@@ -500,6 +537,18 @@ export function CleanupMessages() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmProtect}
+        title={`Protect ${domain ?? 'this sender'}?`}
+        message={
+          domain?.includes('@')
+            ? 'All mail from this address — what you have now and what arrives later — is never offered for deletion in Cleanup, on every account. Remove the rule in Settings → Rules to undo.'
+            : 'All mail from this domain and its subdomains — what you have now and what arrives later — is never offered for deletion in Cleanup, on every account. Remove the rule in Settings → Rules to undo.'
+        }
+        confirmLabel="Protect"
+        onConfirm={() => void protect()}
+        onCancel={() => setConfirmProtect(false)}
+      />
     </div>
   );
 }

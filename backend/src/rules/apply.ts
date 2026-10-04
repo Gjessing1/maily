@@ -145,6 +145,8 @@ function candidates(rule: Omit<ValidRule, 'enabled'>, limit: number) {
   if (rule.move) changes.push(sql`1`);
   if (rule.markRead) changes.push(sql`${messages.seen} = 0`);
   if (rule.star) changes.push(sql`${messages.flagged} = 0`);
+  // Protect-only: nothing to do to inbox mail (an empty or() would match everything).
+  if (changes.length === 0) return { rows: [], total: 0 };
   const where = and(
     eq(folders.role, 'inbox'),
     visible(),
@@ -181,10 +183,31 @@ function candidates(rule: Omit<ValidRule, 'enabled'>, limit: number) {
   return { rows, total };
 }
 
-/** How much existing INBOX mail a (possibly unsaved) rule would change, with a few examples. */
+/** Live mail in any folder a protect rule shields from cleanup. */
+function protectedCount(rule: Omit<ValidRule, 'enabled'>): number {
+  return (
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(messages)
+      .where(
+        and(
+          visible(),
+          rule.accountId ? eq(messages.accountId, rule.accountId) : undefined,
+          matchSql(rule),
+        ),
+      )
+      .get()?.n ?? 0
+  );
+}
+
+/**
+ * How much existing INBOX mail a (possibly unsaved) rule would change, with a few examples —
+ * and, for a protect rule, how much mail it shields from cleanup.
+ */
 export function previewRule(rule: Omit<ValidRule, 'enabled'>): RulePreview {
   const { rows, total } = candidates(rule, PREVIEW_SAMPLE);
   return {
+    protectedCount: rule.protect ? protectedCount(rule) : 0,
     count: total,
     sample: rows.map((r) => ({
       id: r.id,

@@ -277,3 +277,47 @@ test('apply to existing keeps sender-over-domain precedence', () => {
     0,
   );
 });
+
+test('protect-only rules never act on ingest; preview reports the shielded mail instead', () => {
+  const s = seedAccount();
+  const rule = addRule(
+    { matchKind: 'domain', matchValue: 'bank.example', protect: true },
+    new Date(0),
+  );
+  const id = seedInboxMessage(s, 'statements@bank.example');
+
+  assert.equal(A.applyRulesOnIngest(s.accountId, id, s.inbox), null);
+  assert.deepEqual(outboxKinds(id), []);
+  assert.equal(S.getRule(rule.id)!.hits, 0, 'a gate counts no ingest hits');
+
+  const p = A.previewRule(
+    S.validateRuleInput({ matchKind: 'domain', matchValue: 'bank.example', protect: true }),
+  );
+  assert.equal(p.count, 0, 'nothing in the inbox to change');
+  assert.equal(p.protectedCount, 1);
+  assert.deepEqual(A.applyRuleToExisting(rule.id), { applied: 0, remaining: 0 });
+
+  // Combined with an ingest action, the action still fires.
+  const both = addRule(
+    { matchKind: 'sender', matchValue: 'vip@x.example', star: true, protect: true },
+    new Date(0),
+  );
+  const vip = seedInboxMessage(s, 'vip@x.example');
+  assert.deepEqual(A.applyRulesOnIngest(s.accountId, vip, s.inbox), { moved: false, read: false });
+  assert.equal(message(vip).flagged, true);
+  assert.equal(S.getRule(both.id)!.hits, 1);
+});
+
+test('validation: protect is a boolean and cannot be combined with a Trash move', () => {
+  const bad = (input: unknown) =>
+    assert.throws(
+      () => S.validateRuleInput(input),
+      (err: unknown) => err instanceof S.RuleInputError && err.status === 400,
+    );
+  bad({ matchKind: 'sender', matchValue: 'a@x.example', protect: 'yes' });
+  bad({ matchKind: 'sender', matchValue: 'a@x.example', protect: true, move: 'trash' });
+  assert.equal(
+    S.validateRuleInput({ matchKind: 'sender', matchValue: 'a@x.example', protect: true }).protect,
+    true,
+  );
+});

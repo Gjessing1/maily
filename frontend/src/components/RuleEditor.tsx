@@ -2,7 +2,8 @@
  * Add/edit sheet for one mail rule, shared by Settings → Rules and the reader's
  * "Rule for this sender…". Saving acts only on mail that arrives afterwards; the inbox mail the
  * rule already matches is shown as a live preview and changed only when the user ticks
- * "Also apply now" — never as a side effect of saving.
+ * "Also apply now" — never as a side effect of saving. "Protect from cleanup" is the exception
+ * by nature: it is a gate, not an action, so it covers the sender's existing mail at once.
  */
 import { useEffect, useState } from 'react';
 import type { MailRule, MailRuleInput, RuleMatchKind, RuleMove, RulePreview } from '@maily/shared';
@@ -51,6 +52,7 @@ export function RuleEditor({
   const [move, setMove] = useState<RuleMove | null>(rule?.move ?? null);
   const [markRead, setMarkRead] = useState(rule?.markRead ?? false);
   const [star, setStar] = useState(rule?.star ?? false);
+  const [protect, setProtect] = useState(rule?.protect ?? false);
   const [preview, setPreview] = useState<RulePreview | null>(null);
   const [applyNow, setApplyNow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,7 +62,17 @@ export function RuleEditor({
   // Mounted only while open, so Back always means "dismiss the sheet".
   useBackHandler(true, onClose);
 
-  const hasAction = move !== null || markRead || star;
+  const hasAction = move !== null || markRead || star || protect;
+  // Protecting mail from cleanup while trashing it on arrival contradicts itself (the server
+  // refuses it), so picking one clears the other.
+  const chooseMove = (next: RuleMove | null) => {
+    setMove(next);
+    if (next === 'trash') setProtect(false);
+  };
+  const chooseProtect = (on: boolean) => {
+    setProtect(on);
+    if (on && move === 'trash') setMove(null);
+  };
   const value = matchValue.trim();
   const input: MailRuleInput = {
     accountId,
@@ -69,6 +81,7 @@ export function RuleEditor({
     move,
     markRead,
     star,
+    protect,
     enabled: rule?.enabled ?? true,
   };
   // A disabled rule can't be applied; turn it on in the list first.
@@ -76,7 +89,7 @@ export function RuleEditor({
 
   // Live preview of the inbox mail this match would change. A value the server rejects just
   // means "not a full address/domain yet" while typing — no count, no error.
-  const previewKey = JSON.stringify([accountId, matchKind, value, move, markRead, star]);
+  const previewKey = JSON.stringify([accountId, matchKind, value, move, markRead, star, protect]);
   useEffect(() => {
     setPreview(null);
     if (!value || !hasAction) return;
@@ -196,12 +209,21 @@ export function RuleEditor({
           )}
 
           <Field label="Move it">
-            <Chips value={move} options={MOVE_OPTIONS} onSelect={setMove} />
+            <Chips value={move} options={MOVE_OPTIONS} onSelect={chooseMove} />
           </Field>
 
           <Field label="Also">
             <Toggle label="Mark as read" on={markRead} onChange={setMarkRead} />
             <Toggle label="Star" on={star} onChange={setStar} />
+          </Field>
+
+          <Field label="Cleanup">
+            <Toggle label="Protect from cleanup" on={protect} onChange={chooseProtect} />
+            <p className="text-xs text-faint">
+              {protect && (preview?.protectedCount ?? 0) > 0
+                ? `Shields ${preview!.protectedCount.toLocaleString()} message${preview!.protectedCount === 1 ? '' : 's'} you already have, and everything that arrives later.`
+                : 'Never offer this mail for deletion in Cleanup — old mail included.'}
+            </p>
           </Field>
 
           {!hasAction && (

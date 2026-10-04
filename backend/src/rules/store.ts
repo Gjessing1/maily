@@ -31,6 +31,7 @@ export function toDto(r: RuleRow): MailRule {
     move: r.move,
     markRead: r.markRead,
     star: r.star,
+    protect: r.protect,
     enabled: r.enabled,
     hits: r.hits,
     lastHitAt: r.lastHitAt?.getTime() ?? null,
@@ -45,6 +46,7 @@ export interface ValidRule {
   move: RuleMove | null;
   markRead: boolean;
   star: boolean;
+  protect: boolean;
   enabled: boolean;
 }
 
@@ -68,15 +70,20 @@ export function validateRuleInput(body: unknown): ValidRule {
   if (move !== null && !MOVES.includes(move)) {
     throw new RuleInputError(`move must be one of ${MOVES.join(', ')} or null`);
   }
-  for (const k of ['markRead', 'star', 'enabled'] as const) {
+  for (const k of ['markRead', 'star', 'protect', 'enabled'] as const) {
     if (b[k] !== undefined && typeof b[k] !== 'boolean') {
       throw new RuleInputError(`${k} must be a boolean`);
     }
   }
   const markRead = (b.markRead as boolean | undefined) ?? false;
   const star = (b.star as boolean | undefined) ?? false;
-  if (move === null && !markRead && !star) {
-    throw new RuleInputError('a rule needs at least one action (move, markRead or star)');
+  const protect = (b.protect as boolean | undefined) ?? false;
+  if (move === null && !markRead && !star && !protect) {
+    throw new RuleInputError('a rule needs at least one action (move, markRead, star or protect)');
+  }
+  // Protecting mail from cleanup while trashing it on arrival contradicts itself.
+  if (protect && move === 'trash') {
+    throw new RuleInputError('a protect rule cannot also move mail to Trash');
   }
   const accountId = (b.accountId ?? null) as string | null;
   if (accountId !== null) {
@@ -92,6 +99,7 @@ export function validateRuleInput(body: unknown): ValidRule {
     move,
     markRead,
     star,
+    protect,
     enabled: (b.enabled as boolean | undefined) ?? true,
   };
 }

@@ -1,6 +1,7 @@
 /**
  * Client helpers for mail rules (`/api/rules`): the reader's one-tap "Block sender/domain",
- * the bounded apply-to-existing loop, and the labels the rule list and editor share.
+ * cleanup's one-tap "Protect sender", the bounded apply-to-existing loop, and the labels the
+ * rule list and editor share.
  */
 import type { MailRule, MailRuleInput, RuleMatchKind, RuleMove } from '@maily/shared';
 import { api, ApiError } from '../api/client';
@@ -26,12 +27,15 @@ const MOVE_LABEL: Record<RuleMove, string> = {
   trash: 'Move to Trash',
 };
 
-/** "Move to Spam · Mark read · Star" — what a rule does, in list-row form. */
-export function describeActions(rule: Pick<MailRule, 'move' | 'markRead' | 'star'>): string {
+/** "Move to Spam · Mark read · Star · Protect from cleanup" — what a rule does, in list-row form. */
+export function describeActions(
+  rule: Pick<MailRule, 'move' | 'markRead' | 'star'> & { protect?: boolean },
+): string {
   const parts: string[] = [];
   if (rule.move) parts.push(MOVE_LABEL[rule.move]);
   if (rule.markRead) parts.push('Mark read');
   if (rule.star) parts.push('Star');
+  if (rule.protect) parts.push('Protect from cleanup');
   return parts.join(' · ');
 }
 
@@ -74,22 +78,40 @@ export function isSharedMailDomain(domain: string): boolean {
 }
 
 /**
- * Make future mail from a sender or domain land in Spam, on every account. When a rule for that
- * match already exists it is switched to Spam (and back on) rather than duplicated, keeping its
- * read/star actions.
+ * Create an every-account rule for a match with `actions`, or — when one already exists — merge
+ * `actions` into it (and switch it back on) rather than duplicating it, keeping its other actions.
  */
-export async function blockSender(kind: RuleMatchKind, value: string): Promise<MailRule> {
+async function upsertEveryAccountRule(
+  kind: RuleMatchKind,
+  value: string,
+  actions: Pick<MailRuleInput, 'move' | 'protect'>,
+): Promise<MailRule> {
   const matchValue = value.trim().toLowerCase();
   try {
-    return await api.rules.create({ matchKind: kind, matchValue, move: 'spam' });
+    return await api.rules.create({ matchKind: kind, matchValue, ...actions });
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 409) throw err;
     const existing = (await api.rules.list()).find(
       (r) => r.accountId === null && r.matchKind === kind && r.matchValue === matchValue,
     );
     if (!existing) throw err;
-    return api.rules.update(existing.id, { ...toInput(existing), move: 'spam', enabled: true });
+    return api.rules.update(existing.id, { ...toInput(existing), ...actions, enabled: true });
   }
+}
+
+/** Make future mail from a sender or domain land in Spam, on every account. */
+export function blockSender(kind: RuleMatchKind, value: string): Promise<MailRule> {
+  return upsertEveryAccountRule(kind, value, { move: 'spam' });
+}
+
+/**
+ * Shield all mail from a cleanup sender group from cleanup, on every account. A group key with
+ * an `@` is one freemail address; anything else is a domain (its subdomains included).
+ */
+export function protectSender(senderKey: string): Promise<MailRule> {
+  return upsertEveryAccountRule(senderKey.includes('@') ? 'sender' : 'domain', senderKey, {
+    protect: true,
+  });
 }
 
 /** A saved rule as a create/replace body. */
@@ -101,6 +123,7 @@ export function toInput(rule: MailRule): MailRuleInput {
     move: rule.move,
     markRead: rule.markRead,
     star: rule.star,
+    protect: rule.protect,
     enabled: rule.enabled,
   };
 }

@@ -6,6 +6,9 @@
  * a sender rule before a domain rule, a longer (deeper) domain before its parent, a rule
  * for this account before an every-account one, then the oldest rule. The read/star
  * flags are OR-ed across every matching rule.
+ *
+ * `protect` is not an ingest action (it gates cleanup, see cleanup/safety.ts), so a
+ * protect-only rule never matches here — it neither acts on new mail nor counts a hit.
  */
 import type { RuleMatchKind, RuleMove } from '@maily/shared';
 
@@ -18,6 +21,11 @@ export interface RuleLike {
   markRead: boolean;
   star: boolean;
   createdAt: Date | null;
+}
+
+/** Whether a rule does anything to new mail (move / read / star). */
+export function hasIngestAction(rule: Pick<RuleLike, 'move' | 'markRead' | 'star'>): boolean {
+  return rule.move !== null || rule.markRead || rule.star;
 }
 
 export interface Resolution {
@@ -70,7 +78,9 @@ export function bySpecificity(a: RuleLike, b: RuleLike): number {
  * already be scoped to the message's account (or every account). Returns null when none match.
  */
 export function resolveRules(rules: RuleLike[], fromAddress: string | null): Resolution | null {
-  const hits = rules.filter((r) => ruleMatches(r, fromAddress)).sort(bySpecificity);
+  const hits = rules
+    .filter((r) => hasIngestAction(r) && ruleMatches(r, fromAddress))
+    .sort(bySpecificity);
   if (hits.length === 0) return null;
   return {
     move: hits.find((r) => r.move !== null)?.move ?? null,

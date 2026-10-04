@@ -28,7 +28,13 @@ import type {
 import { db } from '../db/client.js';
 import { visibleRaw } from '../db/visibility.js';
 import { COLD_KEEP_KEYWORDS, NEWSLETTER_KEYWORDS } from './keywords.js';
-import { effectiveKeywords, ftsOrMatch, notProtected, protectedSql } from './safety.js';
+import {
+  effectiveKeywords,
+  ftsOrMatch,
+  notProtected,
+  protectedSql,
+  ruleProtectedSql,
+} from './safety.js';
 import { SENDER_KEY } from './senders.js';
 
 /** Default page size for returned groups per slice — the dashboard shows the worst offenders. */
@@ -174,8 +180,10 @@ const LIVE = visibleRaw();
  * move into the trash folder (no IMAP; see trashQueue.ts) — recoverable there, and its
  * local bytes are reclaimed by a later Trash purge. The informational storage audit and
  * the summary totals stay on {@link LIVE} (preserved mail still occupies local bytes).
+ * A protect rule is the same Keep for a whole sender, so it is excluded here as well as in
+ * the HARD gate: the unguarded storage execute honours it too.
  */
-const ELIGIBLE = sql`${LIVE} AND m.cleanup_keep = 0`;
+const ELIGIBLE = sql`${LIVE} AND m.cleanup_keep = 0 AND NOT ${ruleProtectedSql('m')}`;
 
 /**
  * Full (unpaginated) result of a slice compute — every sender-domain group plus the slice

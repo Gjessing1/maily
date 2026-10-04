@@ -127,3 +127,35 @@ test('message versioning is column-scoped around archive metadata', () => {
   assert.notEqual(fresh, first);
   assert.equal(fresh.totalBytes, first.totalBytes - 4 + 1234);
 });
+
+test('protect rule writes invalidate cleanup aggregates; other rules do not', () => {
+  const accountId = randomUUID();
+  db.insert(schema.accounts)
+    .values({
+      id: accountId,
+      email: 'r@me.example',
+      provider: 'imap',
+      imapHost: 'i',
+      smtpHost: 's',
+    })
+    .run();
+  seedMessage(accountId, 'a@ruled.example');
+
+  const before = C.cachedSummary();
+  const plain = randomUUID();
+  db.insert(schema.mailRules)
+    .values({ id: plain, matchKind: 'domain', matchValue: 'ruled.example', star: true })
+    .run();
+  assert.equal(C.cachedSummary(), before, 'a non-protect rule leaves the cache alone');
+
+  db.update(schema.mailRules).set({ protect: true }).where(eq(schema.mailRules.id, plain)).run();
+  const protectedNow = C.cachedSummary();
+  assert.notEqual(protectedNow, before);
+  assert.equal(protectedNow.protectedMessages, before.protectedMessages + 1);
+
+  db.update(schema.mailRules).set({ hits: 5 }).where(eq(schema.mailRules.id, plain)).run();
+  assert.equal(C.cachedSummary(), protectedNow, 'hit counters are outside the gate');
+
+  db.delete(schema.mailRules).where(eq(schema.mailRules.id, plain)).run();
+  assert.equal(C.cachedSummary().protectedMessages, before.protectedMessages);
+});

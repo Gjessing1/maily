@@ -392,6 +392,44 @@ test('cleanup_keep: a preserved message drops out of slices, previews and execut
   );
 });
 
+test('protect rules: a protected sender/domain drops out of every slice, even storage execute', () => {
+  const acct = seedAccount();
+  const other = seedAccount();
+  const old = new Date(Date.now() - 3 * YEAR);
+  const shape = { bodyText: 'sale', receivedAt: old };
+  const domainMail = seedMessage(acct, { fromAddress: 'news@mail.shop.example', ...shape });
+  const senderMail = seedMessage(acct, { fromAddress: 'Friend@gmail.com', ...shape });
+  const lookalike = seedMessage(acct, { fromAddress: 'x@notshop.example', ...shape });
+  // An account-scoped rule protects only that account's copy.
+  const scoped = seedMessage(acct, { fromAddress: 'a@scoped.example', ...shape });
+  const scopedElsewhere = seedMessage(other, { fromAddress: 'a@scoped.example', ...shape });
+
+  const rule = (values: Partial<typeof schema.mailRules.$inferInsert>) =>
+    db
+      .insert(schema.mailRules)
+      .values({ matchKind: 'domain', matchValue: 'x', protect: true, ...values })
+      .run();
+  rule({ matchKind: 'domain', matchValue: 'shop.example' });
+  rule({ matchKind: 'sender', matchValue: 'friend@gmail.com' });
+  rule({ matchKind: 'domain', matchValue: 'scoped.example', accountId: acct });
+  // Disabled and non-protect rules don't shield anything.
+  rule({ matchKind: 'domain', matchValue: 'notshop.example', enabled: false });
+
+  const coldIds = S.sliceMessages('cold-storage', { years: 2 }).messages.map((m) => m.id);
+  assert.deepEqual(coldIds.sort(), [lookalike, scopedElsewhere].sort());
+
+  // The unguarded storage execute honours protect rules like the per-message Keep flag.
+  const all = [domainMail, senderMail, lookalike, scoped, scopedElsewhere];
+  const storage = S.sliceMessageIds('storage', { messageIds: all }).map((r) => r.id);
+  assert.deepEqual(storage.sort(), [lookalike, scopedElsewhere].sort());
+
+  // …while the read-only storage audit still shows every byte, and the summary counts them.
+  assert.equal(S.storageByDomain().totalMessages, 5);
+  assert.equal(S.cleanupSummary().protectedMessages, 3);
+
+  db.delete(schema.mailRules).run();
+});
+
 test('local-only (detached) mail is delete-eligible like live mail', () => {
   const acct = seedAccount();
   // Two identically large messages; one was detached (deleted from the provider, kept only

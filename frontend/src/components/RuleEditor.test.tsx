@@ -30,6 +30,7 @@ const saved: MailRule = {
   move: 'archive',
   markRead: false,
   star: false,
+  protect: false,
   enabled: true,
   hits: 0,
   lastHitAt: null,
@@ -42,6 +43,7 @@ beforeEach(() => {
   api.rules.preview.mockResolvedValue({
     count: 2,
     sample: [{ id: 'm1', fromAddress: 'news@shop.example', subject: 'Sale', receivedAt: 1 }],
+    protectedCount: 0,
   });
   api.rules.create.mockResolvedValue(saved);
   api.rules.apply.mockResolvedValue({ applied: 2, remaining: 0 });
@@ -96,4 +98,27 @@ test('a refused save keeps the sheet open with the server’s reason', async () 
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   expect(await screen.findByText('a rule for this match already exists')).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
+});
+
+test('protect alone is a valid rule, shows what it shields, and excludes a Trash move', async () => {
+  api.rules.preview.mockResolvedValue({ count: 0, sample: [], protectedCount: 41 });
+  open();
+  fireEvent.click(screen.getByRole('switch', { name: 'Protect from cleanup' }));
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  expect(await screen.findByText(/Shields 41 messages/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+  expect(screen.getByRole('switch', { name: 'Protect from cleanup' })).toHaveAttribute(
+    'aria-checked',
+    'false',
+  );
+  fireEvent.click(screen.getByRole('switch', { name: 'Protect from cleanup' }));
+  expect(screen.getByRole('button', { name: 'Trash' })).toHaveAttribute('aria-pressed', 'false');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() =>
+    expect(api.rules.create).toHaveBeenCalledWith(
+      expect.objectContaining({ protect: true, move: null }),
+    ),
+  );
 });

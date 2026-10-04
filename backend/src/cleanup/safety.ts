@@ -14,6 +14,9 @@
  * the `invoice` enricher classified as an invoice or a receipt is protected too
  * (`billingSql`) — a stronger signal than any keyword. Those enrichment writes bump the
  * `cleanup` data version (migration 0032), so cached slice previews notice them.
+ *
+ * The user's own protect rules (`mail_rules.protect`, rules/) join the gate too: a whole
+ * sender or domain they never want offered for deletion (migration 0035 bumps the version).
  */
 import { sql, type SQL } from 'drizzle-orm';
 import { getServerSettings, type KeywordListKey } from '../db/settings.js';
@@ -52,14 +55,33 @@ export function protectedMatch(): string {
 }
 
 /**
+ * SQL predicate selecting mail an enabled protect rule covers: the sender address exactly, or
+ * the domain and its subdomains, on the rule's account or every account. The SQL twin of
+ * `ruleMatches` (rules/match.ts). Match values are validated to `[a-z0-9.-]` / an address
+ * compared by equality, so the LIKE patterns carry no wildcards of their own.
+ */
+export function ruleProtectedSql(alias = 'm'): SQL {
+  const a = sql.raw(alias);
+  return sql`EXISTS (SELECT 1 FROM mail_rules r
+    WHERE r.protect = 1 AND r.enabled = 1
+      AND (r.account_id IS NULL OR r.account_id = ${a}.account_id)
+      AND CASE r.match_kind
+        WHEN 'sender' THEN lower(${a}.from_address) = r.match_value
+        ELSE (lower(${a}.from_address) LIKE '%@' || r.match_value
+          OR lower(${a}.from_address) LIKE '%.' || r.match_value)
+      END)`;
+}
+
+/**
  * SQL predicate selecting protected mail: a protected keyword (an FTS5 MATCH subquery,
- * so the keyword scan stays on the index) or a validated bill. `alias` is the
- * messages-table alias the caller uses (e.g. `m`).
+ * so the keyword scan stays on the index), a validated bill, or a protect rule's sender.
+ * `alias` is the messages-table alias the caller uses (e.g. `m`).
  */
 export function protectedSql(alias = 'm'): SQL {
   const a = sql.raw(alias);
   return sql`(${a}.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ${protectedMatch()})
-    OR ${billingSql(undefined, alias)})`;
+    OR ${billingSql(undefined, alias)}
+    OR ${ruleProtectedSql(alias)})`;
 }
 
 /** SQL predicate excluding protected mail, for AND-ing into a slice query. */
