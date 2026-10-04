@@ -4,7 +4,7 @@
  * sent message and a saved draft are composed identically (one Message-ID each).
  */
 import { randomUUID } from 'node:crypto';
-import type nodemailer from 'nodemailer';
+import type { SendMailOptions } from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import type { SendMessageRequest, UploadRef } from '@maily/shared';
 import type { AccountConfig } from '../config/accounts.js';
@@ -19,7 +19,7 @@ const log = createLogger('mail');
 export function uploadAttachmentOptions(
   ref: UploadRef,
   path: string,
-): NonNullable<nodemailer.SendMailOptions['attachments']>[number] {
+): NonNullable<SendMailOptions['attachments']>[number] {
   return {
     path,
     filename: ref.filename || undefined,
@@ -36,8 +36,8 @@ export function uploadAttachmentOptions(
  */
 export async function resolveAttachments(
   req: SendMessageRequest,
-): Promise<nodemailer.SendMailOptions['attachments']> {
-  const out: NonNullable<nodemailer.SendMailOptions['attachments']> = [];
+): Promise<SendMailOptions['attachments']> {
+  const out: NonNullable<SendMailOptions['attachments']> = [];
 
   for (const ref of req.attachments ?? []) {
     const att = getAttachment(ref.attachmentId);
@@ -82,7 +82,7 @@ export async function buildMime(
   const domain = config.email.split('@')[1] ?? 'localhost';
   const messageId = `<${randomUUID()}@${domain}>`;
 
-  const mailOptions: nodemailer.SendMailOptions = {
+  const mailOptions: SendMailOptions = {
     from: { name: config.displayName ?? config.email, address: config.email },
     to: req.to,
     cc: req.cc,

@@ -108,11 +108,11 @@ export async function staticSite(app: FastifyInstance): Promise<void> {
     root,
     wildcard: false,
     cacheControl: false,
-    setHeaders(res, filePath) {
+    setHeaders(reply, filePath) {
       const cache = /[\\/]assets[\\/]/.test(filePath)
         ? 'public, max-age=31536000, immutable'
         : 'no-cache';
-      res.setHeader('Cache-Control', cache);
+      reply.header('Cache-Control', cache);
     },
   });
 
