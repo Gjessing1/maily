@@ -6,6 +6,7 @@
  * subtraction server-side; this keeps the offline Dexie query in lockstep.
  */
 import type { FolderDto, FolderRole } from '@maily/shared';
+import { ALL_ACCOUNTS } from './unified';
 
 const PREFIX = 'archived:';
 
@@ -13,6 +14,8 @@ export const archivedFolderId = (accountId: string): string => `${PREFIX}${accou
 export const isArchivedView = (id: string | undefined): id is string =>
   !!id && id.startsWith(PREFIX);
 export const archivedAccountId = (id: string): string => id.slice(PREFIX.length);
+/** The cross-account "All archived" view (every account's Archived merged). */
+export const ALL_ARCHIVED_ID = archivedFolderId(ALL_ACCOUNTS);
 
 /** Roles whose presence disqualifies a message from the Archived view (mirror of backend). */
 export const NON_ARCHIVE_ROLES: ReadonlySet<FolderRole> = new Set<FolderRole>([

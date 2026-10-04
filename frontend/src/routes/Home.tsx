@@ -18,8 +18,8 @@ import { MessageContextMenu } from '../components/MessageContextMenu';
 import { FolderDrawer } from '../components/FolderDrawer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useBackHandler } from '../state/backButton';
-import { isArchivedView } from '../state/archived';
-import { isStarredView } from '../state/starred';
+import { ALL_ARCHIVED_ID, isArchivedView } from '../state/archived';
+import { ALL_STARRED_ID, isStarredView } from '../state/starred';
 import { isUnifiedView, unifiedRole, unifiedTitle, UNIFIED_INBOX_ID } from '../state/unified';
 import { usePrefs } from '../state/prefs';
 import { avatarHue } from '../ui/format';
@@ -110,14 +110,20 @@ export function Home() {
     [folderId],
   );
   // Synthetic views (Archived, Starred, unified views) have no cached folder row — name them explicitly.
-  const unifiedView = isUnifiedView(folderId);
-  const folderName = unifiedView
+  // Every cross-account view (unified roles + All archived/starred) tags rows by account.
+  const unifiedView =
+    isUnifiedView(folderId) || folderId === ALL_ARCHIVED_ID || folderId === ALL_STARRED_ID;
+  const folderName = isUnifiedView(folderId)
     ? unifiedTitle(folderId)
-    : isArchivedView(folderId)
-      ? 'Archive'
-      : isStarredView(folderId)
-        ? 'Starred'
-        : (folder?.name ?? 'Inbox');
+    : folderId === ALL_ARCHIVED_ID
+      ? 'All archived'
+      : folderId === ALL_STARRED_ID
+        ? 'All starred'
+        : isArchivedView(folderId)
+          ? 'Archive'
+          : isStarredView(folderId)
+            ? 'Starred'
+            : (folder?.name ?? 'Inbox');
   // Outgoing mail shows the account owner as sender on every row, so surface the
   // recipient instead. A real Sent folder keeps its existing behaviour; the unified
   // "All sent"/"All drafts" views also read as outgoing.

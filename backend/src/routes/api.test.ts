@@ -263,6 +263,40 @@ test('GET /api/unified/:role merges that role across accounts; unknown role is 4
   assert.equal(bad.statusCode, 404);
 });
 
+test('GET /api/unified/archived and /starred merge the smart views across accounts', async () => {
+  const accA = seedAccount();
+  const accB = seedAccount();
+  const allA = seedFolder(accA, 'archive');
+  const allB = seedFolder(accB, 'archive');
+  const inboxB = seedFolder(accB, 'inbox');
+
+  const archA = seedMessage(accA, allA, 'archive', {
+    receivedAt: new Date('2025-03-01T00:00:00Z'),
+    flags: { seen: true, flagged: true, answered: false, draft: false },
+  });
+  const archB = seedMessage(accB, allB, 'archive', {
+    receivedAt: new Date('2025-04-01T00:00:00Z'),
+  });
+  // Also in B's inbox, so not archived — but starred, so it IS in All starred.
+  const inInbox = seedMessage(accB, inboxB, 'inbox', {
+    receivedAt: new Date('2025-05-01T00:00:00Z'),
+    flags: { seen: false, flagged: true, answered: false, draft: false },
+  });
+  rawDb
+    .insert(schema.messageFolders)
+    .values({ messageId: inInbox, folderId: allB, uid: 101 })
+    .run();
+
+  const archived = (await get('/api/unified/archived')).json().map((m: { id: string }) => m.id);
+  assert.ok(archived.includes(archA) && archived.includes(archB), 'both accounts archived');
+  assert.ok(!archived.includes(inInbox), 'inbox members are not archived');
+  assert.ok(archived.indexOf(archB) < archived.indexOf(archA), 'newest first across accounts');
+
+  const starred = (await get('/api/unified/starred')).json().map((m: { id: string }) => m.id);
+  assert.ok(starred.includes(archA) && starred.includes(inInbox), 'starred from both accounts');
+  assert.ok(!starred.includes(archB), 'unstarred mail excluded');
+});
+
 test('GET /api/messages/:id returns the detail DTO; unknown id is 404', async () => {
   const accountId = seedAccount();
   const folderId = seedFolder(accountId, 'inbox');

@@ -455,7 +455,8 @@ export const api = {
   /** Virtual "Unified Inbox": every account's inbox merged newest-first. */
   unifiedInbox: (opts: ListOpts = {}) => request<MessageDto[]>(`/api/inbox${listQs(opts)}`),
 
-  /** Virtual unified view for any mergeable role ("All sent", "All drafts", …). */
+  /** Virtual unified view for any mergeable role ("All sent", "All drafts", …), or the
+   * `archived` / `starred` smart views merged across accounts. */
   unified: (role: string, opts: ListOpts = {}) =>
     request<MessageDto[]>(`/api/unified/${role}${listQs(opts)}`),
 

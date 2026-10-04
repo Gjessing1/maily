@@ -23,11 +23,29 @@ import {
 } from '../db/cache';
 import { archivedAccountId, isArchivedView, NON_ARCHIVE_ROLES } from './archived';
 import { isStarredView, starredAccountId } from './starred';
-import { isUnifiedView, unifiedRole } from './unified';
+import { ALL_ACCOUNTS, isUnifiedView, unifiedRole } from './unified';
 import { isConnected, onReconnect } from './connectivity';
 
 function receivedMs(m: { receivedAt: string | null }): number {
   return m.receivedAt ? Date.parse(m.receivedAt) : 0;
+}
+
+/**
+ * The cached folder ids behind an Archived view: its archive-role folder(s) and the
+ * inbox/sent/… folders whose members the server subtracts. One account's, or every
+ * account's for the cross-account "All archived" view. Null when nothing is archived.
+ */
+async function archivedScope(
+  accountId: string,
+): Promise<{ archiveIds: string[]; excluded: Set<string> } | null> {
+  const folders =
+    accountId === ALL_ACCOUNTS
+      ? await cache.folders.toArray()
+      : await cache.folders.where('accountId').equals(accountId).toArray();
+  const archiveIds = folders.filter((f) => f.role === 'archive').map((f) => f.id);
+  if (archiveIds.length === 0) return null;
+  const excluded = new Set(folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id));
+  return { archiveIds, excluded };
 }
 
 /**
@@ -146,6 +164,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
 
   // The virtual "Archived" view has no real folder id; it reads its own endpoint
   // and, offline, filters the cached archive-folder rows by the same role subtraction.
+  // Archived and Starred also come merged across accounts (account id ALL_ACCOUNTS).
   const archived = isArchivedView(folderId);
   const accountId = archived ? archivedAccountId(folderId) : undefined;
   // The virtual unified views ("All inboxes", "All sent", …) merge every account's
@@ -168,7 +187,7 @@ export function useMessages(folderId: string | undefined): MessagesResult {
     // could never reach past them anyway.
     let match: (m: CachedMessage) => boolean;
     if (starred && starredFor) {
-      match = (m) => m.accountId === starredFor && m.flagged;
+      match = (m) => (starredFor === ALL_ACCOUNTS || m.accountId === starredFor) && m.flagged;
     } else if (unified && unifiedFor) {
       const roleFolderIds = new Set(
         (await cache.folders.toArray()).filter((f) => f.role === unifiedFor).map((f) => f.id),
@@ -176,13 +195,12 @@ export function useMessages(folderId: string | undefined): MessagesResult {
       if (roleFolderIds.size === 0) return [];
       match = (m) => m.folderIds.some((id) => roleFolderIds.has(id));
     } else if (archived && accountId) {
-      const folders = await cache.folders.where('accountId').equals(accountId).toArray();
-      const archiveId = folders.find((f) => f.role === 'archive')?.id;
-      if (!archiveId) return [];
-      const excluded = new Set(
-        folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
-      );
-      match = (m) => m.folderIds.includes(archiveId) && !m.folderIds.some((id) => excluded.has(id));
+      const scope = await archivedScope(accountId);
+      if (!scope) return [];
+      const { archiveIds, excluded } = scope;
+      match = (m) =>
+        m.folderIds.some((id) => archiveIds.includes(id)) &&
+        !m.folderIds.some((id) => excluded.has(id));
     } else {
       match = (m) => m.folderIds.includes(folderId);
     }
@@ -260,15 +278,15 @@ export function useMessages(folderId: string | undefined): MessagesResult {
         before: opts.before,
         unread: opts.unread,
       };
-      return starred && starredFor
-        ? api.starred(starredFor, q)
-        : unifiedFor
-          ? unifiedFor === 'inbox'
-            ? api.unifiedInbox(q)
-            : api.unified(unifiedFor, q)
-          : archived && accountId
-            ? api.archived(accountId, q)
-            : api.messages(folderId!, q);
+      if (starred && starredFor) {
+        return starredFor === ALL_ACCOUNTS ? api.unified('starred', q) : api.starred(starredFor, q);
+      }
+      if (unifiedFor)
+        return unifiedFor === 'inbox' ? api.unifiedInbox(q) : api.unified(unifiedFor, q);
+      if (archived && accountId) {
+        return accountId === ALL_ACCOUNTS ? api.unified('archived', q) : api.archived(accountId, q);
+      }
+      return api.messages(folderId!, q);
     },
     [starred, starredFor, unifiedFor, archived, accountId, folderId, PAGE],
   );
@@ -289,22 +307,22 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   const reconcile = useCallback(
     async (rows: MessageDto[], sawFullPage: boolean) => {
       if (starred && starredFor) {
-        await reconcileStarredPage(starredFor, rows, sawFullPage);
+        await reconcileStarredPage(
+          starredFor === ALL_ACCOUNTS ? null : starredFor,
+          rows,
+          sawFullPage,
+        );
       } else if (unified && unifiedFor) {
         const scope = (await cache.folders.toArray())
           .filter((f) => f.role === unifiedFor)
           .map((f) => f.id);
         await reconcileHeadPage(scope, rows, sawFullPage);
       } else if (archived && accountId) {
-        const folders = await cache.folders.where('accountId').equals(accountId).toArray();
-        const archiveId = folders.find((f) => f.role === 'archive')?.id;
-        if (!archiveId) return;
+        const scope = await archivedScope(accountId);
+        if (!scope) return;
         // The Archived view subtracts inbox/sent/… members server-side, so their
         // absence from the response proves nothing — spare them.
-        const excluded = new Set(
-          folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
-        );
-        await reconcileHeadPage([archiveId], rows, sawFullPage, excluded);
+        await reconcileHeadPage(scope.archiveIds, rows, sawFullPage, scope.excluded);
       } else if (folderId) {
         await reconcileHeadPage([folderId], rows, sawFullPage);
       }
@@ -324,13 +342,9 @@ export function useMessages(folderId: string | undefined): MessagesResult {
           .map((f) => f.id);
         await reconcileUnreadPage(scope, rows, sawFullPage);
       } else if (archived && accountId) {
-        const folders = await cache.folders.where('accountId').equals(accountId).toArray();
-        const archiveId = folders.find((f) => f.role === 'archive')?.id;
-        if (!archiveId) return;
-        const excluded = new Set(
-          folders.filter((f) => NON_ARCHIVE_ROLES.has(f.role)).map((f) => f.id),
-        );
-        await reconcileUnreadPage([archiveId], rows, sawFullPage, excluded);
+        const scope = await archivedScope(accountId);
+        if (!scope) return;
+        await reconcileUnreadPage(scope.archiveIds, rows, sawFullPage, scope.excluded);
       } else if (!starred && folderId) {
         await reconcileUnreadPage([folderId], rows, sawFullPage);
       }

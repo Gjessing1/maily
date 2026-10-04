@@ -8,6 +8,7 @@
  * by filtering the account's cached rows on `flagged`.
  */
 import type { FolderDto } from '@maily/shared';
+import { ALL_ACCOUNTS } from './unified';
 
 const PREFIX = 'starred:';
 
@@ -15,6 +16,8 @@ export const starredFolderId = (accountId: string): string => `${PREFIX}${accoun
 export const isStarredView = (id: string | undefined): id is string =>
   !!id && id.startsWith(PREFIX);
 export const starredAccountId = (id: string): string => id.slice(PREFIX.length);
+/** The cross-account "All starred" view (every account's Starred merged). */
+export const ALL_STARRED_ID = starredFolderId(ALL_ACCOUNTS);
 
 /** Synthetic folder entry presented in the drawer for the flag-derived Starred view. */
 export function starredFolder(accountId: string): FolderDto {

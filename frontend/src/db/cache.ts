@@ -270,23 +270,23 @@ export async function reconcileUnreadPage(
  * Same idea for the virtual Starred view, where membership is the \Flagged flag
  * rather than a folder: a cached flagged row of this account inside the fetched
  * window but absent from the response was unstarred elsewhere — clear the flag
- * locally (the message itself still exists in its folders).
+ * locally (the message itself still exists in its folders). `accountId` null = the
+ * cross-account "All starred" view, scoped to every cached row.
  */
 export async function reconcileStarredPage(
-  accountId: string,
+  accountId: string | null,
   rows: MessageDto[],
   sawFullPage: boolean,
 ): Promise<void> {
   const present = new Set(rows.map((m) => m.id));
   const oldest = rows.length ? Math.min(...rows.map(receivedMs)) : 0;
   const unstarred: string[] = [];
-  await cache.messages
-    .where('accountId')
-    .equals(accountId)
-    .each((m) => {
-      if (!m.flagged || present.has(m.id)) return;
-      if (!sawFullPage || receivedMs(m) > oldest) unstarred.push(m.id);
-    });
+  await (
+    accountId ? cache.messages.where('accountId').equals(accountId) : cache.messages.toCollection()
+  ).each((m) => {
+    if (!m.flagged || present.has(m.id)) return;
+    if (!sawFullPage || receivedMs(m) > oldest) unstarred.push(m.id);
+  });
   for (const id of unstarred) {
     await cache.messages.where('id').equals(id).modify({ flagged: false });
     await cache.bodies.where('id').equals(id).modify({ flagged: false });

@@ -206,9 +206,10 @@ const NON_ARCHIVE_ROLES = ['inbox', 'sent', 'trash', 'junk', 'drafts'] as const;
  * Mail" (everything), so this subtraction is what makes "Archived" mean archived;
  * on providers with a real Archive folder the subtraction is a harmless no-op.
  * Tombstones hidden (ARCHITECTURE §13); newest first, keyset-paginated by receivedAt.
+ * `accountId` undefined = every account's archive merged (the unified "All archived").
  */
 export function listArchived(
-  accountId: string,
+  accountId: string | undefined,
   limit: number,
   beforeMs?: number,
   unseenOnly = false,
@@ -217,7 +218,7 @@ export function listArchived(
   const f2 = alias(folders, 'f2');
   return listPage(
     and(
-      eq(messages.accountId, accountId),
+      accountId ? eq(messages.accountId, accountId) : undefined,
       eq(folders.role, 'archive'),
       visible(),
       beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,
@@ -240,17 +241,18 @@ export function listArchived(
  * agnostic — Gmail exposes a `[Gmail]/Starred` folder but mailbox.org and generic IMAP
  * have none, so the view is derived from the message-level flag rather than a folder
  * (the frontend hides the real Gmail folder and uses this everywhere). Tombstones —
- * including trashed mail — are hidden; keyset-paginated by receivedAt.
+ * including trashed mail — are hidden; keyset-paginated by receivedAt. `accountId`
+ * undefined = every account's starred mail merged (the unified "All starred").
  */
 export function listStarred(
-  accountId: string,
+  accountId: string | undefined,
   limit: number,
   beforeMs?: number,
   unseenOnly = false,
 ): MessageRow[] {
   return listPage(
     and(
-      eq(messages.accountId, accountId),
+      accountId ? eq(messages.accountId, accountId) : undefined,
       eq(messages.flagged, true),
       visible(),
       beforeMs ? lt(messages.receivedAt, new Date(beforeMs)) : undefined,

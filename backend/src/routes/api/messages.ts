@@ -76,14 +76,21 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
 
   // Generalised unified view: every account's folder of `role` merged into one
   // stream ("All sent", "All drafts", …). Inbox keeps its dedicated `/api/inbox`.
+  // `archived` / `starred` are the smart views (not folder roles) merged the same way.
   const UNIFIED_ROLES: UnifiedRole[] = ['inbox', 'drafts', 'sent', 'junk', 'trash'];
   app.get<{
     Params: { role: string };
     Querystring: { limit?: string; before?: string; unread?: string };
   }>('/api/unified/:role', async (req, reply) => {
+    const { limit, before, unread } = pageParams(req.query);
+    if (req.params.role === 'archived') {
+      return toListDtos(listArchived(undefined, limit, before, unread));
+    }
+    if (req.params.role === 'starred') {
+      return toListDtos(listStarred(undefined, limit, before, unread));
+    }
     const role = req.params.role as UnifiedRole;
     if (!UNIFIED_ROLES.includes(role)) return reply.code(404).send({ error: 'unknown role' });
-    const { limit, before, unread } = pageParams(req.query);
     return toListDtos(listUnifiedByRole(role, limit, before, unread));
   });
 

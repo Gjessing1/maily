@@ -112,6 +112,20 @@ describe('reconcileStarredPage', () => {
     expect((await cache.messages.get('still-starred'))?.flagged).toBe(true);
     expect((await cache.messages.get('other-account'))?.flagged).toBe(true);
   });
+
+  it('scopes to every account for the cross-account view (null account)', async () => {
+    await cacheMessages([
+      msg('kept', '2026-07-01T10:00:00Z', { flagged: true }),
+      msg('unstarred-b', '2026-07-01T09:00:00Z', { flagged: true, accountId: 'acc2' }),
+    ]);
+    await reconcileStarredPage(
+      null,
+      [msg('kept', '2026-07-01T10:00:00Z', { flagged: true })],
+      false,
+    );
+    expect((await cache.messages.get('kept'))?.flagged).toBe(true);
+    expect((await cache.messages.get('unstarred-b'))?.flagged).toBe(false);
+  });
 });
 
 describe('removal tombstones', () => {

@@ -12,6 +12,13 @@ export type UnifiedRole = 'inbox' | 'drafts' | 'sent' | 'junk' | 'trash';
 
 const PREFIX = 'unified:';
 
+/**
+ * Account-id sentinel for the per-account smart views (Archived, Starred) merged
+ * across every account: `archived:all` / `starred:all`. Account ids are UUIDs, so it
+ * can't collide; the backend serves these at `/api/unified/archived|starred`.
+ */
+export const ALL_ACCOUNTS = 'all';
+
 /** Virtual folder id for a unified view, e.g. `unified:inbox`. */
 export const unifiedViewId = (role: UnifiedRole): string => `${PREFIX}${role}`;
 

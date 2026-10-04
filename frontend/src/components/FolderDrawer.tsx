@@ -4,7 +4,7 @@ import type { AccountDto, FolderDto, FolderRole } from '@maily/shared';
 import { useFolders } from '../state/data';
 import { archivedFolder } from '../state/archived';
 import { starredFolder, isStarredView } from '../state/starred';
-import { unifiedFolderFor } from '../state/unified';
+import { ALL_ACCOUNTS, unifiedFolderFor } from '../state/unified';
 import { useAuth } from '../state/auth';
 import { useBackHandler } from '../state/backButton';
 import { setPref, usePrefs, type Theme } from '../state/prefs';
@@ -185,8 +185,10 @@ function AccountFolders({
 
 /**
  * Cross-account "All accounts" group: the unified inbox (pinned, always visible)
- * plus the unified Drafts/Sent views tucked under a collapse — since the inbox is
- * what's used day-to-day, the rest stays collapsed by default.
+ * plus every other merged view — Drafts, Sent, Archive, Starred, Spam, Trash, in the
+ * same order as an account's folders — tucked under a collapse. The inbox is what's
+ * used day-to-day, so the rest stays collapsed by default. Custom labels don't merge
+ * across accounts (no shared identity), so they stay under their own account.
  */
 function UnifiedFolders({
   collapsed,
@@ -200,7 +202,14 @@ function UnifiedFolders({
   onSelect: (f: FolderDto) => void;
 }) {
   const inbox = unifiedFolderFor('inbox');
-  const rest = [unifiedFolderFor('drafts'), unifiedFolderFor('sent')];
+  const rest = [
+    unifiedFolderFor('drafts'),
+    unifiedFolderFor('sent'),
+    archivedFolder(ALL_ACCOUNTS),
+    starredFolder(ALL_ACCOUNTS),
+    unifiedFolderFor('junk'),
+    unifiedFolderFor('trash'),
+  ];
   return (
     <div className="mb-4">
       <button
