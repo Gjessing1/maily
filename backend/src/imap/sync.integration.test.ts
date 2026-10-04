@@ -18,7 +18,7 @@
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -41,6 +41,7 @@ let resync: typeof ResyncNS;
 let folders: typeof FoldersNS;
 let schema: typeof SchemaNS;
 let rawDb: (typeof DbClientNS)['db'];
+let sqlite: (typeof DbClientNS)['sqlite'];
 let env: { dailyDownloadBudgetBytes: number };
 let recordDownloadedBytes: (n: number) => void;
 
@@ -49,6 +50,7 @@ before(async () => {
   const { runMigrations } = await import('../db/migrate.js');
   runMigrations();
   rawDb = client.db;
+  sqlite = client.sqlite;
   schema = await import('../db/schema.js');
   folders = await import('./folders.js');
   sync = await import('./sync.js');
@@ -458,6 +460,36 @@ test('sweep inserts a pre-window message (no existing row) with full source', as
     .where(eq(schema.messages.messageId, '<sweep-insert@example.com>'))
     .get()!;
   assert.ok(inserted.sourcePath && existsSync(inserted.sourcePath));
+});
+
+test('a sweep insert that throws leaves no orphan .eml and spares its batch-mates', async () => {
+  const { accountId, folderId, reload } = seedInbox();
+  const good = altFixture(412, '<sweep-good@example.com>', 'Fine mail');
+  const poison = altFixture(411, '<sweep-poison@example.com>', 'Poison mail');
+  const client = new FakeImap([good, poison]);
+  folders.updateFolderSyncState(folderId, { uidValidity: 1, lastUid: 500 });
+
+  // Stand-in for the June poison message: the .eml downloads fine, then the insert throws.
+  sqlite.exec(`CREATE TEMP TRIGGER poison_insert BEFORE INSERT ON messages
+    WHEN NEW.subject = 'Poison mail' BEGIN SELECT RAISE(ABORT, 'poison'); END`);
+  try {
+    const result = await sync.sweepFolderSource(ctxFor(client, accountId), reload());
+    assert.equal(result.inserted, 1);
+    assert.equal(result.skipped, 1);
+  } finally {
+    sqlite.exec('DROP TRIGGER poison_insert');
+  }
+
+  const kept = rawDb
+    .select()
+    .from(schema.messages)
+    .where(eq(schema.messages.messageId, '<sweep-good@example.com>'))
+    .get()!;
+  assert.ok(kept.sourcePath && existsSync(kept.sourcePath), 'the good message keeps its .eml');
+  // The only message dir left on disk is the good one's: the poison staging dir was dropped.
+  const accountDir = join(tmpRoot, 'source', accountId);
+  assert.deepEqual(readdirSync(accountDir), [kept.id]);
+  assert.equal(reload().oldestSyncedUid, 1, 'watermark advanced past the poison message');
 });
 
 // ---------------------------------------------------------------------------

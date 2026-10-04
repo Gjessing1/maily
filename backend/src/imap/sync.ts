@@ -489,13 +489,14 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
         // A poison message (malformed envelope crashing the insert, etc.) must not wedge
         // the sweep at this UID forever — that starves every folder after this one. Log,
         // count it skipped, and let the watermark advance past it.
+        let cap: SourceCapture | null = null;
         try {
           if (existingId) {
             if (await archiveSourceForExisting(ctx, existingId, uid)) archived += 1;
             else skipped += 1;
           } else {
             // Genuinely new (older than the cache window): insert with full source.
-            const cap = await captureFullSource(ctx, msg);
+            cap = await captureFullSource(ctx, msg);
             if (cap) {
               const parsed = buildParsedMessage(
                 ctx.caps,
@@ -522,6 +523,9 @@ export async function sweepFolderSource(ctx: SyncContext, folder: FolderRow): Pr
             (err as Error).message,
           );
           skipped += 1;
+          // The `.eml` was staged under a fresh UUID before the insert threw, so no row owns
+          // it. Drop it unless a row somehow does — otherwise every poison message leaks one.
+          if (cap && !sourcePathForMessage(cap.id)) await discardSource(cap.sourcePath);
         }
         lowestDone = uid;
       }
