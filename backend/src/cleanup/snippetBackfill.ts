@@ -13,19 +13,34 @@
  * the bodies plus makeSnippet on each), runs off the listen path, and can never miss a
  * row — the marker-filtered version silently left 1811 stale snippets behind.
  *
- * Pure SQLite (no IMAP / filesystem). Wired into boot (index.ts) as a self-healing
- * startup pass, and runnable standalone as a CLI for a one-off.
+ * Recomputing is no longer cheap: since makeSnippet renders HTML through a cheerio DOM
+ * (to honour hidden preheaders), a full pass over ~26k messages costs ~2 minutes of CPU.
+ * Run synchronously at boot, that froze the event loop on every deploy — HTTP stopped
+ * answering and both IMAP connects timed out. So the scan now yields between short
+ * slices, and a boot skips it outright when the snippet code is byte-identical to the
+ * last fully converged pass ({@link snippetFingerprint}). Mail synced in between already
+ * got its snippet from the same makeSnippet, so an unchanged fingerprint means nothing
+ * can be stale.
+ *
+ * Pure SQLite (no IMAP). Wired into boot (index.ts) as a self-healing startup pass, and
+ * runnable standalone as a CLI for a one-off (which ignores the fingerprint).
  */
-import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/client.js';
 import { messages } from '../db/schema.js';
+import { getSetting, putSetting } from '../db/settings.js';
 import { makeSnippet } from '../imap/parse.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('snippet-backfill');
 
 interface Row {
+  rowid: number;
   id: string;
   subject: string | null;
   snippet: string | null;
@@ -50,25 +65,62 @@ export interface SnippetBackfillResult {
  */
 const DEFAULT_BUDGET_MS = 20_000;
 
+/** Rows fetched per keyset page; bodies are the widest columns, so keep pages small. */
+const PAGE_ROWS = 200;
+/** Longest the scan holds the event loop before yielding to HTTP, sockets and IMAP. */
+const SCAN_SLICE_MS = 50;
+
+/** `app_settings` key holding the fingerprint of the last fully converged pass. */
+const STATE_KEY = 'snippet.backfill';
+
+/**
+ * Identity of the code that produces snippets: the parse module's own bytes (makeSnippet
+ * and every helper it calls live there) plus the cheerio version that renders the HTML.
+ * Any edit to parse.ts or a cheerio upgrade changes it and re-arms the full rescan.
+ */
+export function snippetFingerprint(): string {
+  const parseModule = fileURLToPath(import.meta.resolve('../imap/parse.js'));
+  const cheerioVersion = (
+    createRequire(import.meta.url)('cheerio/package.json') as { version: string }
+  ).version;
+  return createHash('sha256')
+    .update(readFileSync(parseModule))
+    .update(`\0cheerio@${cheerioVersion}`)
+    .digest('hex');
+}
+
 /** Recompute and rewrite stale snippets. Returns a small summary. */
-export function backfillSnippets(budgetMs = DEFAULT_BUDGET_MS): SnippetBackfillResult {
-  // Stream rather than `.all()`: bodies are the two widest columns in the schema, and
-  // materializing every message's HTML at once is a multi-hundred-MB spike on boot.
-  // Only the (small) pending updates are held, then applied after the cursor closes —
-  // better-sqlite3 will not write on a connection with an open iterator.
-  const cursor = sqlite
-    .prepare<
-      [],
-      Row
-    >('SELECT id, subject, snippet, body_text, body_html FROM messages WHERE snippet IS NOT NULL')
-    .iterate();
+export async function backfillSnippets(
+  budgetMs = DEFAULT_BUDGET_MS,
+  sliceMs = SCAN_SLICE_MS,
+): Promise<SnippetBackfillResult> {
+  // Keyset pages rather than `.all()`: bodies are the two widest columns in the schema,
+  // and materializing every message's HTML at once is a multi-hundred-MB spike on boot.
+  // Pages (not one long-lived iterator) also let the scan yield between slices without
+  // holding a read transaction open across them. Only the (small) pending updates are
+  // held, then applied in one transaction at the end.
+  const page = sqlite.prepare<[number, number], Row>(
+    `SELECT rowid, id, subject, snippet, body_text, body_html FROM messages
+      WHERE snippet IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT ?`,
+  );
 
   let scanned = 0;
+  let after = 0;
+  let sliceStart = Date.now();
   const updates: Array<{ id: string; snippet: string | null }> = [];
-  for (const row of cursor) {
-    scanned++;
-    const next = makeSnippet(row.body_text, row.body_html, row.subject);
-    if (next !== row.snippet) updates.push({ id: row.id, snippet: next });
+  for (;;) {
+    const rows = page.all(after, PAGE_ROWS);
+    for (const row of rows) {
+      scanned++;
+      const next = makeSnippet(row.body_text, row.body_html, row.subject);
+      if (next !== row.snippet) updates.push({ id: row.id, snippet: next });
+      if (Date.now() - sliceStart >= sliceMs) {
+        await yieldToLoop();
+        sliceStart = Date.now();
+      }
+    }
+    if (rows.length < PAGE_ROWS) break;
+    after = rows[rows.length - 1]!.rowid;
   }
 
   if (updates.length === 0) return { scanned, fixed: 0, deferred: 0 };
@@ -104,18 +156,29 @@ const MAX_DRAIN_PASSES = 50;
 /**
  * Run budgeted passes until the backlog is drained, pausing in between. SQLite has a
  * single writer, so one long transaction would stall IMAP sync for its whole duration;
- * chunking with a gap keeps each lock-hold short. Fire-and-forget — the timer is
- * unref'd so it never keeps the process alive.
+ * chunking with a gap keeps each lock-hold short. Skipped when the snippet code hasn't
+ * changed since the last converged pass. Fire-and-forget — the timer is unref'd so it
+ * never keeps the process alive.
  */
-export function drainSnippets(pass = 1): void {
+export async function drainSnippets(pass = 1): Promise<void> {
   let result: SnippetBackfillResult;
+  let fingerprint: string;
   try {
-    result = backfillSnippets();
+    fingerprint = snippetFingerprint();
+    if (
+      pass === 1 &&
+      getSetting<{ fingerprint?: string }>(STATE_KEY, {}).fingerprint === fingerprint
+    )
+      return;
+    result = await backfillSnippets();
   } catch (err) {
     log.error('snippet backfill failed (non-fatal):', err);
     return;
   }
-  if (result.deferred === 0) return;
+  if (result.deferred === 0) {
+    putSetting(STATE_KEY, { fingerprint });
+    return;
+  }
   if (pass >= MAX_DRAIN_PASSES) {
     // Converging snippets stop being stale; a backlog that survives this many passes
     // means makeSnippet's output doesn't round-trip through SQLite (a lone surrogate
@@ -125,14 +188,15 @@ export function drainSnippets(pass = 1): void {
     );
     return;
   }
-  setTimeout(() => drainSnippets(pass + 1), DRAIN_GAP_MS).unref();
+  setTimeout(() => void drainSnippets(pass + 1), DRAIN_GAP_MS).unref();
 }
 
 // Run standalone when invoked as a script (CLI), then close the connection. No budget
 // here: the CLI is the deliberate one-off drain, not the boot path.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    backfillSnippets(Number.POSITIVE_INFINITY);
+    const result = await backfillSnippets(Number.POSITIVE_INFINITY);
+    if (result.deferred === 0) putSetting(STATE_KEY, { fingerprint: snippetFingerprint() });
     sqlite.close();
   } catch (err) {
     log.error('snippet backfill aborted:', err);

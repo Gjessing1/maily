@@ -86,8 +86,10 @@ async function main(): Promise<void> {
   // Self-healing preview fix: rewrite any inbox snippet an older makeSnippet left dirty
   // (leaked HTML markup, `&zwnj;` spacer soup, Word conditional-comment settings, a bare
   // tracking URL). Drains in budgeted passes so it never holds SQLite's single write lock
-  // against IMAP sync, and is a no-op once every snippet is clean.
-  setImmediate(() => drainSnippets());
+  // against IMAP sync. The scan yields between slices (it is minutes of cheerio work on a
+  // large inbox) and is skipped entirely unless the snippet code changed since the last
+  // converged pass.
+  setImmediate(() => void drainSnippets());
 
   // Clear abandoned composer uploads left from previous runs — but keep any still referenced
   // by a queued send (a scheduled "send later" can outlive the staging cutoff).
