@@ -2,6 +2,23 @@
 
 Maily is a self-hosted, mobile-first mail client. It runs as a browser PWA and as a private Capacitor Android app that connects to a selected Maily server.
 
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/inbox.png" width="200" alt="Unified inbox across two accounts, unread mail grouped on top"></td>
+    <td align="center"><img src="assets/screenshots/reader.png" width="200" alt="Reader with an extracted parcel-tracking card above the message"></td>
+    <td align="center"><img src="assets/screenshots/folders-dark.png" width="200" alt="Folder drawer in dark mode, grouped per account"></td>
+    <td align="center"><img src="assets/screenshots/cleanup.png" width="200" alt="Cleanup dashboard with suggestion thresholds and protected mail"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Unified inbox</sub></td>
+    <td align="center"><sub>Parcel tracking, extracted</sub></td>
+    <td align="center"><sub>Folders (dark mode)</sub></td>
+    <td align="center"><sub>Cleanup</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots use fictional demo data.</sub>
+
 ## Initial Android download
 
 Open this address on the Android device to download the current APK:
