@@ -17,7 +17,7 @@ Maily is a self-hosted, mobile-first mail client. It runs as a browser PWA and a
   </tr>
 </table>
 
-<sub>Screenshots use fictional demo data.</sub>
+<sub>Screenshots: Maily 0.5.0 (commit <code>75ec4d9</code>), taken 28 October 2026 with fictional demo data.</sub>
 
 ## Initial Android download
 
