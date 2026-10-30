@@ -1,4 +1,4 @@
-# Deploy from /home/gjessing/docker/Productivity/maily (compose + .env live there).
+# Deploy from /home/gjessing/docker/productivity/maily (compose + .env live there).
 # Persistent data is bind-mounted from the host at /home/gjessing/data/maily so it survives
 # redeploys. That is the system NVMe (nvme0n1p2). The former root /mnt/data/maily lives on a
 # second NVMe that began returning unrecoverable media read errors on 2026-08-06; maily was

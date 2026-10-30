@@ -1,6 +1,6 @@
 # Build the backend image and push it to GitHub Container Registry (GHCR).
 # Runs on every push to main; the deployment host then `docker compose pull`s
-# ghcr.io/gjessing1/maily-backend and restarts (see /home/gjessing/docker/Productivity/maily).
+# ghcr.io/gjessing1/maily-backend and restarts (see /home/gjessing/docker/productivity/maily).
 name: docker
 
 on:

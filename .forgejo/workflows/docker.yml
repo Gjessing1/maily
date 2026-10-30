@@ -52,7 +52,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: '1' # required for the Dockerfile's RUN --mount=type=cache npm cache
       # Deploy project (compose file + .env), bind-mounted into the job by the runner.
-      DEPLOY_DIR: /home/gjessing/docker/Productivity/maily
+      DEPLOY_DIR: /home/gjessing/docker/productivity/maily
     steps:
       - uses: actions/checkout@v4
 
