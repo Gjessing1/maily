@@ -149,7 +149,10 @@ function rowsFor(snapshot: ViewRows | null, view: string | undefined): MessageDt
  */
 let lastRendered: ViewRows | null = null;
 
-export function useMessages(folderId: string | undefined): MessagesResult {
+export function useMessages(
+  folderId: string | undefined,
+  initialDisplayLimit?: number,
+): MessagesResult {
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -159,8 +162,15 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   // How many rows the view currently shows. The cache can hold up to a year of rows
   // (clientCacheDays), so both the Dexie read and the DOM must stay bounded to a
   // window that grows page-by-page with scrolling — never "everything cached".
-  const [displayLimit, setDisplayLimit] = useState(PAGE);
-  useEffect(() => setDisplayLimit(PAGE), [folderId, PAGE]);
+  const [displayLimit, setDisplayLimit] = useState(() =>
+    Math.max(PAGE, initialDisplayLimit ?? PAGE),
+  );
+  const displayView = useRef({ folderId, page: PAGE });
+  useEffect(() => {
+    if (displayView.current.folderId === folderId && displayView.current.page === PAGE) return;
+    displayView.current = { folderId, page: PAGE };
+    setDisplayLimit(PAGE);
+  }, [folderId, PAGE]);
 
   // The virtual "Archived" view has no real folder id; it reads its own endpoint
   // and, offline, filters the cached archive-folder rows by the same role subtraction.
@@ -262,8 +272,16 @@ export function useMessages(folderId: string | undefined): MessagesResult {
   // What the list actually renders: the cache once it has answered for this view, else
   // the rows fetched for it, else the rows it last showed. Only a genuinely unknown view
   // (first visit, cold cache, nothing fetched yet) stays `undefined` — i.e. loading.
-  const messages =
-    live ?? rowsFor(fetched, folderId) ?? rowsFor(lastRendered, folderId) ?? undefined;
+  const fetchedRows = rowsFor(fetched, folderId);
+  const previousRows = rowsFor(lastRendered, folderId);
+  // A head refresh can answer before a deep cache read on remount. Keep the old
+  // loaded window until Dexie emits, or the scroller briefly shrinks to page
+  // one and the browser clamps its restored offset to the top.
+  const fallbackRows =
+    fetchedRows && previousRows && previousRows.length > fetchedRows.length
+      ? previousRows
+      : (fetchedRows ?? previousRows);
+  const messages = live ?? fallbackRows ?? undefined;
   useEffect(() => {
     if (folderId && messages) lastRendered = { view: folderId, rows: messages };
   }, [folderId, messages]);

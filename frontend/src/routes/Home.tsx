@@ -1,5 +1,15 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import {
+  Fragment,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api/client';
 import { useAccounts, useFolders, useMessages } from '../state/data';
@@ -42,6 +52,22 @@ import {
 
 const ReaderView = lazy(() => import('./Reader').then((m) => ({ default: m.ReaderView })));
 
+// React Router unmounts Home while a full-screen message is open. Keep the
+// scroll offset and loaded window against that history entry, so Back can rebuild
+// the same list depth. A newly opened folder gets a new key and starts at the top.
+interface InboxPosition {
+  folderId: string;
+  top: number;
+  rows: number;
+}
+const inboxPositions = new Map<string, InboxPosition>();
+
+function rememberInbox(key: string, position: InboxPosition): void {
+  inboxPositions.delete(key);
+  inboxPositions.set(key, position);
+  if (inboxPositions.size > 20) inboxPositions.delete(inboxPositions.keys().next().value!);
+}
+
 /** Subtle section header dividing the unread/read groups (Gmail-desktop style). */
 function SectionLabel({ children, divider }: { children: string; divider?: boolean }) {
   return (
@@ -56,6 +82,7 @@ function SectionLabel({ children, divider }: { children: string; divider?: boole
 }
 
 export function Home() {
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const online = useOnlineStatus();
@@ -71,6 +98,14 @@ export function Home() {
   const splitMode = prefs.readingPane !== 'none' && splitWide;
   const folderId = params.get('folder') ?? undefined;
   const selectedId = params.get('msg') ?? undefined;
+  const restoredPosition = useRef(
+    folderId && inboxPositions.get(location.key)?.folderId === folderId
+      ? { key: location.key, ...inboxPositions.get(location.key)! }
+      : null,
+  );
+  const pendingPosition = useRef(restoredPosition.current);
+  const listRef = useRef<HTMLElement>(null);
+  const openingMessage = useRef(false);
 
   // In split mode a row click sets the `msg` query param (stays on Home, no remount)
   // instead of navigating to the full-screen reader.
@@ -147,8 +182,70 @@ export function Home() {
     [unifiedView, accountById],
   );
 
-  const { messages, loading, refreshing, hasMore, error, loadMore, refresh } =
-    useMessages(folderId);
+  const { messages, loading, refreshing, hasMore, error, loadMore, refresh } = useMessages(
+    folderId,
+    restoredPosition.current?.rows,
+  );
+
+  const rememberPosition = useCallback(() => {
+    if (!folderId || !listRef.current) return;
+    rememberInbox(location.key, {
+      folderId,
+      top: listRef.current.scrollTop,
+      rows: messages?.length ?? 0,
+    });
+  }, [folderId, location.key, messages]);
+
+  // Capture on the row click before navigation; some WebViews reset the detached
+  // scroller to zero as the route unmounts. The scroll listener covers Android Back
+  // and other departures without a row click.
+  const onListClickCapture = useCallback(
+    (event: React.MouseEvent) => {
+      rememberPosition();
+      if (
+        event.target instanceof Element &&
+        event.target.closest('a[href^="/m/"]') &&
+        !event.target.closest('[role="button"]')
+      ) {
+        openingMessage.current = true;
+        window.setTimeout(() => {
+          openingMessage.current = false;
+        }, 250);
+      }
+    },
+    [rememberPosition],
+  );
+
+  useEffect(() => {
+    if (!folderId || !messages?.length) return;
+    const previous = inboxPositions.get(location.key);
+    rememberInbox(location.key, {
+      folderId,
+      top: listRef.current?.scrollTop ?? previous?.top ?? 0,
+      rows: messages.length,
+    });
+  }, [folderId, location.key, messages]);
+
+  useLayoutEffect(() => {
+    const saved = pendingPosition.current;
+    const el = listRef.current;
+    if (!saved || !el || saved.key !== location.key || saved.folderId !== folderId || !messages)
+      return;
+    el.scrollTop = saved.top;
+    if (el.scrollTop >= saved.top - 1 || messages.length >= saved.rows) {
+      pendingPosition.current = null;
+    }
+  }, [folderId, location.key, messages]);
+
+  // Give up on an offset that never becomes reachable (rows deleted while the reader
+  // was open leave the list shorter than it was), or every later list update would
+  // drag the scroller back down to the bottom.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      pendingPosition.current = null;
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // Fold the loaded rows into conversations (one row per thread) when conversation
   // view is on; otherwise each message is its own conversation. groupConversations
@@ -409,7 +506,13 @@ export function Home() {
       </header>
 
       <main
+        ref={listRef}
         className={`flex-1 overflow-y-auto no-scrollbar ${!isWide ? 'pb-16' : ''}`}
+        onScroll={() => {
+          if (openingMessage.current && listRef.current?.scrollTop === 0) return;
+          rememberPosition();
+        }}
+        onClickCapture={onListClickCapture}
         {...pull.handlers}
       >
         <PullToRefreshIndicator
