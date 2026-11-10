@@ -282,6 +282,25 @@ export function setNativeMessageOpener(handler: (messageId: string) => boolean):
 }
 
 /**
+ * Let the Android shell start a message in the running app — a `mailto:` link tapped in
+ * another app, or text shared to Maily. Same channel and contract as
+ * {@link setNativeMessageOpener}: the shell evaluates `window.mailyOpenCompose(mailto)`
+ * with a complete `mailto:` URL, and anything but a synchronous true makes it load
+ * `/compose?mailto=…` instead.
+ *
+ * Returns the uninstall. Harmless on the web, where nothing calls the global.
+ */
+export function setNativeComposeOpener(handler: (mailto: string) => boolean): () => void {
+  const host = globalThis as typeof globalThis & {
+    mailyOpenCompose?: (mailto: string) => boolean;
+  };
+  host.mailyOpenCompose = handler;
+  return () => {
+    if (host.mailyOpenCompose === handler) delete host.mailyOpenCompose;
+  };
+}
+
+/**
  * Let the Android shell report the device's light/dark mode to the theme store.
  *
  * Same remote-origin-safe channel as Back and notification opens: the shell evaluates

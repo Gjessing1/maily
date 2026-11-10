@@ -20,9 +20,12 @@ import {
   applyNativeSystemBars,
   findNativeAppUpdate,
   getNativeAppInfo,
+  setNativeComposeOpener,
   setNativeMessageOpener,
 } from './nativeAndroid';
 import { resumeNativePush } from './api/push';
+import { buildMailto } from './state/replyPrefill';
+import { parseMailto } from './ui/mailLink';
 
 // Home is the app shell's primary view and stays eager. Everything else is loaded
 // on demand; Workbox still precaches the emitted chunks, so they remain available
@@ -194,6 +197,21 @@ export function App() {
     () =>
       setNativeMessageOpener((messageId) => {
         navigate(`/m/${messageId}`);
+        return true;
+      }),
+    [navigate],
+  );
+
+  // Same for a `mailto:` link or shared text the shell was handed while the app is
+  // running. A composer that is already open keeps its draft: replacing it would
+  // discard what the user was writing, without the unsaved-work check.
+  useEffect(
+    () =>
+      setNativeComposeOpener((mailto) => {
+        if (!/^mailto:/i.test(mailto)) return false;
+        if (window.location.pathname !== '/compose') {
+          navigate('/compose', { state: { ...buildMailto(parseMailto(mailto)), fresh: true } });
+        }
         return true;
       }),
     [navigate],

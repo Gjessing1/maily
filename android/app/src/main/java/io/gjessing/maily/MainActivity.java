@@ -53,10 +53,19 @@ public class MainActivity extends BridgeActivity {
             String url = MailyNotificationLink.urlFor(serverUrl, messageId);
             if (url != null) bridge.getWebView().post(() -> bridge.getWebView().loadUrl(url));
         }
+
+        // Launched by a mailto: link or a text share: start on the composer. Not on a
+        // restored activity — that intent was already acted on before the process died.
+        String mailto = savedInstanceState == null ? MailyComposeLink.mailtoFrom(getIntent()) : null;
+        if (messageId == null && mailto != null && bridge != null) {
+            String url = MailyComposeLink.urlFor(serverUrl, mailto);
+            if (url != null) bridge.getWebView().post(() -> bridge.getWebView().loadUrl(url));
+        }
     }
 
     /**
-     * A notification tapped while Maily is already running. `launchMode="singleTask"`
+     * A notification tapped — or a mailto: link / text share received — while Maily is
+     * already running. `launchMode="singleTask"`
      * routes it here instead of recreating the activity, so the running app is asked to
      * navigate rather than being reloaded — a reload would discard its state and, behind
      * SSO, re-run the whole handshake.
@@ -65,9 +74,15 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        String serverUrl = MailyPreferences.getServerUrl(this);
         String messageId = MailyNotificationLink.messageIdFrom(intent);
-        if (messageId == null) return;
-        MailyNotificationLink.openInRunningApp(bridge, MailyPreferences.getServerUrl(this), messageId);
+        if (messageId != null) {
+            MailyNotificationLink.openInRunningApp(bridge, serverUrl, messageId);
+            return;
+        }
+        // A mailto: link or a text share while Maily is running.
+        String mailto = MailyComposeLink.mailtoFrom(intent);
+        if (mailto != null) MailyComposeLink.openInRunningApp(bridge, serverUrl, mailto);
     }
 
     /**

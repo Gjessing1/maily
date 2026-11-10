@@ -44,6 +44,16 @@ export default defineConfig({
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
+        // Desktop Chrome/Edge: lets the installed app (or the site) be chosen as the
+        // `mailto:` handler. Android ignores this — the APK's intent filters do that job.
+        protocol_handlers: [{ protocol: 'mailto', url: '/compose?mailto=%s' }],
+        // "Share → maily" for text and links from an installed PWA. GET only: shared
+        // files would need a multipart POST handled in the service worker.
+        share_target: {
+          action: '/compose',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },

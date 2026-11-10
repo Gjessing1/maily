@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from 'vitest';
 import type { MessageDetailDto } from '@maily/shared';
-import { buildForward, buildReply } from './replyPrefill';
+import { buildForward, buildReply, composeLinkPrefill } from './replyPrefill';
 import { htmlToPlainText } from '../ui/htmlText';
 import { splitQuotedHtml } from '../ui/quote';
 
@@ -72,5 +72,47 @@ describe('buildForward', () => {
     expect(quoteHtml).not.toContain('<blockquote');
     expect(quoteHtml).toContain('Forwarded message');
     expect(quoteHtml).toContain('Kan du bekrefte adressen?');
+  });
+});
+
+/**
+ * The composer's URL is the only way in from outside the app — the `mailto:` protocol
+ * handler, the share target, and the Android shell's intents all arrive through it.
+ */
+describe('composeLinkPrefill', () => {
+  const prefill = (query: string) => composeLinkPrefill(new URLSearchParams(query));
+
+  test('leaves an ordinary /compose alone', () => {
+    expect(prefill('')).toBeNull();
+    expect(prefill('handoff=abc')).toBeNull();
+  });
+
+  test('unpacks a mailto: link the browser or the shell substituted in', () => {
+    const link =
+      'mailto:a@example.com,b@example.com?cc=c@example.com&subject=Hi%20there&body=One%0ATwo';
+    expect(prefill(`mailto=${encodeURIComponent(link)}`)).toEqual({
+      accountId: undefined,
+      to: ['a@example.com', 'b@example.com'],
+      cc: ['c@example.com'],
+      subject: 'Hi there',
+      body: 'One\nTwo',
+    });
+  });
+
+  test('refuses a mailto parameter that is not a mailto: URL', () => {
+    expect(prefill(`mailto=${encodeURIComponent('javascript:alert(1)')}`)).toBeNull();
+  });
+
+  test('maps a share to subject and body', () => {
+    expect(prefill('title=A%20page&text=Worth%20reading&url=https%3A%2F%2Fexample.com')).toEqual({
+      subject: 'A page',
+      body: 'Worth reading\n\nhttps://example.com',
+    });
+  });
+
+  test('does not repeat a link the shared text already contains', () => {
+    expect(prefill('text=See%20https%3A%2F%2Fexample.com&url=https%3A%2F%2Fexample.com')).toEqual({
+      body: 'See https://example.com',
+    });
   });
 });

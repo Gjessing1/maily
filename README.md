@@ -39,6 +39,12 @@ The first passkey login from the app stops with Bitwarden reporting that the bro
 
 No `/.well-known/assetlinks.json` is involved. WebAuthn's app mode, which Digital Asset Links would authorise, asserts the passkey for the app's `android:apk-key-hash:` origin instead of the website's, and Pocket ID only accepts its own HTTPS origin — Bitwarden refuses app mode with "Passkeys not supported for this app" when the asset links are missing, and Pocket ID rejects the login when they are present.
 
+## Maily as the mail app
+
+APK 0.6.0 and later answer `mailto:` links and text shares from other apps by opening the composer. Android has no "default email app" setting: the first time a `mailto:` link is tapped it lists every app that can handle it — pick Maily and **Always**. Shared files are not accepted yet, only text and links.
+
+On desktop Chrome and Edge the site (or the installed PWA) can be made the `mailto:` handler from the address bar's protocol-handler prompt, and an installed PWA appears in the share sheet for text and links.
+
 ## Android releases
 
 The APK hosts the current UI from the selected HTTPS Maily server, so ordinary UI/server deployments arrive without an APK update. Rebuild the APK when native code, permissions, signing, or icons change. The app checks `/api/app/version` and offers a newer published APK under **Settings → Android app**.

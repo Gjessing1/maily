@@ -8,6 +8,7 @@ import { getPrefs, usePrefs } from '../state/prefs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { runBackHandler, useBackHandler } from '../state/backButton';
 import { armWebBackGuard, webBackSteps } from '../state/webBack';
+import { composeLinkPrefill } from '../state/replyPrefill';
 import { GUTTER, PAGE, READING_COLUMN } from '../ui/layout';
 import { RecipientInput } from '../components/RecipientInput';
 import { RichTextEditor, type InlineImage } from '../components/RichTextEditor';
@@ -131,7 +132,12 @@ export function Compose() {
   // below re-parks it in history state, so reloading the popout still restores it.
   const [searchParams] = useSearchParams();
   const [handoff] = useState(() => takeHandoff<ComposePrefill>(searchParams.get('handoff')));
-  const stateObj = handoff ? { ...handoff, fresh: true } : routerState;
+  // Opened from outside the app (a `mailto:` link, the share sheet): the prefill rides
+  // in the URL. Like the handoff it is consumed once — the `fresh` effect's rewrite
+  // drops the query and parks the prefill in history state.
+  const [linked] = useState(() => composeLinkPrefill(searchParams));
+  const external = handoff ?? linked;
+  const stateObj = external ? { ...external, fresh: true } : routerState;
   const isFresh = Boolean(stateObj?.fresh);
   const prefill = stateObj ?? {};
   // Detached-window affordance: desktop only, and hidden inside a popout (already detached).
@@ -143,9 +149,18 @@ export function Compose() {
   /** Leave the composer: back to where we came from, or close the detached window. */
   function leave() {
     leaving.current = true;
-    if (popout) closePopout();
+    if (popout) return closePopout();
     // Past the web Back guard's extra entry too, when it is on top (state/webBack).
-    else navigate(-webBackSteps());
+    const steps = webBackSteps();
+    const first = (window.history.state as { idx?: number } | null)?.idx === 0;
+    if (!first) return void navigate(-steps);
+    // The composer is the first screen of this session (opened by a `mailto:` link or
+    // the share sheet), so there is nothing to go back to: land on the inbox instead,
+    // in the composer's own entry so Back does not reopen it.
+    if (steps > 1) {
+      window.addEventListener('popstate', () => navigate('/', { replace: true }), { once: true });
+      window.history.go(1 - steps);
+    } else navigate('/', { replace: true });
   }
   const accounts = useAccounts();
   const { signature, signatureEnabled } = usePrefs();

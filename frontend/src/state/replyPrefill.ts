@@ -7,7 +7,7 @@
 import type { AccountDto, MessageDetailDto } from '@maily/shared';
 import { fullDate, senderName } from '../ui/format';
 import { escapeHtml } from '../ui/htmlText';
-import type { MailtoLink } from '../ui/mailLink';
+import { parseMailto, type MailtoLink } from '../ui/mailLink';
 import type { ComposeAttachment, ComposePrefill } from '../routes/Compose';
 
 /**
@@ -120,6 +120,31 @@ export function buildMailto(link: MailtoLink, accountId?: string): ComposePrefil
     subject: link.subject,
     body: link.body,
   };
+}
+
+/**
+ * Compose prefill carried in the composer's own URL — how anything outside the app
+ * starts a message, since router state cannot cross a page load:
+ *
+ * - `?mailto=<mailto: URL>` — the manifest's `protocol_handlers` entry (the browser
+ *   substitutes the tapped link) and the Android shell's `mailto:` intents.
+ * - `?title=&text=&url=` — the manifest's `share_target` (Web Share Target, GET).
+ *
+ * Null when the URL carries neither, so an ordinary `/compose` is left alone. Only ever
+ * fills fields for the user to review: nothing here can send.
+ */
+export function composeLinkPrefill(params: URLSearchParams): ComposePrefill | null {
+  const mailto = params.get('mailto');
+  if (mailto && /^mailto:/i.test(mailto.trim())) return buildMailto(parseMailto(mailto.trim()));
+
+  const title = params.get('title')?.trim();
+  const text = params.get('text')?.trim();
+  const url = params.get('url')?.trim();
+  if (!title && !text && !url) return null;
+  // Android apps routinely put the link in `text` and leave `url` empty; when both
+  // arrive, don't repeat a link the text already contains.
+  const body = [text, url && !text?.includes(url) ? url : ''].filter(Boolean).join('\n\n');
+  return { ...(title ? { subject: title } : {}), ...(body ? { body } : {}) };
 }
 
 export function buildForward(detail: MessageDetailDto): ComposePrefill {
