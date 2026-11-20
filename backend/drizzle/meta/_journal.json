@@ -253,6 +253,13 @@
       "when": 1789852000000,
       "tag": "0035_rule_protect",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1789938400000,
+      "tag": "0036_search_html_body",
+      "breakpoints": true
     }
   ]
 }

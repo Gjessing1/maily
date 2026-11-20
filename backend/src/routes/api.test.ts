@@ -438,7 +438,7 @@ test('GET /api/search and /api/contacts short-circuit to [] on an empty query', 
   assert.deepEqual(contacts.json(), []);
 });
 
-test('GET /api/search?threaded=1 expands a matching message to its conversation', async () => {
+test('GET /api/search finds HTML body text and can expand a matching conversation', async () => {
   const accountId = seedAccount();
   const folderId = seedFolder(accountId, 'inbox');
   const parentMessageId = `<${randomUUID()}@example.com>`;
@@ -451,7 +451,8 @@ test('GET /api/search?threaded=1 expands a matching message to its conversation'
   const child = seedMessage(accountId, folderId, 'inbox', {
     inReplyTo: parentMessageId,
     subject: 'Re: Conversation parent',
-    bodyText: 'uniquethreadneedle',
+    bodyText: null,
+    bodyHtml: '<p>Mail body with a <strong>uniquethreadneedle</strong></p>',
     receivedAt: new Date('2025-06-02T00:00:00Z'),
   });
 

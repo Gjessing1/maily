@@ -25,6 +25,7 @@ import { startTrashQueue } from './cleanup/trashQueue.js';
 import { drainSnippets } from './cleanup/snippetBackfill.js';
 import { backfillSourceBytes } from './cleanup/sourceBytesBackfill.js';
 import { startOutbox, pendingSendUploadIds } from './outbox/runner.js';
+import { backfillHtmlBodies } from './search/body-backfill.js';
 
 const log = createLogger('maily');
 
@@ -91,6 +92,14 @@ async function main(): Promise<void> {
   // large inbox) and is skipped entirely unless the snippet code changed since the last
   // converged pass.
   setImmediate(() => void drainSnippets());
+
+  setImmediate(() => {
+    void backfillHtmlBodies()
+      .then((indexed) => {
+        if (indexed > 0) log.info(`indexed HTML bodies for ${indexed} cached messages`);
+      })
+      .catch((err) => log.error('search HTML body backfill failed:', err));
+  });
 
   // Clear abandoned composer uploads left from previous runs — but keep any still referenced
   // by a queued send (a scheduled "send later" can outlive the staging cutoff).

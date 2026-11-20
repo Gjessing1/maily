@@ -68,6 +68,7 @@ function seedMessage(
     fromAddress: string;
     subject?: string;
     bodyText?: string;
+    bodyHtml?: string;
     receivedAt?: Date;
     toAddresses?: string;
     folderId?: string;
@@ -87,6 +88,7 @@ function seedMessage(
       fromName: 'Sender',
       subject: opts.subject ?? 'Hi',
       bodyText: opts.bodyText ?? 'plain body',
+      bodyHtml: opts.bodyHtml,
       toAddresses: opts.toAddresses ?? null,
       receivedAt: opts.receivedAt ?? new Date(),
       sourceBytes: opts.sourceBytes ?? null,
@@ -217,8 +219,12 @@ test('newsletterMessages: unsubscribe-marker mail only (EN+NO), protected exclud
     fromAddress: 'nyhet@avis.example',
     bodyText: 'Du kan melde deg av vårt nyhetsbrev her',
   });
-  // Ordinary personal mail → not a newsletter.
-  seedMessage(acct, { fromAddress: 'mum@family.example', bodyText: 'see you sunday' });
+  // The supplemental HTML search text is outside the cleanup keyword fields.
+  seedMessage(acct, {
+    fromAddress: 'mum@family.example',
+    bodyText: 'see you sunday',
+    bodyHtml: '<p>See you Sunday</p><p>How do I unsubscribe?</p>',
+  });
   // Newsletter-marked but protected (invoice) → the HARD gate keeps it out.
   seedMessage(acct, {
     fromAddress: 'billing@shop.example',

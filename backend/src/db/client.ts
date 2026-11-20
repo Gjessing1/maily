@@ -5,6 +5,7 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { env } from '../env.js';
+import { htmlSearchText } from '../search/body-text.js';
 import * as schema from './schema.js';
 
 export const sqlite: Database.Database = new Database(env.dbPath);
@@ -13,6 +14,7 @@ export const sqlite: Database.Database = new Database(env.dbPath);
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
 sqlite.pragma('busy_timeout = 5000');
+sqlite.function('mail_html_search_text', { deterministic: true }, htmlSearchText);
 
 export const db = drizzle(sqlite, { schema });
 export type DB = typeof db;

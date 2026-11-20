@@ -23,9 +23,10 @@ import { getServerSettings, type KeywordListKey } from '../db/settings.js';
 import { billingSql } from '../pipeline/facts-read.js';
 import { PROTECTED_KEYWORDS } from './keywords.js';
 
-/** Build an FTS5 MATCH expression: prefix-match each term, OR-joined. */
+/** Prefix-match cleanup terms in the header and plain-body fields. */
 export function ftsOrMatch(terms: string[]): string {
-  return terms.map((t) => `"${t}"*`).join(' OR ');
+  const match = terms.map((t) => `"${t}"*`).join(' OR ');
+  return `{subject from_name from_address body} : (${match})`;
 }
 
 /**

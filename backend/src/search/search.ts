@@ -40,12 +40,13 @@ function fallbackFolder(accountId: string, inTrash: boolean): FolderRow | undefi
 
 export async function searchMessages(query: string, opts: SearchOptions): Promise<MessageRow[]> {
   const ir = parseQuery(query);
-  const local = searchLocalIR(ir, opts.limit);
+  const limit = Math.max(1, Math.trunc(opts.limit));
+  const local = searchLocalIR(ir, limit);
   // Enough local hits, or no account scope to fall back on → done. Scope operators
   // like `in:trash` aren't free text, so an operator-only query has nothing for the
   // server-side TEXT search either.
   const text = ir.terms.join(' ');
-  if (!opts.accountId || !text || local.length >= opts.limit) return local;
+  if (!opts.accountId || !text || local.length >= limit) return local;
 
   const accountId = opts.accountId;
   const engine = getEngine(accountId);
@@ -71,5 +72,5 @@ export async function searchMessages(query: string, opts: SearchOptions): Promis
   }
 
   // Re-run local search now that fallback hits are ingested.
-  return searchLocalIR(ir, opts.limit);
+  return searchLocalIR(ir, limit);
 }
