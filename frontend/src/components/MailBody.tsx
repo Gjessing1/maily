@@ -4,12 +4,37 @@ import { showNotice } from '../state/undo';
 import { useTheme, type ResolvedTheme } from '../state/theme';
 import { splitQuotedHtml, splitQuotedText } from '../ui/quote';
 import { createMailLinkClickHandler, type MailtoLink } from '../ui/mailLink';
+import { removeTrackingPixels } from '../ui/trackingPixels';
 
-/** True if the HTML references a remote (http/https) image or CSS background url(). */
-export function hasRemoteImages(html: string): boolean {
+function referencesRemoteImages(html: string): boolean {
   return (
     /<img\b[^>]*\bsrc\s*=\s*["']?\s*https?:/i.test(html) || /\burl\(\s*["']?\s*https?:/i.test(html)
   );
+}
+
+// Readers call hasRemoteImages on every render, and a thread does it once per message;
+// parsing the same body again each time would be wasted work.
+const remoteImageVerdicts = new Map<string, boolean>();
+const REMOTE_IMAGE_VERDICTS_KEPT = 32;
+
+/**
+ * True if the HTML references a remote (http/https) image or CSS background url() that
+ * will actually render. Tracking pixels don't count: they are stripped before rendering
+ * (see trackingPixels.ts), so a mail whose only remote image is a tracker has nothing
+ * worth a "Show images" prompt.
+ */
+export function hasRemoteImages(html: string): boolean {
+  if (!referencesRemoteImages(html)) return false;
+  if (typeof DOMParser === 'undefined') return true;
+  const cached = remoteImageVerdicts.get(html);
+  if (cached !== undefined) return cached;
+  const mail = mailDocumentParts(html);
+  const verdict = referencesRemoteImages(mail.head + mail.bodyAttrs + mail.body);
+  if (remoteImageVerdicts.size >= REMOTE_IMAGE_VERDICTS_KEPT) {
+    remoteImageVerdicts.delete(remoteImageVerdicts.keys().next().value as string);
+  }
+  remoteImageVerdicts.set(html, verdict);
+  return verdict;
 }
 
 /**
@@ -37,6 +62,9 @@ export function mailDocumentParts(html: string): { head: string; bodyAttrs: stri
   const clean = stripScripts(html);
   if (typeof DOMParser === 'undefined') return { head: '', bodyAttrs: '', body: clean };
   const doc = new DOMParser().parseFromString(clean, 'text/html');
+  // Tracking pixels go before the frame ever sees them, whether or not remote images
+  // are allowed: they report the open and can stall the layout on a slow host.
+  removeTrackingPixels(doc.body);
   const styles = Array.from(doc.querySelectorAll('style'));
   const head = styles.map((style) => style.outerHTML).join('');
   for (const style of styles) style.remove();

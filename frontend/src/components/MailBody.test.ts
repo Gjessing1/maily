@@ -29,6 +29,12 @@ describe('hasRemoteImages', () => {
     expect(hasRemoteImages('<img src="data:image/png;base64,AAAA">')).toBe(false);
     expect(hasRemoteImages('<p>no images here</p>')).toBe(false);
   });
+
+  test("doesn't count a tracking pixel, since it never renders", () => {
+    const pixel = '<img src="https://t.example/wf/open?u=1" width="1" height="1">';
+    expect(hasRemoteImages(`<p>Hi</p>${pixel}`)).toBe(false);
+    expect(hasRemoteImages(`<img src="https://cdn.example/hero.png">${pixel}`)).toBe(true);
+  });
 });
 
 describe('messageCsp', () => {
@@ -135,6 +141,13 @@ describe('mailDocumentParts', () => {
     );
     expect(parts.bodyAttrs).toBe(' class="mail"');
     expect(parts.body).toBe('<p>Safe</p>');
+  });
+
+  test('drops tracking pixels before they reach the frame', () => {
+    const parts = mailDocumentParts(
+      '<p>Hi</p><img src="https://x.hubspotlinks.com/Cto/abc" width="1" height="1" style="display:none!important">',
+    );
+    expect(parts.body).toBe('<p>Hi</p>');
   });
 });
 
