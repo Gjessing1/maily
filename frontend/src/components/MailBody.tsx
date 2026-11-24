@@ -300,9 +300,15 @@ function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
   const mailtoRef = useRef(onMailto);
   mailtoRef.current = onMailto;
 
+  // The frame document the layout observers were last installed on. A new `srcDoc`
+  // (theme flip, "show images") navigates the frame, and until the new document
+  // arrives `contentDocument` is still the old one — which must not count as parsed.
+  const installedDocRef = useRef<Document | null>(null);
+
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe) return;
+    const staleDoc = installedDocRef.current;
     // Fixed-width desktop emails (e.g. a table with min-width:600px) are wider than
     // a phone viewport and can't be reflowed narrower. Rather than let them spill out
     // of the frame, lay the email out at its natural width and scale the whole body
@@ -412,6 +418,7 @@ function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
       const doc = iframe.contentDocument;
       const body = doc?.body;
       if (!doc || !body) return;
+      installedDocRef.current = doc;
       measure();
 
       const Observer = window.ResizeObserver;
@@ -441,12 +448,41 @@ function MailFrame({ html, allowImages = true, onMailto }: MailFrameProps) {
       installLinkRouting(doc);
     };
 
+    // Lay the email out as soon as its HTML is parsed rather than on `load`: the frame's
+    // load event waits for every remote image — tracking pixels on a slow ad server
+    // included — and until then the message was an 8px sliver (measured off the initial
+    // about:blank document), i.e. a reader that looks like it is still loading. Images
+    // arriving later re-measure through their load/error listeners and the
+    // ResizeObserver; `load` still re-installs once more as the final word. The URL and
+    // staleDoc checks keep that initial about:blank and a previous srcDoc's document
+    // from passing as parsed.
+    let parsePoll = 0;
+    let parsePollFrames = 0;
+    const installWhenParsed = () => {
+      parsePoll = 0;
+      if (disposed) return;
+      const doc = iframe.contentDocument;
+      if (
+        doc &&
+        doc !== staleDoc &&
+        doc.body &&
+        doc.URL === 'about:srcdoc' &&
+        doc.readyState !== 'loading'
+      ) {
+        installLayoutObservers();
+        return;
+      }
+      // Give up after ~5s of frames; the `load` listener still covers it.
+      if (++parsePollFrames < 300) parsePoll = requestAnimationFrame(installWhenParsed);
+    };
+
     iframe.addEventListener('load', installLayoutObservers);
     const onWindowResize = () => scheduleMeasure(true);
     window.addEventListener('resize', onWindowResize);
-    if (iframe.contentDocument?.readyState === 'complete') installLayoutObservers();
+    installWhenParsed();
     return () => {
       disposed = true;
+      if (parsePoll) cancelAnimationFrame(parsePoll);
       iframe.removeEventListener('load', installLayoutObservers);
       window.removeEventListener('resize', onWindowResize);
       resizeObserver?.disconnect();
