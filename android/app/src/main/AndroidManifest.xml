@@ -73,6 +73,10 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- The package installer's answer to an update; only AppUpdater's PendingIntent reaches it. -->
+        <receiver
+            android:name=".AppUpdateReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -94,6 +98,8 @@
       so an idle phone would otherwise suspend mid-request.
     -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- In-app updates: the shell installs the APK its own server publishes. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!--
       Deliberately absent: FOREGROUND_SERVICE(_SPECIAL_USE), because nothing runs
       indefinitely any more, and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, because the poll

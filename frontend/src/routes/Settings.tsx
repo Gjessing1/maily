@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { GUTTER, NARROW_COLUMN, SETTINGS_COLUMN } from '../ui/layout';
 import { useNavigate } from 'react-router-dom';
 import type {
@@ -30,13 +30,11 @@ import { useMediaQuery } from '../ui/useMediaQuery';
 import { SETTINGS_SECTIONS, settingsSection, type SettingsSectionId } from '../ui/settingsSections';
 import {
   configureNativeServer,
-  findNativeAppUpdate,
   getNativeAppInfo,
   isNativeAndroid,
-  nativeDownloadUrl,
-  openNativeExternal,
-  type NativeAppRelease,
+  nativeAppUpdater,
 } from '../nativeAndroid';
+import { describeUpdate, isBusy, type AppUpdater, type UpdateState } from '../app-updater';
 
 /** Human-friendly cache window, e.g. 365 → "1 year", 30 → "30 days". */
 function windowLabel(days: number): string {
@@ -643,34 +641,47 @@ function UpdateButton({ pending }: { pending: boolean }) {
   );
 }
 
-/** Server address and APK updates for the Capacitor shell — native builds only. */
+const UPDATE_IDLE: UpdateState = { phase: 'idle' };
+
+function useUpdateState(updater: AppUpdater | null): UpdateState {
+  return useSyncExternalStore(
+    (onChange) => (updater ? updater.subscribe(onChange) : () => {}),
+    () => (updater ? updater.getState() : UPDATE_IDLE),
+  );
+}
+
+/**
+ * Server address and the in-app update for the Capacitor shell — native builds only.
+ * Update downloads, verifies and installs the newer APK in place; Android only asks to
+ * confirm.
+ */
 function NativeAndroidGroup() {
   const [serverUrl, setServerUrl] = useState('');
   const [version, setVersion] = useState('');
-  const [release, setRelease] = useState<NativeAppRelease | null>(null);
   const [status, setStatus] = useState('Loading Android app information…');
   const [saving, setSaving] = useState(false);
+  const updater = nativeAppUpdater();
+  const update = useUpdateState(updater);
 
   useEffect(() => {
     let alive = true;
     void getNativeAppInfo()
-      .then(async (info) => {
+      .then((info) => {
         if (!alive || !info) return;
         setServerUrl(info.serverUrl);
         setVersion(`${info.versionName} (${info.versionCode})`);
-        const next = await findNativeAppUpdate(info);
-        if (!alive) return;
-        setRelease(next);
-        setStatus(next ? `Maily ${next.versionName} is available.` : 'The native app is current.');
+        setStatus('');
       })
       .catch((error: unknown) => {
         if (alive)
           setStatus(error instanceof Error ? error.message : 'Could not read app details.');
       });
+    // Opening this screen is the moment to look, so the check answers either way.
+    void updater?.check(true);
     return () => {
       alive = false;
     };
-  }, []);
+  }, [updater]);
 
   const save = async () => {
     setSaving(true);
@@ -683,6 +694,10 @@ function NativeAndroidGroup() {
       setSaving(false);
     }
   };
+
+  const updateText = describeUpdate(update, 'Maily');
+  const canUpdate = update.phase === 'available' || update.phase === 'failed';
+  const primary = 'rounded-full bg-accent px-4 py-2 text-sm font-medium text-white';
 
   return (
     <Group
@@ -713,16 +728,38 @@ function NativeAndroidGroup() {
           </div>
         </label>
         <p className="text-xs text-faint">
-          Installed app {version || '…'} · {status}
+          Installed app {version || '…'}
+          {status && ` · ${status}`}
+          {updateText && ` · ${updateText}`}
         </p>
-        {release && (
-          <button
-            type="button"
-            onClick={() => void openNativeExternal(nativeDownloadUrl(release))}
-            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
-          >
-            Download {release.versionName}
-          </button>
+        {update.phase === 'downloading' && (
+          <progress className="w-full accent-accent" max={100} value={update.percent} />
+        )}
+        {updater && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isBusy(update)}
+              onClick={() => void updater.check(true)}
+              className="rounded-full bg-surface-2 px-4 py-2 text-sm font-medium disabled:opacity-60"
+            >
+              Check for updates
+            </button>
+            {canUpdate && (
+              <button type="button" onClick={() => void updater.install()} className={primary}>
+                Update
+              </button>
+            )}
+            {update.phase === 'needsPermission' && (
+              <button
+                type="button"
+                onClick={() => void updater.openInstallSettings()}
+                className={primary}
+              >
+                Allow installing
+              </button>
+            )}
+          </div>
         )}
       </div>
     </Group>

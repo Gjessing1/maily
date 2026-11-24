@@ -18,8 +18,7 @@ import { Login } from './routes/Login';
 import { Home } from './routes/Home';
 import {
   applyNativeSystemBars,
-  findNativeAppUpdate,
-  getNativeAppInfo,
+  nativeAppUpdater,
   setNativeComposeOpener,
   setNativeMessageOpener,
 } from './nativeAndroid';
@@ -165,13 +164,15 @@ export function App() {
   // itself has a newer signed APK. Installation is available in Settings.
   useEffect(() => {
     if (!authed) return;
+    const updater = nativeAppUpdater();
+    if (!updater) return;
     const timer = setTimeout(() => {
-      void getNativeAppInfo()
-        .then(async (info) => findNativeAppUpdate(info))
-        .then((release) => {
-          if (release) showNotice(`Maily ${release.versionName} is ready in Settings`);
-        })
-        .catch(() => undefined);
+      void updater.check(false).then(() => {
+        const state = updater.getState();
+        if (state.phase === 'available') {
+          showNotice(`Maily ${state.release.versionName} is ready to install in Settings`);
+        }
+      });
     }, 2000);
     return () => clearTimeout(timer);
   }, [authed]);

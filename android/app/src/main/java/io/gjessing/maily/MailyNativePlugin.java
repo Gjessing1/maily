@@ -18,6 +18,10 @@ import com.getcapacitor.PermissionState;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import android.webkit.CookieManager;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @CapacitorPlugin(
     name = "MailyNative",
@@ -26,6 +30,9 @@ import com.getcapacitor.annotation.PermissionCallback;
     }
 )
 public class MailyNativePlugin extends Plugin {
+    private final ExecutorService updateThread = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean updating = new AtomicBoolean(false);
+    private AppUpdater updater;
     static final String NOTIFICATIONS = "notifications";
     private static final String PLUGIN_TAG = "MailyNative";
     private MailyNavigation navigation;
@@ -33,6 +40,7 @@ public class MailyNativePlugin extends Plugin {
 
     @Override
     public void load() {
+        updater = new AppUpdater(getContext());
         String serverUrl = MailyPreferences.getServerUrl(getContext());
         if (serverUrl != null) navigation = new MailyNavigation(serverUrl);
         // Opening Maily is the reliable moment to re-arm the mail check: the receiver
@@ -296,5 +304,81 @@ public class MailyNativePlugin extends Plugin {
         } catch (Exception error) {
             call.reject("No app can open this link", error);
         }
+    }
+
+    // In-app updates: check permission, download + verify + install, and the polled status.
+
+    @PluginMethod
+    public void updatePermission(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("canInstall", updater.canInstall());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void openInstallSettings(PluginCall call) {
+        getActivity().startActivity(updater.installPermissionSettings());
+        call.resolve();
+    }
+
+    /** Polled by the page while an update downloads and installs. */
+    @PluginMethod
+    public void updateStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("copied", AppUpdater.copiedBytes());
+        result.put("total", AppUpdater.totalBytes());
+        result.put("result", AppUpdater.installResult());
+        call.resolve(result);
+    }
+
+    /**
+     * Downloads the published APK with the WebView's session cookie (so it works behind SSO),
+     * verifies its size and SHA-256 and hands it to the package installer. Resolves once Android
+     * has it; the page then polls updateStatus for the system installer's answer. Rejects with
+     * code permission, download, verification, installer or busy.
+     */
+    @PluginMethod
+    public void installUpdate(PluginCall call) {
+        String raw = call.getString("url");
+        String sha256 = call.getString("sha256");
+        long bytes = call.getData().optLong("bytes", -1);
+        if (!isUpdateServer(raw)) {
+            call.reject("Updates download only from the app's own server", "download");
+            return;
+        }
+        if (!AppUpdater.isValidSha256(sha256) || bytes <= 0 || bytes > AppUpdater.MAX_APK_BYTES) {
+            call.reject("The release manifest is invalid", "verification");
+            return;
+        }
+        if (!updater.canInstall()) {
+            call.reject("Installing apps isn't allowed yet", "permission");
+            return;
+        }
+        if (!updating.compareAndSet(false, true)) {
+            call.reject("An update is already running", "busy");
+            return;
+        }
+        String cookie = CookieManager.getInstance().getCookie(raw);
+        updateThread.execute(() -> {
+            try {
+                updater.downloadAndInstall(raw, sha256, bytes, cookie);
+                call.resolve();
+            } catch (AppUpdater.UpdateException error) {
+                call.reject(error.getMessage(), error.code);
+            } finally {
+                updating.set(false);
+            }
+        });
+    }
+
+    /** Same scheme, host and port as the server this shell loads. */
+    private boolean isUpdateServer(String raw) {
+        String serverUrl = MailyPreferences.getServerUrl(getContext());
+        if (raw == null || serverUrl == null) return false;
+        Uri url = Uri.parse(raw);
+        Uri server = Uri.parse(serverUrl);
+        return server.getScheme() != null && server.getScheme().equalsIgnoreCase(url.getScheme()) &&
+            server.getHost() != null && server.getHost().equalsIgnoreCase(url.getHost()) &&
+            server.getPort() == url.getPort();
     }
 }

@@ -1,15 +1,9 @@
+import { AppUpdater, parseRelease, type AppRelease, type UpdaterShell } from './app-updater';
+
 interface NativeAppInfo {
   serverUrl: string;
   versionName: string;
   versionCode: number;
-}
-
-export interface NativeAppRelease {
-  versionCode: number;
-  versionName: string;
-  apkUrl: string;
-  bytes: number;
-  sha256: string;
 }
 
 /**
@@ -37,7 +31,7 @@ export interface NativeFileRequest {
   authorization?: string | null;
 }
 
-interface MailyNativePlugin {
+interface MailyNativePlugin extends UpdaterShell {
   getInfo(): Promise<NativeAppInfo>;
   configureServer(options: { serverUrl: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
@@ -323,31 +317,32 @@ export function setNativeSystemThemeHandler(
   };
 }
 
-/** Return a newer APK published by this Maily server, or null. */
-export async function findNativeAppUpdate(
-  installed: NativeAppInfo | null,
-): Promise<NativeAppRelease | null> {
-  if (!installed) return null;
-  try {
-    const response = await fetch('/api/app/version', { cache: 'no-store' });
-    if (!response.ok) return null;
-    const release = (await response.json()) as Partial<NativeAppRelease>;
-    if (
-      !Number.isSafeInteger(release.versionCode) ||
-      (release.versionCode as number) <= installed.versionCode ||
-      typeof release.versionName !== 'string' ||
-      typeof release.apkUrl !== 'string' ||
-      typeof release.bytes !== 'number' ||
-      typeof release.sha256 !== 'string'
-    ) {
-      return null;
-    }
-    return release as NativeAppRelease;
-  } catch {
-    return null;
+let updater: AppUpdater | null | undefined;
+
+/**
+ * The in-app update for the native shell, or null off Android. One per page. An APK that
+ * predates the installer has no installUpdate, so Update hands the APK to the system
+ * browser as before.
+ */
+export function nativeAppUpdater(): AppUpdater | null {
+  if (updater !== undefined) return updater;
+  const plugin = nativePlugin();
+  if (!plugin) {
+    updater = null;
+    return updater;
   }
+  updater = new AppUpdater({
+    shell: plugin,
+    installedVersionCode: async () => (await plugin.getInfo()).versionCode,
+    fetchRelease: fetchPublishedRelease,
+    legacyDownload: (release: AppRelease) => plugin.openExternal({ url: release.apkUrl }),
+  });
+  return updater;
 }
 
-export function nativeDownloadUrl(release: NativeAppRelease): string {
-  return new URL(release.apkUrl, window.location.origin).href;
+async function fetchPublishedRelease(): Promise<AppRelease | null> {
+  const response = await fetch('/api/app/version', { cache: 'no-store' });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return parseRelease(await response.json(), window.location.origin);
 }
