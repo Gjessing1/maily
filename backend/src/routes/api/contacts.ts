@@ -32,9 +32,15 @@ import {
   toEditableCard,
   type EditableCard,
 } from '../../contacts/vcard.js';
-import { getAddressbookState, setAddressbookSettings } from '../../contacts/addressbooks.js';
+import {
+  effectiveDefault,
+  getAddressbookState,
+  setAddressbookSettings,
+} from '../../contacts/addressbooks.js';
 import { findDuplicateGroups } from '../../contacts/duplicates.js';
 import { mergeCards } from '../../contacts/merge.js';
+import { cardsToCsv, csvToCards } from '../../contacts/csv.js';
+import { planImport } from '../../contacts/importPlan.js';
 import { contactEmailIntelligence } from '../../contacts/intelligence.js';
 
 /** Sanitise a labelled-value list (phones/urls): trim, drop empties, cap the label. */
@@ -134,32 +140,50 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     return book ? cards.filter((c) => c.addressbook === book) : cards;
   });
 
-  // Export the cached cards as a single `.vcf` download (optionally one book).
-  // Static path, so Fastify routes it ahead of `/cards/:key`.
-  app.get<{ Querystring: { addressbook?: string } }>(
+  // Export the cached cards (optionally one book) as a `.vcf` download, or — with
+  // `format=csv` — a Google-Contacts-layout `.csv`. Static path, so Fastify routes it
+  // ahead of `/cards/:key`.
+  app.get<{ Querystring: { addressbook?: string; format?: string } }>(
     '/api/contacts/cards/export',
     async (req, reply) => {
-      const vcf = listRawCards(req.query.addressbook || null);
+      const book = req.query.addressbook || null;
       const stamp = new Date().toISOString().slice(0, 10);
+      if (req.query.format === 'csv') {
+        const cards = listCards().filter((c) => !book || c.addressbook === book);
+        return reply
+          .header('Content-Type', 'text/csv; charset=utf-8')
+          .header('Content-Disposition', `attachment; filename="contacts-${stamp}.csv"`)
+          .send(cardsToCsv(cards));
+      }
       return reply
         .header('Content-Type', 'text/vcard; charset=utf-8')
         .header('Content-Disposition', `attachment; filename="contacts-${stamp}.vcf"`)
-        .send(vcf);
+        .send(listRawCards(book));
     },
   );
 
-  // Import a `.vcf` file (one or many cards) into the chosen book (or the default).
-  app.post<{ Body: { addressbook?: string | null; vcard?: string } }>(
+  // Import a `.vcf` (`vcard`) or contacts `.csv` (`csv`) into the chosen book (or the
+  // default). Entries sharing an email with an existing card merge into it instead of
+  // being filed twice — see `contacts/importPlan`.
+  app.post<{ Body: { addressbook?: string | null; vcard?: string; csv?: string } }>(
     '/api/contacts/cards/import',
     async (req, reply) => {
-      const text = typeof req.body?.vcard === 'string' ? req.body.vcard : '';
-      const blocks = splitVCards(text);
-      if (blocks.length === 0)
-        return reply.code(400).send({ error: 'no vCard found in the uploaded file' });
+      let cards: EditableCard[];
+      if (typeof req.body?.csv === 'string') {
+        cards = csvToCards(req.body.csv);
+        if (cards.length === 0)
+          return reply.code(400).send({ error: 'no contacts found in the uploaded CSV' });
+      } else {
+        const blocks = splitVCards(typeof req.body?.vcard === 'string' ? req.body.vcard : '');
+        if (blocks.length === 0)
+          return reply.code(400).send({ error: 'no vCard found in the uploaded file' });
+        cards = blocks.map((b) => toEditableCard(parseCardDetail(b)));
+      }
       const addressbook = req.body?.addressbook ? String(req.body.addressbook) : null;
-      const cards: EditableCard[] = blocks.map((b) => toEditableCard(parseCardDetail(b)));
       try {
-        return await importCards(addressbook, cards);
+        await ensureDiscovered();
+        const target = addressbook ?? effectiveDefault();
+        return await importCards(addressbook, planImport(cards, listCards(), target));
       } catch (err) {
         const status = err instanceof CardDavError ? err.status : 502;
         return reply.code(status).send({ error: (err as Error).message });

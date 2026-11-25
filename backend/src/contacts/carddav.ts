@@ -15,7 +15,9 @@
 import { randomUUID } from 'node:crypto';
 import { createLogger } from '../logger.js';
 import { env } from '../env.js';
-import { replaceContacts, type ParsedContact } from './store.js';
+import type { ContactImportResult } from '@maily/shared';
+import { getCardByKey, replaceContacts, type ParsedContact } from './store.js';
+import type { ImportPlan } from './importPlan.js';
 import { buildVCard, extractCards, mergeVCard, parseVCard, type EditableCard } from './vcard.js';
 import { discoverAddressbooks } from './discover.js';
 import { effectiveActive, effectiveDefault, getDiscovered, setDiscovered } from './addressbooks.js';
@@ -120,35 +122,46 @@ export async function createCard(
 }
 
 /**
- * Bulk-create cards from an import. Each card is PUT as a fresh resource (new UID),
- * so importing the same file twice duplicates rather than clobbers — dedup/merge is
- * a later concern. A single failed write is counted and skipped, not fatal. Syncs the
- * cache once at the end. Returns how many cards were written vs. skipped.
+ * Carry out a duplicate-aware import plan (`importPlan.ts`): PUT each new card as a fresh
+ * resource, and rewrite each matched existing card with its merged fields (If-Match
+ * guarded, unmodelled properties preserved). A single failed write is counted as skipped,
+ * not fatal. Syncs the cache once at the end rather than after every card.
  */
 export async function importCards(
   addressbookHref: string | null,
-  cards: EditableCard[],
-): Promise<{ imported: number; skipped: number }> {
+  plan: ImportPlan,
+): Promise<ContactImportResult> {
   const cfg = requireConfig();
   await ensureDiscovered();
   const collection = targetCollection(cfg, addressbookHref);
-  let imported = 0;
-  let skipped = 0;
-  for (const card of cards) {
-    if (card.emails.length === 0) {
-      skipped++; // a card with no address is useless to a mail client
-      continue;
-    }
+  const result: ContactImportResult = {
+    imported: 0,
+    merged: 0,
+    unchanged: plan.unchanged,
+    skipped: plan.skipped,
+  };
+  for (const card of plan.creates) {
     try {
       await putNewCard(cfg, collection, card);
-      imported++;
+      result.imported++;
     } catch (err) {
       log.warn('import: card PUT failed:', (err as Error).message);
-      skipped++;
+      result.skipped++;
     }
   }
-  if (imported > 0) await syncContacts();
-  return { imported, skipped };
+  for (const { target, card } of plan.merges) {
+    const rec = getCardByKey(target.uid);
+    try {
+      if (!rec?.href) throw new Error(`card ${target.uid} not found`);
+      await putUpdatedCard(cfg, rec.uid, rec.href, rec.etag, rec.raw, card);
+      result.merged++;
+    } catch (err) {
+      log.warn('import: merge into existing card failed:', (err as Error).message);
+      result.skipped++;
+    }
+  }
+  if (result.imported > 0 || result.merged > 0) await syncContacts();
+  return result;
 }
 
 /**
@@ -163,7 +176,19 @@ export async function updateCard(
   raw: string | null,
   card: EditableCard,
 ): Promise<void> {
-  const cfg = requireConfig();
+  await putUpdatedCard(requireConfig(), uid, href, etag, raw, card);
+  await syncContacts();
+}
+
+/** PUT an edited card over its resource (no cache sync — callers decide when). */
+async function putUpdatedCard(
+  cfg: NonNullable<ReturnType<typeof env.carddav>>,
+  uid: string,
+  href: string,
+  etag: string | null,
+  raw: string | null,
+  card: EditableCard,
+): Promise<void> {
   const headers: Record<string, string> = {
     Authorization: authHeader(cfg),
     'Content-Type': 'text/vcard; charset=utf-8',
@@ -176,7 +201,6 @@ export async function updateCard(
   });
   if (res.status === 412) throw new CardDavError('Card changed on server; reload and retry', 409);
   if (!res.ok) throw new CardDavError(`CardDAV PUT failed: ${res.status}`, 502);
-  await syncContacts();
 }
 
 /** Delete a card by its resource path. */

@@ -651,11 +651,17 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  /** Import a `.vcf` file (one or many cards) into a book (default when omitted). */
-  importContacts: (vcard: string, addressbook?: string | null) =>
+  /**
+   * Import a `.vcf` (one or many cards) or a contacts `.csv` into a book (default when
+   * omitted). The format is sniffed from the content, not the file name.
+   */
+  importContacts: (text: string, addressbook?: string | null) =>
     request<ContactImportResult>('/api/contacts/cards/import', {
       method: 'POST',
-      body: JSON.stringify({ vcard, addressbook: addressbook ?? null }),
+      body: JSON.stringify({
+        ...(/BEGIN:VCARD/i.test(text) ? { vcard: text } : { csv: text }),
+        addressbook: addressbook ?? null,
+      }),
     }),
 
   // ── Cleanup Dashboard (analytics + execution) ────────────────────────────────
@@ -819,21 +825,27 @@ export async function fetchAttachmentBlob(messageId: string, attId: string): Pro
 }
 
 /**
- * Download the cached contacts as a `.vcf` file (auth header → can't be a plain
- * link). Fetches the export, then triggers a browser download via a temp anchor.
+ * Download the cached contacts as a `.vcf` or `.csv` file (auth header → can't be a
+ * plain link). Fetches the export, then triggers a browser download via a temp anchor.
  */
-export async function downloadContactsVcf(addressbook?: string | null): Promise<void> {
+export async function downloadContacts(
+  format: 'vcf' | 'csv',
+  addressbook?: string | null,
+): Promise<void> {
   if (!isOnline()) throw new ApiError(0, 'offline');
   const headers = new Headers();
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const qs = addressbook ? `?addressbook=${encodeURIComponent(addressbook)}` : '';
-  const res = await fetch(`${API_BASE}/api/contacts/cards/export${qs}`, { headers });
+  const qs = new URLSearchParams();
+  if (format === 'csv') qs.set('format', 'csv');
+  if (addressbook) qs.set('addressbook', addressbook);
+  const q = qs.toString();
+  const res = await fetch(`${API_BASE}/api/contacts/cards/export${q ? `?${q}` : ''}`, { headers });
   if (!res.ok) throw new ApiError(res.status, 'contacts export failed');
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `contacts-${new Date().toISOString().slice(0, 10)}.vcf`;
+  a.download = `contacts-${new Date().toISOString().slice(0, 10)}.${format}`;
   document.body.appendChild(a);
   a.click();
   a.remove();

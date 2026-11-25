@@ -8,7 +8,7 @@
  * merge needs no per-field wizard — nothing the user typed on the folded-in cards is
  * dropped, so the only decision left is which card survives.
  */
-import type { ContactCardDto, ContactAddressDto, TypedValueDto } from '@maily/shared';
+import type { ContactAddressDto, TypedValueDto } from '@maily/shared';
 import type { EditableCard } from './vcard.js';
 
 /** First non-empty value in card order — the survivor is passed first, so it wins. */
@@ -63,11 +63,14 @@ function unionTyped(lists: TypedValueDto[][], keyOf: (value: string) => string):
  * Fold `cards` into the fields of a single card. `cards[0]` is the survivor: it supplies
  * every scalar it has and leads each list, with the remaining cards appended in order.
  *
+ * Takes the editable field set, so both cached cards (`ContactCardDto`) and freshly parsed
+ * import entries can be folded together.
+ *
  * PHOTO is tri-state on the wire, and `undefined` here means "leave the survivor's alone".
  * A merge only ever *supplies* a photo — it never clears one — so a survivor that already
  * has one keeps it untouched rather than being rewritten with an identical value.
  */
-export function mergeCards(cards: ContactCardDto[]): EditableCard {
+export function mergeCards(cards: EditableCard[]): EditableCard {
   const [primary, ...rest] = cards;
   if (!primary) throw new Error('mergeCards needs at least one card');
   const all = [primary, ...rest];

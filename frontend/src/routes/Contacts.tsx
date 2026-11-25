@@ -13,12 +13,18 @@
  */
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AddressbookDto, ContactCardDto, ContactDuplicateGroupDto } from '@maily/shared';
-import { api, downloadContactsVcf } from '../api/client';
+import type {
+  AddressbookDto,
+  ContactCardDto,
+  ContactDuplicateGroupDto,
+  ContactImportResult,
+} from '@maily/shared';
+import { api, downloadContacts } from '../api/client';
 import { setPref, usePrefs } from '../state/prefs';
 import { avatarHue, initials } from '../ui/format';
 import { ContactEditor } from '../components/ContactEditor';
 import { MergeContactsDialog } from '../components/MergeContactsDialog';
+import { OverflowMenu, type OverflowItem } from '../components/OverflowMenu';
 import { Spinner } from '../ui/Spinner';
 import {
   BackIcon,
@@ -72,6 +78,19 @@ interface BookGroup {
   active: boolean;
   isDefault: boolean;
   cards: ContactCardDto[];
+}
+
+/** One-line outcome of an import, naming only the counts that aren't zero. */
+export function importSummary(r: ContactImportResult): string {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const parts: string[] = [];
+  if (r.imported) parts.push(`Imported ${plural(r.imported, 'new contact', 'new contacts')}`);
+  if (r.merged) parts.push(`updated ${plural(r.merged, 'existing card', 'existing cards')}`);
+  if (r.unchanged) parts.push(`${r.unchanged} already in contacts`);
+  if (r.skipped) parts.push(`skipped ${r.skipped}`);
+  if (parts.length === 0) return 'No contacts imported.';
+  const text = parts.join(', ');
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 
 export function Contacts() {
@@ -190,12 +209,12 @@ export function Contacts() {
     );
   };
 
-  // Export every cached book as one `.vcf`.
-  const onExport = async () => {
+  // Export every cached book as one `.vcf` or `.csv`.
+  const onExport = async (format: 'vcf' | 'csv') => {
     setBusy(true);
     setNotice(null);
     try {
-      await downloadContactsVcf(null);
+      await downloadContacts(format, null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -203,7 +222,8 @@ export function Contacts() {
     }
   };
 
-  // Read the chosen `.vcf` and import it into the create-target (default) book.
+  // Read the chosen `.vcf`/`.csv` and import it into the create-target (default) book.
+  // Entries whose address is already on a card merge into it instead of duplicating.
   const onImportPick = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // reset so re-picking the same file fires onChange again
@@ -214,19 +234,34 @@ export function Contacts() {
       .text()
       .then((text) => api.importContacts(text, createTarget))
       .then((r) => {
-        const imported = `Imported ${r.imported} contact${r.imported === 1 ? '' : 's'}`;
-        setNotice(
-          r.imported === 0
-            ? 'No contacts imported.'
-            : r.skipped
-              ? `${imported}, skipped ${r.skipped}.`
-              : `${imported}.`,
-        );
+        setNotice(importSummary(r));
         load();
       })
       .catch((err) => setError((err as Error).message))
       .finally(() => setBusy(false));
   };
+
+  const transferItems: OverflowItem[] = [
+    {
+      label: 'Import vCard or CSV',
+      icon: <UploadIcon className="size-4" />,
+      onClick: () => fileInput.current?.click(),
+    },
+    ...(cards && cards.length > 0
+      ? [
+          {
+            label: 'Export as vCard',
+            icon: <DownloadIcon className="size-4" />,
+            onClick: () => void onExport('vcf'),
+          },
+          {
+            label: 'Export as CSV',
+            icon: <DownloadIcon className="size-4" />,
+            onClick: () => void onExport('csv'),
+          },
+        ]
+      : []),
+  ];
 
   return (
     <div className={`flex h-full flex-col ${GUTTER}`}>
@@ -245,28 +280,11 @@ export function Contacts() {
           <input
             ref={fileInput}
             type="file"
-            accept=".vcf,text/vcard,text/x-vcard"
+            accept=".vcf,.csv,text/vcard,text/x-vcard,text/csv"
             onChange={onImportPick}
             className="hidden"
           />
-          <button
-            onClick={() => fileInput.current?.click()}
-            disabled={busy}
-            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
-            aria-label="Import contacts from vCard"
-            title="Import vCard"
-          >
-            <UploadIcon />
-          </button>
-          <button
-            onClick={onExport}
-            disabled={busy || !cards || cards.length === 0}
-            className="rounded-full p-2 active:bg-surface-2 disabled:opacity-40"
-            aria-label="Export contacts to vCard"
-            title="Export vCard"
-          >
-            <DownloadIcon />
-          </button>
+          <OverflowMenu items={transferItems} disabled={busy} />
           <button
             onClick={() => setCreating({ addressbook: createTarget })}
             className="rounded-full p-2 text-accent active:bg-surface-2"

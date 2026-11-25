@@ -405,9 +405,19 @@ export interface ContactMergeResult {
 
 /** Outcome of a vCard import: how many cards were created vs. skipped. */
 export interface ContactImportResult {
-  /** Cards successfully PUT to the address book. */
+  /** New cards successfully PUT to the address book. */
   imported: number;
-  /** Cards skipped (no email / unparseable / write failed). */
+  /**
+   * Existing cards that shared an email with an imported entry and gained new data from
+   * it (field union — nothing on the existing card is removed).
+   */
+  merged: number;
+  /**
+   * Imported entries with nothing new: already fully present on an existing card, or a
+   * repeat of an earlier row in the same file (folded into it). Nothing is written.
+   */
+  unchanged: number;
+  /** Entries skipped (no email / unparseable / write failed). */
   skipped: number;
 }
 
